@@ -1,0 +1,8 @@
+{
+  "host": "ftp.ИМЯ_СЕРВЕРА.reg.ru ИЛИ serverNN.hosting.reg.ru",
+  "user": "u1234567_ЛОГИН",
+  "password": "ПАРОЛЬ",
+  "remote_dir": "/www/landoc.online/dropzone",
+  "port": 21,
+  "passive": true
+}

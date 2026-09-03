@@ -1,0 +1,280 @@
+{
+  "melee_fixed": {
+    "id": "knife_1",
+    "name": "Нож",
+    "note": "Всегда в инвентаре у каждого бойца. Не дропается.",
+    "damage": 22,
+    "ap_cost": 2,
+    "range": 1
+  },
+  "weapons": [
+    {
+      "id": "Pistol",
+      "name": "Пистолет",
+      "tier": 1,
+      "damage": 16,
+      "ap_cost": 3,
+      "range": 8,
+      "ammo": 12,
+      "spare": 12
+    },
+    {
+      "id": "Revolver_Small",
+      "name": "Малый револьвер",
+      "tier": 1,
+      "damage": 18,
+      "ap_cost": 3,
+      "range": 7,
+      "ammo": 6,
+      "spare": 6
+    },
+    {
+      "id": "Revolver",
+      "name": "Револьвер",
+      "tier": 1,
+      "damage": 24,
+      "ap_cost": 4,
+      "range": 8,
+      "ammo": 6,
+      "spare": 6
+    },
+    {
+      "id": "SMG",
+      "name": "Пистолет-пулемёт",
+      "tier": 1,
+      "damage": 12,
+      "ap_cost": 4,
+      "range": 9,
+      "ammo": 30,
+      "burst": 2,
+      "spare": 30
+    },
+    {
+      "id": "Shotgun",
+      "name": "Дробовик",
+      "tier": 1,
+      "damage": 30,
+      "ap_cost": 4,
+      "range": 5,
+      "ammo": 6,
+      "spread": true,
+      "spare": 6
+    },
+    {
+      "id": "AK",
+      "name": "Автомат АК",
+      "tier": 2,
+      "damage": 22,
+      "ap_cost": 4,
+      "range": 12,
+      "ammo": 10,
+      "burst": 2,
+      "spare": 20
+    },
+    {
+      "id": "Sniper",
+      "name": "Снайперская винтовка",
+      "tier": 2,
+      "damage": 38,
+      "ap_cost": 5,
+      "range": 18,
+      "ammo": 5,
+      "spare": 5
+    },
+    {
+      "id": "Sniper_2",
+      "name": "Тяжёлая снайперка",
+      "tier": 2,
+      "damage": 48,
+      "ap_cost": 6,
+      "range": 20,
+      "ammo": 3,
+      "spare": 3
+    },
+    {
+      "id": "GrenadeLauncher",
+      "name": "Гранатомёт",
+      "tier": 2,
+      "damage": 34,
+      "ap_cost": 5,
+      "range": 10,
+      "ammo": 3,
+      "aoe": 2,
+      "spare": 2
+    },
+    {
+      "id": "ShortCannon",
+      "name": "Короткая пушка",
+      "tier": 2,
+      "damage": 36,
+      "ap_cost": 5,
+      "range": 8,
+      "ammo": 3,
+      "aoe": 1,
+      "spare": 2
+    },
+    {
+      "id": "RocketLauncher",
+      "name": "РПГ",
+      "tier": 2,
+      "damage": 55,
+      "ap_cost": 6,
+      "range": 12,
+      "ammo": 1,
+      "aoe": 2,
+      "spare": 1,
+      "reload_ap": 3,
+      "str_req": 4
+    },
+    {
+      "id": "Shovel",
+      "name": "Сапёрная лопата",
+      "tier": 1,
+      "damage": 28,
+      "ap_cost": 3,
+      "range": 1
+    },
+    {
+      "id": "Knife_2",
+      "name": "Метательный нож",
+      "tier": 1,
+      "damage": 24,
+      "ap_cost": 2,
+      "range": 5
+    },
+    {
+      "id": "Grenade",
+      "name": "Граната",
+      "tier": 1,
+      "damage": 40,
+      "ap_cost": 3,
+      "range": 6,
+      "aoe": 2,
+      "consumable": true
+    },
+    {
+      "id": "FireGrenade",
+      "name": "Зажигательная граната",
+      "tier": 2,
+      "damage": 30,
+      "ap_cost": 3,
+      "range": 6,
+      "aoe": 2,
+      "burn": true,
+      "consumable": true
+    },
+    {
+      "id": "Molotov",
+      "name": "Коктейль Молотова",
+      "tier": 1,
+      "damage": 12,
+      "ap_cost": 3,
+      "range": 6,
+      "aoe": 1,
+      "burn": true,
+      "consumable": true
+    }
+  ],
+  "armor": {
+    "helmets": [
+      {
+        "id": "helm_1",
+        "name": "Кепка оператора",
+        "defense": 2,
+        "weight": 0.25
+      },
+      {
+        "id": "helm_2",
+        "name": "Шлем штурмовика",
+        "defense": 5,
+        "weight": 0.75
+      },
+      {
+        "id": "helm_3",
+        "name": "Тактический шлем",
+        "defense": 9,
+        "weight": 1.5
+      },
+      {
+        "id": "helm_4",
+        "name": "Тяжёлый шлем «Бастион»",
+        "defense": 14,
+        "weight": 2.5
+      }
+    ],
+    "body": [
+      {
+        "id": "body_1",
+        "name": "Куртка зрителя",
+        "defense": 3,
+        "weight": 0.5,
+        "carry_bonus": 0
+      },
+      {
+        "id": "body_2",
+        "name": "Бронежилет «Стандарт»",
+        "defense": 8,
+        "weight": 2.0,
+        "carry_bonus": 10,
+        "note": "Прибавляет носимый вес"
+      },
+      {
+        "id": "body_3",
+        "name": "Комбинезон спецназа",
+        "defense": 14,
+        "weight": 3.0,
+        "carry_bonus": 5
+      },
+      {
+        "id": "body_4",
+        "name": "Тяжёлая броня «Джаггер»",
+        "defense": 22,
+        "weight": 6.0,
+        "carry_bonus": 0,
+        "ap_penalty": 1
+      }
+    ],
+    "pants": [
+      {
+        "id": "pants_1",
+        "name": "Джинсы",
+        "defense": 1,
+        "weight": 0.25
+      },
+      {
+        "id": "pants_2",
+        "name": "Карго штурмовика",
+        "defense": 4,
+        "weight": 0.75,
+        "carry_bonus": 5
+      },
+      {
+        "id": "pants_3",
+        "name": "Усиленные штаны",
+        "defense": 7,
+        "weight": 1.5
+      },
+      {
+        "id": "pants_4",
+        "name": "Экзо-набедренники",
+        "defense": 11,
+        "weight": 3.0,
+        "carry_bonus": 15
+      }
+    ]
+  },
+  "consumables": [
+    {
+      "id": "medkit",
+      "name": "Аптечка",
+      "heal": 50,
+      "ap_cost": 2
+    },
+    {
+      "id": "ap_battery",
+      "name": "Батарея AP (спонсорская)",
+      "ap_restore": 4,
+      "ap_cost": 0
+    }
+  ]
+}

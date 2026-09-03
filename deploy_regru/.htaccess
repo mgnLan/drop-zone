@@ -1,0 +1,21 @@
+# Drop Zone — web-билд Godot на Apache (reg.ru)
+# MIME для WebAssembly (без этого index.wasm не загрузится)
+AddType application/wasm .wasm
+
+# Сжатие: wasm/pck жмутся ~в 3-4 раза — главный ускоритель загрузки
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html application/javascript application/json
+  AddOutputFilterByType DEFLATE application/wasm application/octet-stream
+</IfModule>
+
+# Кэш: index.html — всегда свежий; тяжёлые файлы — 1 сутки (иначе wasm ~10 МБ качается заново каждый визит)
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  <FilesMatch "\.(wasm|pck|js)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
+</IfModule>
+
+DirectoryIndex index.html

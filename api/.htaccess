@@ -1,0 +1,7 @@
+<FilesMatch "\.sqlite$">
+  Require all denied
+</FilesMatch>
+<FilesMatch "\.sqlite$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>

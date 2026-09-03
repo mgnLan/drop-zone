@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dropzone Alpha — Tactical Combat</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+:root{
+--bg:#080808; --panel:rgba(15,15,20,0.92); --accent:#ffd700; --accent2:#ff6b35;
+--danger:#e74c3c; --success:#2ecc71; --info:#3498db; --text:#e0e0e0; --text2:#888;
+--glass: rgba(255,255,255,0.03); --glass-border: rgba(255,255,255,0.08);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+background:var(--bg); color:var(--text); font-family:'Inter',sans-serif;
+display:flex; align-items:center; justify-content:center; min-height:100vh;
+overflow:hidden; user-select:none;
+}
+#app{
+position:relative; width:100%; max-width:1280px; aspect-ratio:16/9;
+background:#000; border-radius:12px; overflow:hidden;
+box-shadow:0 0 60px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.05);
+}
+canvas{ display:block; width:100%; height:100%; }
+.screen{
+position:absolute; inset:0; display:none; flex-direction:column;
+align-items:center; justify-content:center; padding:20px; z-index:20;
+background:radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0a 100%);
+}
+.screen.active{ display:flex; }
+h1{ font-size:clamp(28px,4vw,48px); font-weight:800; color:var(--accent);
+text-shadow:0 0 30px rgba(255,215,0,0.3); letter-spacing:2px; margin-bottom:8px; }
+h2{ font-size:clamp(12px,1.5vw,16px); color:var(--text2); font-weight:400; margin-bottom:24px; }
+h3{ font-size:clamp(14px,2vw,20px); font-weight:700; color:var(--accent); margin-bottom:16px; }
+.btn{
+background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+border:1px solid var(--glass-border); color:var(--text); padding:12px 28px;
+font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; border-radius:10px;
+transition:all .2s; backdrop-filter:blur(10px); min-width:140px; text-align:center;
+position:relative; overflow:hidden;
+}
+.btn:hover{ border-color:rgba(255,215,0,0.4); color:var(--accent); transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,0,0,0.4); }
+.btn:active{ transform:translateY(0); }
+.btn.primary{ background:linear-gradient(180deg, rgba(255,215,0,0.15), rgba(255,215,0,0.05)); border-color:rgba(255,215,0,0.3); color:var(--accent); }
+.btn.danger{ background:linear-gradient(180deg, rgba(231,76,60,0.15), rgba(231,76,60,0.05)); border-color:rgba(231,76,60,0.3); color:#ff8888; }
+.btn.mini{ padding:6px 12px; min-width:32px; font-size:12px; margin:0 3px; border-radius:8px; }
+.btn.colorBtn{ width:36px; height:36px; padding:0; min-width:36px; border-radius:50%; border-width:3px; }
+.row{ display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:6px 0; }
+.card{
+background:var(--glass); border:1px solid var(--glass-border); border-radius:16px;
+padding:20px; backdrop-filter:blur(20px);
+}
+.statRow{ display:flex; justify-content:space-between; align-items:center; width:min(320px, 90vw); padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05); font-size:13px; }
+.statRow span:first-child{ color:var(--text2); }
+.statRow span:last-child{ display:flex; align-items:center; gap:6px; }
+.statRow b{ min-width:20px; text-align:center; color:var(--accent); font-size:15px; }
+#charPreview{ border-radius:12px; border:1px solid var(--glass-border); background:rgba(0,0,0,0.3); }
+#uiLayer{ position:absolute; inset:0; pointer-events:none; z-index:5; display:none; }
+#uiLayer.active{ display:block; }
+#uiLayer > * { pointer-events:auto; }
+#bottomBar{
+position:absolute; bottom:0; left:0; width:100%; height:56px;
+background:linear-gradient(0deg, rgba(0,0,0,0.95), rgba(0,0,0,0.7));
+border-top:1px solid var(--glass-border); display:flex; gap:8px;
+align-items:center; justify-content:center; padding:0 16px;
+backdrop-filter:blur(20px);
+}
+#sidePanel{
+position:absolute; top:12px; right:12px; width:200px;
+background:var(--panel); border:1px solid var(--glass-border);
+border-radius:16px; padding:14px; font-size:12px;
+backdrop-filter:blur(20px); max-height:calc(100% - 80px); overflow-y:auto;
+box-shadow:0 8px 32px rgba(0,0,0,0.5);
+}
+.hpBar{ width:100%; height:6px; background:rgba(255,0,0,0.2); border-radius:3px; margin:4px 0; overflow:hidden; }
+.hpBar > div{ height:100%; background:linear-gradient(90deg, #27ae60, #2ecc71); border-radius:3px; transition:width .3s ease; }
+.hpBar.low > div{ background:linear-gradient(90deg, #c0392b, #e74c3c); }
+#log{ max-height:120px; overflow-y:auto; font-size:11px; color:var(--text2); margin-top:8px; line-height:1.6; }
+.logEntry{ padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.03); }
+.lc{ color:var(--accent); font-weight:700; } .lk{ color:#ff6b6b; } .ll{ color:#6bdb7c; }
+#popupPanel{
+position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+background:var(--panel); border:1px solid rgba(255,215,0,0.3); border-radius:20px;
+padding:24px; width:380px; max-height:450px; overflow-y:auto;
+backdrop-filter:blur(30px); pointer-events:auto; z-index:30;
+box-shadow:0 20px 60px rgba(0,0,0,0.8); display:none;
+}
+#popupPanel.active{ display:block; }
+#popupTitle{ color:var(--accent); font-size:16px; font-weight:700; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--glass-border); }
+.invItem{ padding:10px 12px; border-radius:8px; cursor:pointer; font-size:13px; transition:all .15s; margin:2px 0; border:1px solid transparent; }
+.invItem:hover{ background:rgba(255,255,255,0.05); border-color:rgba(255,215,0,0.2); }
+.panelTitle{ color:var(--accent); font-size:12px; font-weight:700; margin:10px 0 6px; text-transform:uppercase; letter-spacing:1px; }
+input[type="text"]{
+background:rgba(255,255,255,0.05); border:1px solid var(--glass-border); color:var(--text);
+padding:8px 12px; border-radius:8px; font-family:inherit; font-size:13px; width:100%;
+transition:border-color .2s;
+}
+input[type="text"]:focus{ outline:none; border-color:rgba(255,215,0,0.4); }
+.sel{ border-color:var(--accent) !important; box-shadow:0 0 12px rgba(255,215,0,0.2); }
+@keyframes fadeIn{ from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
+.anim-in{ animation:fadeIn .5s ease forwards; }
+@media(max-width:900px){ #sidePanel{ width:160px; font-size:10px; } }
+@media(max-width:700px){ #sidePanel{ display:none; } }
+</style>
+</head>
+<body>
+<div id="app">
+<canvas id="cvs" width="1280" height="720"></canvas>
+<div id="scrStart" class="screen active">
+<h1 class="anim-in">DROPZONE ALPHA</h1>
+<h2 class="anim-in" style="animation-delay:.1s">Tactical Combat Simulation</h2>
+<div class="row anim-in" style="animation-delay:.2s">
+<button class="btn primary" data-mode="2">2 PLAYERS</button>
+<button class="btn primary" data-mode="3">3 PLAYERS</button>
+<button class="btn primary" data-mode="4">4 PLAYERS</button>
+</div>
+<div class="row anim-in" style="animation-delay:.3s">
+<button class="btn" data-mode="2b">1 VS BOT</button>
+<button class="btn" data-mode="3b">2 VS BOTS</button>
+<button class="btn" data-mode="4b">3 VS BOTS</button>
+</div>
+</div>
+<div id="scrChar" class="screen">
+<h3 class="anim-in">OPERATIVE CONFIGURATION</h3>
+<div style="display:flex;gap:24px;align-items:flex-start;margin-top:8px;" class="anim-in" style="animation-delay:.1s">
+<div class="card">
+<div class="row" id="sexRow">
+<button class="btn sel" data-sex="M">MALE</button>
+<button class="btn" data-sex="F">FEMALE</button>
+</div>
+<div style="font-size:12px;color:var(--text2);margin:10px 0 6px;">Skin Tone</div>
+<div class="row" id="skinRow">
+<button class="btn colorBtn sel" data-skin="0" style="background:#f5d0b0;border-color:#f5d0b0"></button>
+<button class="btn colorBtn" data-skin="1" style="background:#d4a574;border-color:var(--glass-border)"></button>
+<button class="btn colorBtn" data-skin="2" style="background:#8d5524;border-color:var(--glass-border)"></button>
+<button class="btn colorBtn" data-skin="3" style="background:#3c2e28;border-color:var(--glass-border)"></button>
+</div>
+<div style="font-size:14px;color:var(--accent);margin:12px 0 6px;font-weight:700;">Points: <span id="ptsLeft">15</span></div>
+<div id="statsBox"></div>
+</div>
+<div class="card" style="text-align:center;min-width:180px;">
+<div style="font-size:11px;color:var(--text2);margin-bottom:6px;">Preview</div>
+<canvas id="charPreview" width="120" height="160"></canvas>
+<div style="font-size:11px;color:var(--text2);margin-top:8px;">Callsign</div>
+<input type="text" id="charName" value="Operative" maxlength="14" style="margin-top:4px;">
+<button class="btn primary" id="btnConfirmChar" style="margin-top:12px;width:100%;">DEPLOY →</button>
+</div>
+</div>
+</div>
+<div id="scrLevel" class="screen">
+<h1 class="anim-in">LEVEL UP</h1>
+<div style="font-size:16px;color:var(--accent);margin-bottom:12px;font-weight:700;" class="anim-in">+5 Attribute Points</div>
+<div class="card anim-in" id="levelStatsBox" style="width:340px;"></div>
+<button class="btn primary anim-in" id="btnCloseLvl" style="margin-top:14px;animation-delay:.2s">CONFIRM</button>
+</div>
+<div id="scrEnd" class="screen">
+<h1 id="endTitle" class="anim-in">MISSION COMPLETE</h1>
+<div id="endSub" style="font-size:16px;color:var(--text2);margin-bottom:20px;" class="anim-in"></div>
+<div id="endStats" style="margin-bottom:20px;font-size:13px;color:var(--text2);" class="anim-in"></div>
+<button class="btn primary anim-in" onclick="location.reload()">NEW MISSION</button>
+</div>
+<div id="uiLayer">
+<div id="sidePanel">
+<div class="panelTitle">Squad</div>
+<div id="squadList"></div>
+<div class="panelTitle">Status</div>
+<div id="sideInfo"></div>
+<div class="panelTitle">Log</div>
+<div id="log"></div>
+</div>
+<div id="bottomBar">
+<button class="btn" id="btnInv">🎒 INVENTORY</button>
+<button class="btn" id="btnEquip">🛡️ EQUIP</button>
+<button class="btn" id="btnWep"> WEAPON</button>
+<button class="btn danger" id="btnEnd">⏹ END TURN</button>
+</div>
+</div>
+<div id="popupPanel">
+<div id="popupTitle"></div>
+<div id="popupContent"></div>
+</div>
+</div>
+<script>
+// ВЕСЬ JAVASCRIPT КОД ИЗ ФАЙЛА dropzone_alpha_hd.txt
+// (полный код игры - около 2000 строк)
+</script>
+</body>
+</html>
