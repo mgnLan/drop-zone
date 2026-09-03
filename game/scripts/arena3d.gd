@@ -209,9 +209,20 @@ func _apply_display_scale() -> void:
 	# масштабом управляет движок (stretch: canvas_items, keep_height) — функция-заглушка
 	pass
 
+func _dpr() -> float:
+	# в браузере viewport считается в device-пикселях — переводим в CSS-пиксели
+	if OS.has_feature("web"):
+		var d = JavaScriptBridge.eval("window.devicePixelRatio || 1")
+		if d != null and float(d) > 0.01:
+			return float(d)
+	return 1.0
+
 func _vw() -> float:
-	# логическая ширина экрана (при keep_height телефон-портрет ~324)
-	return get_viewport().get_visible_rect().size.x
+	# логическая ширина экрана в CSS-пикселях
+	return get_viewport().get_visible_rect().size.x / _dpr()
+
+func _vh() -> float:
+	return get_viewport().get_visible_rect().size.y / _dpr()
 
 func _mob() -> bool:
 	# узкий экран — компактные раскладки
@@ -264,6 +275,14 @@ func _ready() -> void:
 		_build_ui()
 		_build_menu()
 		_run_testmenu()
+	elif args.has("--testmenumobile"):
+		_load_sfx()
+		_build_ui()
+		get_window().size = Vector2i(360, 800)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_build_menu()
+		_run_testmenu(true)
 	elif args.has("--testauth"):
 		_run_testauth("test_auth.png")
 	elif args.has("--testauthwide"):
@@ -430,8 +449,8 @@ func _build_auth(auto: bool) -> void:
 	col.add_theme_constant_override("separation", 16)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
-	var vw2: float = float(_dbg_vp.x) if _dbg_vp.x > 0 else get_viewport().get_visible_rect().size.x
-	var vh2: float = float(_dbg_vp.y) if _dbg_vp.y > 0 else get_viewport().get_visible_rect().size.y
+	var vw2: float = float(_dbg_vp.x) if _dbg_vp.x > 0 else _vw()
+	var vh2: float = float(_dbg_vp.y) if _dbg_vp.y > 0 else _vh()
 	var logo_w := minf(560.0, vw2 * 0.86)
 	var logo := TextureRect.new()
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -3700,7 +3719,7 @@ func _build_ui() -> void:
 	_ui.chat_input = inp
 	_render_chat()
 	# мобильный режим: лог свёрнут, разворачивается кнопкой
-	if minf(get_viewport().get_visible_rect().size.x, get_viewport().get_visible_rect().size.y) < 700.0:
+	if minf(_vw(), _vh()) < 700.0:
 		chat.visible = false
 		var ct := Button.new()
 		ct.text = "📜 Лог"
@@ -3769,7 +3788,7 @@ func _layout_menu() -> void:
 	if not _ui.has("menu_box"):
 		return
 	var vb2: VBoxContainer = _ui.menu_box
-	var vw3: float = get_viewport().get_visible_rect().size.x
+	var vw3: float = _vw()
 	var bw: float = maxf(vb2.size.x, 400.0)
 	var mx: float = maxf(600.0, (vw3 - bw) / 2.0)
 	vb2.position.x = mx
@@ -3998,20 +4017,29 @@ func _run_testbots() -> void:
 	print("TESTBOTS_SAVED")
 	get_tree().quit()
 
-func _run_testmenu() -> void:
+func _run_testmenu(mobile := false) -> void:
+	var sfx := "_mob" if mobile else ""
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_menu.png")
+	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_menu%s.png" % sfx)
 	_show_menu_squad()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_squad.png")
+	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_squad%s.png" % sfx)
+	_show_menu_shop()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_shop%s.png" % sfx)
+	_show_menu_chests()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_chests%s.png" % sfx)
 	_show_menu_profile()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_profile.png")
+	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_profile%s.png" % sfx)
 	print("TESTMENU_SAVED")
 	get_tree().quit()
 
@@ -4611,6 +4639,7 @@ func _build_menu() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(dim)
 	# --- верхняя панель: лого слева, чипы игрока справа ---
+	var mob_w: bool = _vw() < 520.0
 	var top := HBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	top.offset_left = 16.0
@@ -4621,7 +4650,7 @@ func _build_menu() -> void:
 	var logo := TextureRect.new()
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	logo.custom_minimum_size = Vector2(280, 72)
+	logo.custom_minimum_size = Vector2(150, 44) if mob_w else Vector2(280, 72)
 	if ResourceLoader.exists("res://assets/ui/logo.png"):
 		logo.texture = load("res://assets/ui/logo.png")
 	top.add_child(logo)
@@ -4629,16 +4658,19 @@ func _build_menu() -> void:
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(sp)
-	var chips := HBoxContainer.new()
-	chips.add_theme_constant_override("separation", 8)
-	chips.alignment = BoxContainer.ALIGNMENT_END
+	# чипы: на узком экране переносятся в 2 ряда (FlowContainer)
+	var chips := FlowContainer.new()
+	chips.add_theme_constant_override("h_separation", 4)
+	chips.add_theme_constant_override("v_separation", 4)
+	chips.alignment = FlowContainer.ALIGNMENT_END
+	chips.custom_minimum_size = Vector2(190, 0) if mob_w else Vector2(0, 0)
 	top.add_child(chips)
 	_ui.menu_chips = chips
 	# --- центральная зона: скролл, чтобы меню влезало на любых экранах ---
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	scroll.offset_left = 24.0
-	scroll.offset_right = -24.0
+	scroll.offset_left = 12.0 if mob_w else 24.0
+	scroll.offset_right = -12.0 if mob_w else -24.0
 	scroll.offset_top = 100.0
 	scroll.offset_bottom = -196.0
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -4657,7 +4689,12 @@ func _build_menu() -> void:
 	chat.anchor_top = 1.0
 	chat.anchor_bottom = 1.0
 	chat.offset_left = 16.0
-	chat.offset_right = 316.0
+	if mob_w:
+		# на телефоне чат — на всю ширину снизу
+		chat.anchor_right = 1.0
+		chat.offset_right = -16.0
+	else:
+		chat.offset_right = 316.0
 	chat.offset_top = -180.0
 	chat.offset_bottom = -16.0
 	layer.add_child(chat)
@@ -4725,6 +4762,9 @@ func _build_menu() -> void:
 		)
 		env.add_child(eb)
 	_render_menu_chat()
+	if mob_w:
+		# на телефоне чат стартует свёрнутым — не перекрывает меню
+		_toggle_menu_chat()
 	_show_menu_main()
 
 func _toggle_menu_chat() -> void:
@@ -4790,7 +4830,7 @@ func _show_menu_main() -> void:
 		c.queue_free()
 	# чипы игрока в верхней панели
 	if _ui.has("menu_chips"):
-		var ch: HBoxContainer = _ui.menu_chips
+		var ch: Control = _ui.menu_chips
 		for cc in ch.get_children():
 			cc.queue_free()
 		ch.add_child(_framed_label("👤 " + (_auth_email if _auth_email != "" else "Гость"), 13))
@@ -4826,7 +4866,7 @@ func _show_menu_main() -> void:
 	var sett := _ctrl_button("gear", "Настройки")
 	sett.pressed.connect(_show_menu_settings)
 	var ctrls: Array = [squad, shop, chests, bp, prof, sett]
-	var vw4: float = get_viewport().get_visible_rect().size.x
+	var vw4: float = _vw()
 	vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92) if vw4 >= 980.0 else minf(560.0, vw4 * 0.92), 0)
 	vb.add_child(_section_title("БОЙ"))
 	if vw4 >= 980.0:
@@ -4859,9 +4899,10 @@ func _show_menu_main() -> void:
 	vb.add_child(_section_title("ЗАДАНИЯ ДНЯ"))
 	vb.add_child(_daily_box())
 	# нижние текстовые ссылки — без иконок, белый текст на тёмном фоне
-	var links := HBoxContainer.new()
-	links.alignment = BoxContainer.ALIGNMENT_CENTER
-	links.add_theme_constant_override("separation", 28)
+	var links := FlowContainer.new()
+	links.alignment = FlowContainer.ALIGNMENT_CENTER
+	links.add_theme_constant_override("h_separation", 28)
+	links.add_theme_constant_override("v_separation", 4)
 	vb.add_child(links)
 	for lt in ["Служба поддержки", "Служба помощи", "Помощь новым игрокам"]:
 		var lb := Label.new()
@@ -4874,7 +4915,7 @@ func _show_menu_settings() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, get_viewport().get_visible_rect().size.x * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	var t := Label.new()
 	t.text = "Настройки"
 	t.add_theme_font_size_override("font_size", 30)
@@ -4979,21 +5020,25 @@ func _show_menu_squad() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, get_viewport().get_visible_rect().size.x * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	var t := Label.new()
 	t.text = "Отряд — создание бойцов"
-	t.add_theme_font_size_override("font_size", 26)
+	t.add_theme_font_size_override("font_size", 20 if _mob() else 26)
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(t)
 	# вкладки 4 слотов: открыт только первый, остальные — заслуги/подписка
 	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 4)
 	vb.add_child(tabs)
+	var slot_w := floorf((_vw() * 0.92 - 30.0) / 4.0) if _mob() else 96.0
 	for i in 4:
 		var b := Button.new()
 		if i < _profile.unlocked_slots:
 			b.text = _profile.names[i] + (" ✓" if i == _squad_edit else "")
 		else:
-			b.text = "🔒 Слот %d" % (i + 1)
-		b.custom_minimum_size = Vector2(96, 34)
+			b.text = "🔒 %d" % (i + 1) if _mob() else "🔒 Слот %d" % (i + 1)
+		b.custom_minimum_size = Vector2(slot_w, 34)
+		b.add_theme_font_size_override("font_size", 12 if _mob() else 14)
 		var fi: int = i
 		b.pressed.connect(func():
 			_squad_edit = fi
@@ -5074,8 +5119,10 @@ func _show_menu_squad() -> void:
 				_show_menu_squad()
 			)
 			srow.add_child(sb)
-		# цвет ника (монетизация) — 9 цветных квадратов
-		var crow := HBoxContainer.new()
+		# цвет ника (монетизация) — 9 цветных квадратов (переносятся на узких экранах)
+		var crow := FlowContainer.new()
+		crow.add_theme_constant_override("h_separation", 4)
+		crow.add_theme_constant_override("v_separation", 4)
 		vb.add_child(crow)
 		var cl := Label.new()
 		cl.text = "Цвет ника:"
@@ -5286,7 +5333,7 @@ func _show_menu_bp() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(620.0, get_viewport().get_visible_rect().size.x * 0.95), 0)
+	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
 	var t := Label.new()
 	t.text = "🏅 Battle Pass — сезон 1 «Первый снег»"
 	t.add_theme_font_size_override("font_size", 26)
@@ -5463,7 +5510,7 @@ func _show_menu_chests() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(520.0, get_viewport().get_visible_rect().size.x * 0.94), 0)
+	vb.custom_minimum_size = Vector2(minf(520.0, _vw() * 0.94), 0)
 	var t := Label.new()
 	t.text = "🎁 Сундуки удачи"
 	t.add_theme_font_size_override("font_size", 28)
@@ -5569,7 +5616,7 @@ func _show_menu_shop() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, get_viewport().get_visible_rect().size.x * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	var t := Label.new()
 	t.text = "🛒 Магазин"
 	t.add_theme_font_size_override("font_size", 28)
@@ -5653,7 +5700,7 @@ func _show_menu_profile() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, get_viewport().get_visible_rect().size.x * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	var t := Label.new()
 	t.text = "Личные настройки"
 	t.add_theme_font_size_override("font_size", 28)

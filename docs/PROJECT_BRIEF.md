@@ -443,3 +443,17 @@ game/data/items.json: все шлема/нагрудники/штаны — weig
 - Сундуки: гаранты — 3 тонких ProgressBar (10/30/80), кнопка открытия крупная золотая (bg #C78C1A, radius 12, font 18).
 - Личные: аватар 96×96. Настройки — без изменений (соответствуют ТЗ).
 - Тесты: --testmenu / --testauthwide зелёные. Билд + деплой OK (7 файлов, 0 ошибок).
+
+## Git/GitHub (2026-09-03)
+- Репозиторий: https://github.com/mgnLan/drop-zone (private), ветка main, origin привязан.
+- .gitignore: движок Godot, .godot, web_build, assets_src (1.3 ГБ), *.zip, deploy_regru/ftp_config.json (СЕКРЕТ, не коммитить!).
+- В git 427 файлов: game/ (код, модели, звуки, иконки), api/index.php, docs/, tools/, legacy_reference/.
+- Перед правками: git pull; после: commit + push.
+
+## v6.39 (2026-09-03) — мобильная вёрстка
+- project.godot: stretch/mode canvas_items+keep_height → disabled+expand. ГРАБЛЯ: canvas_items давал логические 1280px ширины на телефоне (масштаб 0.28 — микро-UI), а keep_height clamp'ил окно под 16:9.
+- _vw()/_vh() — CSS-пиксели: на web делим на window.devicePixelRatio через JavaScriptBridge (DPR 3 на телефонах). Все чтения get_visible_rect().size в меню/авторизации/бою переведены на _vw()/_vh().
+- Лобби на узком (<520px): лого 150×44, чипы — FlowContainer (перенос в 2-3 ряда), чат на всю ширину и стартует СВЁРНУТЫМ (конверты), scroll с полями 12px, ссылки поддержки — FlowContainer.
+- Отряд: заголовок 20px+autowrap, слоты адаптивной ширины (vw/4), заблокированные — «🔒 N», цвет ника — FlowContainer.
+- Тест: --testmenumobile (окно 360×800, скрины docs/test_*_mob.png: menu/squad/shop/chests/profile).
+- Регрессия: --testmenu, --testplay (ARMOR/BARREL) зелёные. Билд + деплой OK.
