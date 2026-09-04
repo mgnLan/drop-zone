@@ -2922,6 +2922,7 @@ func _show_levelup(i: int) -> void:
 		tnl.text = "%s %s — %d/%d" % [tal["icon"], tal["name"], cur, int(tal["max"])]
 		tnl.custom_minimum_size = Vector2(180 if _mob() else 240, 0)
 		tnl.add_theme_font_size_override("font_size", 13)
+		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
 		var tb := Button.new()
@@ -2942,6 +2943,13 @@ func _show_levelup(i: int) -> void:
 					_show_levelup(fi3)
 			)
 		trow.add_child(tb)
+		var tdesc := Label.new()
+		tdesc.text = "  " + str(tal["desc"])
+		tdesc.add_theme_font_size_override("font_size", 10 if _mob() else 11)
+		tdesc.add_theme_color_override("font_color", Color(0.65, 0.7, 0.75))
+		tdesc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tdesc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		trow.add_child(tdesc)
 	var ok := Button.new()
 	ok.text = "ПОДТВЕРДИТЬ"
 	_style_menu_button(ok)
@@ -5419,6 +5427,7 @@ func _show_menu_squad() -> void:
 		tnl.text = "%s %s — %d/%d" % [tal["icon"], tal["name"], cur, int(tal["max"])]
 		tnl.custom_minimum_size = Vector2(180 if _mob() else 240, 0)
 		tnl.add_theme_font_size_override("font_size", 13)
+		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
 		var tb := Button.new()
@@ -5441,6 +5450,13 @@ func _show_menu_squad() -> void:
 					_show_menu_squad()
 			)
 		trow.add_child(tb)
+		var tdesc2 := Label.new()
+		tdesc2.text = "  " + str(tal["desc"])
+		tdesc2.add_theme_font_size_override("font_size", 10 if _mob() else 11)
+		tdesc2.add_theme_color_override("font_color", Color(0.65, 0.7, 0.75))
+		tdesc2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tdesc2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		trow.add_child(tdesc2)
 	var spent := 0
 	for k3 in tprof.keys():
 		var r3 := int(tprof[k3])
