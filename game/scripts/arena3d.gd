@@ -4553,11 +4553,13 @@ func _logo_pulse(logo: CanvasItem) -> void:
 	tw.tween_property(logo, "modulate", Color(0.55, 1.35, 1.6), 0.7).set_trans(Tween.TRANS_SINE)
 	tw.tween_property(logo, "modulate", Color(1, 1, 1), 0.7).set_trans(Tween.TRANS_SINE)
 
-func _chip(icon: String, text: String) -> PanelContainer:
+func _chip(icon: String, text: String, tip := "") -> PanelContainer:
 	# чип показателя: SVG-иконка + текст (без эмодзи — надёжно в web)
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _frame_box())
-	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc.mouse_filter = Control.MOUSE_FILTER_PASS  # PASS — работает подсказка при наведении
+	if tip != "":
+		pc.tooltip_text = tip
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 6)
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -4568,10 +4570,12 @@ func _chip(icon: String, text: String) -> PanelContainer:
 	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	tr.custom_minimum_size = Vector2(16, 16)
 	tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hb.add_child(tr)
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", 13)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hb.add_child(l)
 	return pc
 
@@ -5020,13 +5024,13 @@ func _show_menu_main() -> void:
 		var ch: Control = _ui.menu_chips
 		for cc in ch.get_children():
 			cc.queue_free()
-		ch.add_child(_chip("person", _auth_email if _auth_email != "" else "Гость"))
+		ch.add_child(_chip("person", _auth_email if _auth_email != "" else "Гость", "Твой аккаунт. Гость — прогресс только на этом устройстве"))
 		_stamina_update()
-		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0))))
-		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0))))
-		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0)))))
-		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0))))
-		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0))))
+		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
+		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
+		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0))), "Энергия — тратится на бой, восстанавливается со временем"))
+		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — открывают слоты бойцов: 2-й на 3 победах, далее 10 и 25"))
+		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0)), "Всего противников уничтожено"))
 	# --- секция БОЙ: три карточки режимов (иконки-пиктограммы) ---
 	var wins: int = int(_profile.get("wins", 0))
 	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
