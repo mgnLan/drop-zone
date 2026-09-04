@@ -462,6 +462,7 @@ func _build_auth(auto: bool) -> void:
 		var ar := float(ltex.get_height()) / maxf(1.0, float(ltex.get_width()))
 		logo.custom_minimum_size = Vector2(logo_w, logo_w * ar)
 	col.add_child(logo)
+	_logo_pulse(logo)
 	# скролл на ВСЕХ разрешениях: макс. высота = вьюпорт - лого - отступы
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(minf(460.0, vw2 * 0.92),
@@ -1137,6 +1138,9 @@ func _make_lit(node: Node, palette := "") -> void:
 # ---------------- РАНДОМНАЯ ГЕНЕРАЦИЯ ----------------
 func _free_cell(min_d := 2, max_d := 18, footprint := 2) -> Vector2i:
 	# случайная свободная клетка на дистанции min_d..max_d от центра
+	# footprint 1 = одна клетка; вокруг объекта требуется зазор в 1 клетку,
+	# чтобы объекты не слипались в непроходимые стены
+	var r: int = footprint / 2
 	for attempt in 60:
 		var gx := _rng.randi_range(2, _grid_n - 3)
 		var gz := _rng.randi_range(2, _grid_n - 3)
@@ -1144,8 +1148,8 @@ func _free_cell(min_d := 2, max_d := 18, footprint := 2) -> Vector2i:
 		if d < min_d or d > max_d:
 			continue
 		var ok := true
-		for ox in range(-footprint / 2, footprint / 2 + 1):
-			for oz in range(-footprint / 2, footprint / 2 + 1):
+		for ox in range(-r - 1, r + 2):
+			for oz in range(-r - 1, r + 2):
 				if _occupied.has("%d,%d" % [gx + ox, gz + oz]):
 					ok = false
 		if ok:
@@ -1153,6 +1157,9 @@ func _free_cell(min_d := 2, max_d := 18, footprint := 2) -> Vector2i:
 	return Vector2i(-1, -1)
 
 func _claim(cell: Vector2i, footprint := 2) -> void:
+	if footprint <= 1:
+		_occupied[_key(cell)] = true
+		return
 	for ox in range(-footprint / 2, footprint / 2 + 1):
 		for oz in range(-footprint / 2, footprint / 2 + 1):
 			_occupied["%d,%d" % [cell.x + ox, cell.y + oz]] = true
@@ -1176,6 +1183,19 @@ func _generate_houses() -> void:
 		var model: String = HOUSE_MODELS[_rng.randi() % HOUSE_MODELS.size()]
 		var pal: String = HOUSE_PALETTES[_rng.randi() % HOUSE_PALETTES.size()]
 		var hnode := _place(B + model, gw(cell.x, cell.y), _rng.randf() * 360.0, 2.9 * k + 0.7, pal)
+		# подгонка: модель не должна визуально вылезать за занятые клетки (иначе «сквозь стены»)
+		var hb := AABB()
+		var hfirst := true
+		for mi in hnode.find_children("*", "MeshInstance3D", true, false):
+			var mt: Transform3D = hnode.global_transform.affine_inverse() * mi.global_transform
+			var mb: AABB = mt * mi.get_aabb()
+			hb = mb if hfirst else hb.merge(mb)
+			hfirst = false
+		if not hfirst:
+			var hw: float = maxf(hb.size.x, hb.size.z)
+			var target := (fp + 1) * CELL * 0.92
+			if hw > target:
+				hnode.scale *= target / hw
 		var tints := [Color(0.55, 0.33, 0.24), Color(0.42, 0.46, 0.54), Color(0.60, 0.52, 0.38), Color(0.36, 0.44, 0.32)]
 		_paint_house(hnode, tints[_rng.randi() % tints.size()])
 		_add_house_windows(hnode)
@@ -1247,7 +1267,7 @@ func _update_house_fade() -> void:
 
 func _generate_covers() -> void:
 	var k: float = _grid_n / 40.0
-	var n := maxi(4, int((_rng.randi_range(12, 16) if _biome == 0 else _rng.randi_range(14, 18)) * k))
+	var n := maxi(3, int((_rng.randi_range(10, 13) if _biome == 0 else _rng.randi_range(12, 15)) * k))
 	var pool: Array = COVER_MODELS if _biome == 0 else COVER_MODELS + ["Platform_2x2.gltf", "Platform_2x2.gltf", "AC_Stacked.gltf"]
 	for i in n:
 		var cell := _free_cell(4, _half_n - 1, 2)
@@ -1274,7 +1294,7 @@ func _generate_covers() -> void:
 		for cc4 in ccells:
 			_cover_at[_key(cc4)] = ck
 	# деревья — лёгкое укрытие (hp 2); в индустриалке почти нет
-	for i in maxi(1 if _biome == 1 else 3, int((_rng.randi_range(1, 3) if _biome == 1 else _rng.randi_range(8, 12)) * k)):
+	for i in maxi(1 if _biome == 1 else 2, int((_rng.randi_range(1, 2) if _biome == 1 else _rng.randi_range(6, 9)) * k)):
 		var tc := _free_cell(3, _half_n, 1)
 		if tc.x < 0:
 			continue
@@ -1284,7 +1304,7 @@ func _generate_covers() -> void:
 		_covers[_key(tc)] = {"hp": 30, "cells": [tc], "node": tnode, "heavy": false}
 		_cover_at[_key(tc)] = _key(tc)
 	# валуны — тяжёлое укрытие (hp 4), блокируют обзор
-	for i in maxi(2, int(_rng.randi_range(4, 6) * k)):
+	for i in maxi(2, int(_rng.randi_range(3, 5) * k)):
 		var rc := _free_cell(3, _half_n, 1)
 		if rc.x < 0:
 			continue
@@ -1294,7 +1314,7 @@ func _generate_covers() -> void:
 		_covers[_key(rc)] = {"hp": 80, "cells": [rc], "node": rnode, "heavy": true}
 		_cover_at[_key(rc)] = _key(rc)
 	# бочки с топливом — взрываются (hp 1), урон 20 вокруг; в индустриалке вдвое больше
-	for i in maxi(2, int((_rng.randi_range(8, 12) if _biome == 1 else _rng.randi_range(4, 6)) * k)):
+	for i in maxi(2, int((_rng.randi_range(6, 9) if _biome == 1 else _rng.randi_range(3, 5)) * k)):
 		var bc := _free_cell(3, _half_n, 1)
 		if bc.x < 0:
 			continue
@@ -3712,11 +3732,34 @@ func _build_ui() -> void:
 	scroll.add_child(lines)
 	_ui.chat_lines = lines
 	_ui.chat_scroll = scroll
+	var inrow_b := HBoxContainer.new()
+	inrow_b.add_theme_constant_override("separation", 4)
+	cvb.add_child(inrow_b)
 	var inp := LineEdit.new()
-	inp.placeholder_text = "Чат появится в онлайн-режиме…"
-	inp.editable = false
-	cvb.add_child(inp)
+	inp.placeholder_text = "Сообщение… (вкладки чатов, пока локально)"
+	inp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inp.text_submitted.connect(func(_t): _battle_chat_send(inp))
+	inrow_b.add_child(inp)
 	_ui.chat_input = inp
+	var emb2 := Button.new()
+	emb2.custom_minimum_size = Vector2(34, 30)
+	emb2.tooltip_text = "Эмодзи"
+	var emtr2 := TextureRect.new()
+	emtr2.texture = _icon_tex("smile")
+	emtr2.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	emtr2.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	emtr2.custom_minimum_size = Vector2(18, 18)
+	emtr2.set_anchors_preset(Control.PRESET_CENTER)
+	emtr2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	emb2.add_child(emtr2)
+	emb2.pressed.connect(func(): _toggle_emoji_panel(inp, chat))
+	inrow_b.add_child(emb2)
+	var sendb2 := Button.new()
+	sendb2.text = "»"
+	sendb2.custom_minimum_size = Vector2(34, 30)
+	sendb2.tooltip_text = "Отправить"
+	sendb2.pressed.connect(func(): _battle_chat_send(inp))
+	inrow_b.add_child(sendb2)
 	_render_chat()
 	# мобильный режим: лог свёрнут, разворачивается кнопкой
 	if minf(_vw(), _vh()) < 700.0:
@@ -3798,8 +3841,21 @@ func _layout_menu() -> void:
 
 # ---------- диалоговое окно: вкладки чатов/логов ----------
 var _chat_tab := 0
+var _battle_chat_local := [[], []]  # локальное эхо: [0]=Арена, [1]=Комната
 const CHAT_STUB_ARENA := ["Система: Чат Арены — общение участников текущего боя.", "Система: появится в онлайн-режиме."]
 const CHAT_STUB_ROOM := ["Система: Чат комнаты — ваше лобби перед боем.", "Система: появится в онлайн-режиме."]
+
+func _battle_chat_send(inp: LineEdit) -> void:
+	if _chat_tab == 0:
+		return  # во вкладке логов отправка недоступна
+	var t := inp.text.strip_edges()
+	if t == "":
+		return
+	inp.clear()
+	_battle_chat_local[_chat_tab - 1].append("Вы: " + t)
+	if _battle_chat_local[_chat_tab - 1].size() > 30:
+		_battle_chat_local[_chat_tab - 1].pop_front()
+	_render_chat()
 
 func _render_chat() -> void:
 	if not _ui.has("chat_lines"):
@@ -3814,6 +3870,9 @@ func _render_chat() -> void:
 	elif _chat_tab == 2:
 		data = CHAT_STUB_ROOM.duplicate()
 		col = Color(0.7, 0.85, 0.7)
+	if _chat_tab > 0:
+		for my_line in _battle_chat_local[_chat_tab - 1]:
+			data.append(my_line)
 	for line in data:
 		var l := Label.new()
 		l.text = line
@@ -4020,6 +4079,11 @@ func _run_testbots() -> void:
 func _run_testmenu(mobile := false) -> void:
 	var sfx := "_mob" if mobile else ""
 	await get_tree().process_frame
+	# дым-тест чата: локальное эхо с эмодзи + открытая панель эмодзи
+	_menu_chat_local[0].append("Вы: проверка эмодзи 😀🔥👍")
+	_render_menu_chat()
+	if _ui.has("menu_chat_input"):
+		_toggle_emoji_panel(_ui.menu_chat_input, _ui.menu_chat_panel)
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -4483,6 +4547,34 @@ func _section_title(t: String) -> HBoxContainer:
 	hb.add_child(line)
 	return hb
 
+func _logo_pulse(logo: CanvasItem) -> void:
+	# мигающая ярко-голубая подсветка логотипа
+	var tw := logo.create_tween().set_loops()
+	tw.tween_property(logo, "modulate", Color(0.55, 1.35, 1.6), 0.7).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(logo, "modulate", Color(1, 1, 1), 0.7).set_trans(Tween.TRANS_SINE)
+
+func _chip(icon: String, text: String) -> PanelContainer:
+	# чип показателя: SVG-иконка + текст (без эмодзи — надёжно в web)
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _frame_box())
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc.add_child(hb)
+	var tr := TextureRect.new()
+	tr.texture = _icon_tex(icon)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.custom_minimum_size = Vector2(16, 16)
+	tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(tr)
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 13)
+	hb.add_child(l)
+	return pc
+
 func _mk_label(t: String, fsize := 14) -> Label:
 	var l := Label.new()
 	l.text = t
@@ -4580,6 +4672,9 @@ const MENU_CHAT_STUBS := [
 	 "Система: кланы появятся в онлайн-режиме вместе с подпиской."],
 ]
 
+var _menu_chat_local := [[], [], []]  # локальные сообщения игрока (эхо до онлайна)
+const MENU_EMOJIS := ["😀", "😂", "😎", "😢", "😡", "🤝", "👍", "👎", "🔥", "💀", "⚡", "🏆", "❤️", "👋", "🎉", "💪"]
+
 func _render_menu_chat() -> void:
 	if not _ui.has("menu_chat_lines"):
 		return
@@ -4591,8 +4686,64 @@ func _render_menu_chat() -> void:
 		l.add_theme_font_size_override("font_size", 12)
 		l.modulate = Color(0.7, 0.85, 0.7)
 		_ui.menu_chat_lines.add_child(l)
+	for line2 in _menu_chat_local[_menu_chat_tab]:
+		var l2 := Label.new()
+		l2.text = line2
+		l2.add_theme_font_size_override("font_size", 12)
+		l2.modulate = Color(0.85, 0.95, 1.0)
+		_ui.menu_chat_lines.add_child(l2)
 	for ti in _ui.menu_chat_btns.size():
 		_ui.menu_chat_btns[ti].modulate = Color(1, 1, 1) if ti == _menu_chat_tab else Color(0.55, 0.55, 0.6)
+
+func _menu_chat_send(inp: LineEdit) -> void:
+	# локальное эхо: сообщение видно только игроку до появления онлайн-чата
+	var t := inp.text.strip_edges()
+	if t == "":
+		return
+	inp.clear()
+	_menu_chat_local[_menu_chat_tab].append("Вы: " + t)
+	if _menu_chat_local[_menu_chat_tab].size() > 30:
+		_menu_chat_local[_menu_chat_tab].pop_front()
+	_render_menu_chat()
+
+func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
+	# панель эмодзи над панелью чата (host); одна на каждый чат
+	var key := "emoji_panel_%d" % host.get_instance_id()
+	if _ui.has(key):
+		_ui[key].visible = not _ui[key].visible
+		return
+	var p := PanelContainer.new()
+	p.custom_minimum_size = Vector2(288, 0)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.08, 0.13, 0.95)
+	sb.set_corner_radius_all(8)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(0.3, 0.5, 0.6, 0.8)
+	p.add_theme_stylebox_override("panel", sb)
+	var grid := GridContainer.new()
+	grid.columns = 8
+	grid.add_theme_constant_override("h_separation", 2)
+	grid.add_theme_constant_override("v_separation", 2)
+	p.add_child(grid)
+	for em in MENU_EMOJIS:
+		var eb := Button.new()
+		eb.text = em
+		eb.custom_minimum_size = Vector2(34, 34)
+		eb.add_theme_font_size_override("font_size", 18)
+		var e: String = em
+		eb.pressed.connect(func():
+			inp.insert_text_at_caret(e)
+			inp.grab_focus()
+		)
+		grid.add_child(eb)
+	# над чатом: родитель — слой UI (нельзя в PanelContainer — он перезапишет геометрию)
+	var par := host.get_parent()
+	par.add_child(p)
+	p.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	var hr := host.get_rect()
+	p.position = Vector2(hr.position.x, hr.position.y - 108.0)
+	p.size = Vector2(300, 100)
+	_ui[key] = p
 
 func _start_mode(m: int) -> void:
 	if not _stamina_can_fight():
@@ -4654,6 +4805,7 @@ func _build_menu() -> void:
 	if ResourceLoader.exists("res://assets/ui/logo.png"):
 		logo.texture = load("res://assets/ui/logo.png")
 	top.add_child(logo)
+	_logo_pulse(logo)
 	_ui.menu_logo = logo
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4739,21 +4891,52 @@ func _build_menu() -> void:
 	var lines := VBoxContainer.new()
 	content.add_child(lines)
 	_ui.menu_chat_lines = lines
+	var inrow := HBoxContainer.new()
+	inrow.add_theme_constant_override("separation", 4)
+	content.add_child(inrow)
 	var inp := LineEdit.new()
-	inp.placeholder_text = "Чат появится в онлайн-режиме…"
-	inp.editable = false
-	content.add_child(inp)
+	inp.placeholder_text = "Сообщение… (пока локально)"
+	inp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inp.text_submitted.connect(func(_t): _menu_chat_send(inp))
+	inrow.add_child(inp)
+	_ui.menu_chat_input = inp
+	var emb := Button.new()
+	emb.custom_minimum_size = Vector2(36, 30)
+	emb.tooltip_text = "Эмодзи"
+	var emtr := TextureRect.new()
+	emtr.texture = _icon_tex("smile")
+	emtr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	emtr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	emtr.custom_minimum_size = Vector2(20, 20)
+	emtr.set_anchors_preset(Control.PRESET_CENTER)
+	emtr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	emb.add_child(emtr)
+	emb.pressed.connect(func(): _toggle_emoji_panel(inp, _ui.menu_chat_panel))
+	inrow.add_child(emb)
+	var sendb := Button.new()
+	sendb.text = "»"
+	sendb.custom_minimum_size = Vector2(36, 30)
+	sendb.tooltip_text = "Отправить"
+	sendb.pressed.connect(func(): _menu_chat_send(inp))
+	inrow.add_child(sendb)
 	var env := HBoxContainer.new()
 	env.add_theme_constant_override("separation", 8)
 	env.visible = false
 	chat_v.add_child(env)
 	_ui.menu_chat_env = env
-	var env_icons := ["🌐", "⚔️", "🛡️"]
+	var env_icons := ["globe", "swords", "shield"]
 	var env_tips := ["Общий чат", "Чат комнаты", "Чат с кланом"]
 	for ei in 3:
 		var eb := Button.new()
-		eb.text = env_icons[ei]
 		eb.custom_minimum_size = Vector2(64, 44)
+		var etr := TextureRect.new()
+		etr.texture = _icon_tex(env_icons[ei])
+		etr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		etr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		etr.custom_minimum_size = Vector2(24, 24)
+		etr.set_anchors_preset(Control.PRESET_CENTER)
+		etr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		eb.add_child(etr)
 		eb.tooltip_text = env_tips[ei]
 		var en: int = ei
 		eb.pressed.connect(func():
@@ -4775,6 +4958,10 @@ func _toggle_menu_chat() -> void:
 	var p: PanelContainer = _ui.menu_chat_panel
 	_ui.menu_chat_content.visible = not _menu_chat_collapsed
 	_ui.menu_chat_env.visible = _menu_chat_collapsed
+	if _menu_chat_collapsed:
+		for ek in _ui.keys():
+			if str(ek).begins_with("emoji_panel_"):
+				_ui[ek].visible = false
 	p.offset_top = -72.0 if _menu_chat_collapsed else -180.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
@@ -4833,13 +5020,13 @@ func _show_menu_main() -> void:
 		var ch: Control = _ui.menu_chips
 		for cc in ch.get_children():
 			cc.queue_free()
-		ch.add_child(_framed_label("👤 " + (_auth_email if _auth_email != "" else "Гость"), 13))
+		ch.add_child(_chip("person", _auth_email if _auth_email != "" else "Гость"))
 		_stamina_update()
-		ch.add_child(_framed_label("💰 %d" % int(_profile.get("coins", 0)), 13))
-		ch.add_child(_framed_label("💠 %d" % int(_profile.get("shards", 0)), 13))
-		ch.add_child(_framed_label("⚡ %d/100" % int(float(_profile.get("stamina", 100.0))), 13))
-		ch.add_child(_framed_label("🏆 %d" % int(_profile.get("wins", 0)), 13))
-		ch.add_child(_framed_label("💀 %d" % int(_profile.get("total_kills", 0)), 13))
+		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0))))
+		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0))))
+		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0)))))
+		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0))))
+		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0))))
 	# --- секция БОЙ: три карточки режимов (иконки-пиктограммы) ---
 	var wins: int = int(_profile.get("wins", 0))
 	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
@@ -6055,7 +6242,19 @@ func _show_inventory() -> void:
 			Callable(),
 			Callable()
 		)
-		grid.add_child(b)
+		var rowbox := HBoxContainer.new()
+		rowbox.add_theme_constant_override("separation", 4)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rowbox.add_child(b)
+		var db := Button.new()
+		db.text = "✕"
+		db.custom_minimum_size = Vector2(30, 56)
+		db.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		db.tooltip_text = "Выбросить на землю"
+		var di: int = idx
+		db.pressed.connect(func(): _drop_item(di))
+		rowbox.add_child(db)
+		grid.add_child(rowbox)
 	if f.backpack.is_empty():
 		var e := Label.new()
 		e.text = "(пусто — ищите ящики)"
@@ -6150,7 +6349,19 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 			if _selected >= 0:
 				_show_inventory()
 		)
-		grid.add_child(b2)
+		var rowbox2 := HBoxContainer.new()
+		rowbox2.add_theme_constant_override("separation", 3)
+		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rowbox2.add_child(b2)
+		var db2 := Button.new()
+		db2.text = "✕"
+		db2.custom_minimum_size = Vector2(30, 50)
+		db2.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		db2.tooltip_text = "Выбросить на землю"
+		var di2: int = idx
+		db2.pressed.connect(func(): _drop_item(di2))
+		rowbox2.add_child(db2)
+		grid.add_child(rowbox2)
 	if f.backpack.is_empty():
 		var e := Label.new()
 		e.text = "(пусто — ищите ящики)"
@@ -6178,6 +6389,35 @@ func _unequip(cat: String) -> void:
 	_log("%s снял: %s" % [f.name, it["name"]])
 	_show_inventory()
 	_refresh_fighter_panel()
+
+func _drop_item(idx: int) -> void:
+	# выбросить предмет из рюкзака на клетку под бойцом (становится ящиком-лутом)
+	if _selected < 0:
+		return
+	var f = _fighters[_selected]
+	if idx < 0 or idx >= f.backpack.size():
+		return
+	var entry = f.backpack[idx]
+	f.backpack.remove_at(idx)
+	# кладём на ближайшую свободную соседнюю клетку (на своей — иначе ящик не открыть)
+	var target: Vector2i = f.cell
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var n: Vector2i = f.cell + d
+		if n.x < 0 or n.y < 0 or n.x >= _grid_n or n.y >= _grid_n:
+			continue
+		var nk := _key(n)
+		if not _occupied.has(nk) and not _unit_at.has(nk):
+			target = n
+			break
+	var key := _key(target)
+	if not _chests.has(key):
+		_chests[key] = []
+		_place(C + "Lootbox.gltf", gw(target.x, target.y), _rng.randf() * 360.0, 0.7)
+	_chests[key].append(entry)
+	_log("%s выбросил: %s" % [f.name, entry["item"].get("name", "?")])
+	_recalc_derived(f)
+	_refresh_fighter_panel()
+	_show_inventory()
 
 # ---------- сужающаяся зона (королевская битва) ----------
 func _in_zone(c: Vector2i) -> bool:
