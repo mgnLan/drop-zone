@@ -846,6 +846,7 @@ func _load_profile() -> void:
 		"gender": "m",            # m/f — мужчина/женщина
 		"skin": 0,                # 0..3 — оттенок кожи
 		"outfit": 0,              # камуфляж отряда (индекс OUTFIT_SKINS)
+		"title": "",              # титул за вход в тир (Ветеран/Элита/Легенда)
 		"owned_outfits": [1, 0, 0, 0, 0],  # купленные камуфляжи (0 стандарт)
 		"frame": 0,               # рамка аватара: 0 стандарт, 1 неон, 2 золото (монетизация)
 		"nick_color": 0,          # цвет ника: 0 белый, 1 красный, 2 золото (монетизация)
@@ -900,6 +901,7 @@ func _load_profile() -> void:
 	_profile.gender = cfg.get_value("player", "gender", "m")
 	_profile.skin = int(cfg.get_value("player", "skin", 0))
 	_profile.outfit = int(cfg.get_value("player", "outfit", 0))
+	_profile.title = str(cfg.get_value("player", "title", ""))
 	_profile.owned_outfits = cfg.get_value("player", "owned_outfits", [1, 0, 0, 0, 0])
 	_profile.frame = int(cfg.get_value("player", "frame", 0))
 	_profile.nick_color = int(cfg.get_value("player", "nick_color", 0))
@@ -947,6 +949,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "gender", _profile.gender)
 	cfg.set_value("player", "skin", _profile.skin)
 	cfg.set_value("player", "outfit", int(_profile.get("outfit", 0)))
+	cfg.set_value("player", "title", str(_profile.get("title", "")))
 	cfg.set_value("player", "owned_outfits", _profile.get("owned_outfits", [1, 0, 0, 0, 0]))
 	cfg.set_value("player", "frame", _profile.frame)
 	cfg.set_value("player", "nick_color", _profile.nick_color)
@@ -1925,7 +1928,8 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 		var w := p.find_child(wn, true, false)
 		if w and w is Node3D:
 			w.visible = (wn == weapon)
-	_teleport_in(p, Vector2i(gx, gz))
+	# луч телепорта показываем только своим: эффект врага выдаёт позицию до тумана войны
+	_teleport_in(p, Vector2i(gx, gz), team_idx == 0)
 	var pad := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.45
@@ -2138,10 +2142,12 @@ func _graffiti_selected() -> void:
 	_log("%s оставляет граффити 🎨" % f.name)
 	_refresh_card()
 
-func _teleport_in(node: Node3D, cell: Vector2i) -> void:
+func _teleport_in(node: Node3D, cell: Vector2i, show_fx := true) -> void:
 	# эффект появления бойца (~2 сек): «луч» с неба или «чёрная дыра»; стиль из настроек
 	if not OS.get_cmdline_user_args().is_empty():
 		return   # в тестовых прогонах эффекты не нужны (скриншоты)
+	if not show_fx:
+		return   # чужой луч = подсветка позиции врага (туман войны)
 	var style: String = str(_profile.get("teleport", "beam"))
 	var wp := gw(cell.x, cell.y)
 	node.scale = Vector3.ONE * 0.01
@@ -3014,9 +3020,33 @@ func _kill(i: int) -> void:
 # ---------- опыт и уровни ----------
 var _lvl_open := false
 var _lvl_wrap: CenterContainer = null
+# тиры-лиги: название, первый уровень, награда за вход (титул + рамка/камуфляж)
+const XP_TIERS := [
+	{"name": "Рекруты", "min": 1},
+	{"name": "Ветераны", "min": 13, "title": "Ветеран", "frame": 9},
+	{"name": "Элита", "min": 25, "title": "Элита", "frame": 10, "outfit": 5},
+	{"name": "Легенды", "min": 40, "title": "Легенда", "frame": 11},
+]
+# награды за вход в тир выдаются при достижении уровня (см. _gain_xp)
+const TIER_TITLE_KEY := "titles"
 
 func _xp_need(lvl: int) -> int:
-	return int(floor(100.0 * pow(1.35, lvl - 1)))
+	# тиры прогрессии: Рекруты 1-12, Ветераны 13-24, Элита 25-39, Легенды 40+ (без потолка).
+	# Цель: 1 бой (~250 XP) = не больше ~25% уровня на старте, дальше — дольше и дольше.
+	if lvl <= 12:
+		return 1000 + 120 * (lvl - 1)
+	if lvl <= 24:
+		return 2800 + 350 * (lvl - 13)
+	if lvl <= 39:
+		return 7000 + 700 * (lvl - 25)
+	return int(20000.0 * pow(1.06, lvl - 40))
+
+func _xp_tier(lvl: int) -> int:
+	var t := 0
+	for i in XP_TIERS.size():
+		if lvl >= int(XP_TIERS[i]["min"]):
+			t = i
+	return t
 
 func _recalc_derived(f: Dictionary, heal := false) -> void:
 	f.max_hp = _stat_hp(f.stats) + 3 * (int(f.lvl) - 1)
@@ -3037,6 +3067,7 @@ func _gain_xp(i: int, amount: int) -> void:
 	var bonus := 1.0 + 0.1 * int(f.stats.get("int", 0))
 	f.xp = int(f.xp) + int(round(amount * bonus))
 	var leveled := false
+	var old_lvl := int(f.lvl)
 	while int(f.xp) >= _xp_need(int(f.lvl)):
 		f.xp = int(f.xp) - _xp_need(int(f.lvl))
 		f.lvl = int(f.lvl) + 1
@@ -3044,6 +3075,8 @@ func _gain_xp(i: int, amount: int) -> void:
 		if int(f.lvl) % 3 == 0:
 			f.tpts = int(f.get("tpts", 0)) + 1
 		leveled = true
+	if leveled:
+		_tier_rewards_check(old_lvl, int(f.lvl))
 	if not leveled:
 		return
 	_recalc_derived(f, true)
@@ -3059,6 +3092,22 @@ func _gain_xp(i: int, amount: int) -> void:
 		_recalc_derived(f, true)
 	elif not _lvl_open:
 		_show_levelup(i)
+
+func _tier_rewards_check(old_lvl: int, new_lvl: int) -> void:
+	# вход в тир: титул + рамка/камуфляж (выдаём один раз, награды — косметика)
+	for ti in range(1, XP_TIERS.size()):
+		var tmin := int(XP_TIERS[ti]["min"])
+		if old_lvl < tmin and new_lvl >= tmin:
+			if XP_TIERS[ti].has("title"):
+				_profile.title = str(XP_TIERS[ti]["title"])
+				_log("🏅 Новый титул: %s!" % _profile.title)
+			if XP_TIERS[ti].has("frame"):
+				if not _owned_grant("frame", int(XP_TIERS[ti]["frame"])):
+					_log("🎁 Награда тира: рамка «%s»!" % FRAME_NAMES[int(XP_TIERS[ti]["frame"])])
+			if XP_TIERS[ti].has("outfit"):
+				if not _owned_grant("outfit", int(XP_TIERS[ti]["outfit"])):
+					_log("🎁 Награда тира: камуфляж «%s»!" % OUTFIT_SKINS[int(XP_TIERS[ti]["outfit"])]["name"])
+			_save_profile()
 
 func _lvl_add(f: Dictionary, k: String, d: int, val: Label, pts: Label) -> void:
 	if d > 0 and int(f.pts) <= 0:
@@ -4393,6 +4442,10 @@ func _run_testmenu(mobile := false) -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_bp%s.png" % sfx)
+	_show_menu_progress()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_progress%s.png" % sfx)
 	print("TESTMENU_SAVED")
 	get_tree().quit()
 
@@ -5417,11 +5470,13 @@ func _show_menu_main() -> void:
 	chests.pressed.connect(_show_menu_chests)
 	var bp := _ctrl_button("ticket", "Battle Pass")
 	bp.pressed.connect(_show_menu_bp)
+	var prog := _ctrl_button("trophy", "Прогрессия")
+	prog.pressed.connect(_show_menu_progress)
 	var prof := _ctrl_button("profile", "Личные")
 	prof.pressed.connect(_show_menu_profile)
 	var sett := _ctrl_button("gear", "Настройки")
 	sett.pressed.connect(_show_menu_settings)
-	var ctrls: Array = [squad, shop, chests, bp, prof, sett]
+	var ctrls: Array = [squad, shop, chests, bp, prog, prof, sett]
 	var vw4: float = _vw()
 	vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92) if vw4 >= 980.0 else minf(560.0, vw4 * 0.92), 0)
 	vb.add_child(_section_title("БОЙ"))
@@ -5547,8 +5602,9 @@ const OUTFIT_SKINS := [
 	{"name": "Север", "col": Color(0.72, 0.84, 0.96)},
 	{"name": "Тень", "col": Color(0.42, 0.44, 0.56)},
 	{"name": "Кровь", "col": Color(1.0, 0.42, 0.38)},
+	{"name": "Элита", "col": Color(0.85, 0.85, 0.3)},   # 5 — награда за вход в тир «Элита»
 ]
-const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", "Камуфляж", "Пустыня", "Крипто", "Пламя", "Призрак", "Сиреневая"]
+const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", "Камуфляж", "Пустыня", "Крипто", "Пламя", "Призрак", "Сиреневая", "Ветеран", "Элита", "Легенда"]
 const NICK_COLORS := [Color(1, 1, 1), Color(1, 0.35, 0.45), Color(1, 0.85, 0.3), Color(0.2, 0.9, 0.45), Color(0.5, 0.8, 1.0), Color(0.7, 0.4, 1.0), Color(1.0, 0.55, 0.2), Color(0.85, 0.12, 0.18), Color(1.0, 0.5, 1.0)]
 const NICK_COLOR_NAMES := ["Белый", "Красный", "Золотой", "Изумруд", "Ледяной", "Фиолет", "Закат", "Кровавый", "Сиреневый"]
 
@@ -5964,6 +6020,104 @@ func _bp_claim(lv: int, prem: bool) -> void:
 	arr[lv] = 1
 	_profile[key] = arr
 	_save_profile()
+
+# ---------- экран «Прогрессия»: лестница уровней и тиров ----------
+func _show_menu_progress() -> void:
+	var vb: VBoxContainer = _ui.menu_box
+	for c in vb.get_children():
+		c.queue_free()
+	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
+	vb.add_child(_screen_title("trophy", "Прогрессия"))
+	# текущее состояние главного бойца (самого прокачанного)
+	var bi := 0
+	for i in range(1, _profile.names.size()):
+		if int(_profile.lvl[i]) > int(_profile.lvl[bi]):
+			bi = i
+	var lvl := int(_profile.lvl[bi])
+	var tier := _xp_tier(lvl)
+	var tname := str(XP_TIERS[tier]["name"])
+	var nxt := ""
+	if tier + 1 < XP_TIERS.size():
+		nxt = " · до тира «%s»: %d ур." % [str(XP_TIERS[tier + 1]["name"]), int(XP_TIERS[tier + 1]["min"]) - lvl]
+	var head := Label.new()
+	var ttl := str(_profile.get("title", ""))
+	head.text = "%s — %d ур. · тир «%s»%s%s" % [_profile.names[bi], lvl, tname, (" · титул «%s»" % ttl) if ttl != "" else "", nxt]
+	head.add_theme_font_size_override("font_size", 15)
+	vb.add_child(head)
+	var bar := ProgressBar.new()
+	bar.max_value = _xp_need(lvl)
+	bar.value = int(_profile.xp[bi])
+	bar.custom_minimum_size = Vector2(0, 14)
+	bar.show_percentage = false
+	vb.add_child(bar)
+	var xp_lbl := Label.new()
+	xp_lbl.text = "Опыт %d/%d (бой ≈ +250, убийство +50)" % [int(_profile.xp[bi]), _xp_need(lvl)]
+	xp_lbl.add_theme_font_size_override("font_size", 12)
+	xp_lbl.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	vb.add_child(xp_lbl)
+	# лестница: по каждому тиру — веха входа и ряды уровней с наградами
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, minf(360.0, _vh() * 0.5))
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vb.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 6)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+	for ti in XP_TIERS.size():
+		var t: Dictionary = XP_TIERS[ti]
+		var tmin := int(t["min"])
+		var tmax := (int(XP_TIERS[ti + 1]["min"]) - 1) if ti + 1 < XP_TIERS.size() else 999
+		var th := Label.new()
+		th.text = "— %s (ур. %d%s) —" % [str(t["name"]), tmin, ("–%d" % tmax) if tmax < 900 else "+"]
+		th.add_theme_font_size_override("font_size", 15)
+		th.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4) if ti > 0 else Color(0.8, 0.85, 0.95))
+		list.add_child(th)
+		if ti > 0:
+			var rw := Label.new()
+			var rwd := "Вход: титул «%s»" % str(t.get("title", ""))
+			if t.has("frame"):
+				rwd += " + рамка «%s»" % FRAME_NAMES[int(t["frame"])]
+			if t.has("outfit"):
+				rwd += " + камуфляж «%s»" % OUTFIT_SKINS[int(t["outfit"])]["name"]
+			rw.text = "🏆 " + rwd
+			rw.add_theme_font_size_override("font_size", 13)
+			rw.add_theme_color_override("font_color", Color(1.0, 0.75, 0.35))
+			list.add_child(rw)
+		# уровни тира: компактно, по 4 в строке
+		var rows := GridContainer.new()
+		rows.columns = 4
+		rows.add_theme_constant_override("h_separation", 6)
+		rows.add_theme_constant_override("v_separation", 4)
+		list.add_child(rows)
+		var shown := 0
+		var lv := tmin
+		while lv <= tmax and shown < 12:
+			var reached := lvl >= lv
+			var cell := Label.new()
+			var reward := "очки"
+			if lv % 3 == 0:
+				reward = "+талант"
+			cell.text = "ур.%d %s" % [lv, reward]
+			cell.add_theme_font_size_override("font_size", 12)
+			cell.add_theme_color_override("font_color", Color(0.55, 0.9, 0.6) if reached else Color(0.55, 0.6, 0.68))
+			rows.add_child(cell)
+			shown += 1
+			lv += 1
+		if tmax > tmin + 11:
+			var more := Label.new()
+			more.text = "…"
+			more.add_theme_font_size_override("font_size", 12)
+			rows.add_child(more)
+	var hint := Label.new()
+	hint.text = "Каждый уровень: очки характеристик (5 до 5-го ур., дальше 3). Каждый 3-й уровень: очко таланта."
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(hint)
+	var back := _menu_button("← Назад")
+	back.pressed.connect(_show_menu_main)
+	vb.add_child(back)
 
 func _show_menu_bp() -> void:
 	var vb: VBoxContainer = _ui.menu_box
