@@ -669,10 +669,14 @@ const SHOP_ITEMS := [
 	{"kind": "frame", "idx": 2, "name": "Рамка «Золото»", "price": 500},
 	{"kind": "nick_color", "idx": 1, "name": "Цвет ника «Красный»", "price": 150},
 	{"kind": "nick_color", "idx": 2, "name": "Цвет ника «Золотой»", "price": 400},
+	{"kind": "outfit", "idx": 1, "name": "Камуфляж «Пустыня»", "price": 200},
+	{"kind": "outfit", "idx": 2, "name": "Камуфляж «Север»", "price": 350},
+	{"kind": "outfit", "idx": 4, "name": "Камуфляж «Кровь»", "price": 400},
 ]
 
 func _shop_owned(kind: String, idx: int) -> bool:
-	var arr: Array = _profile.get("owned_frames" if kind == "frame" else "owned_colors", [1, 0, 0])
+	var key := "owned_frames" if kind == "frame" else ("owned_colors" if kind == "nick_color" else "owned_outfits")
+	var arr: Array = _profile.get(key, [1, 0, 0])
 	return idx < arr.size() and int(arr[idx]) == 1
 
 func _shop_equipped(kind: String, idx: int) -> bool:
@@ -681,6 +685,8 @@ func _shop_equipped(kind: String, idx: int) -> bool:
 func _shop_equip(kind: String, idx: int) -> void:
 	if kind == "frame":
 		_profile.frame = idx
+	elif kind == "outfit":
+		_profile.outfit = idx
 	else:
 		_profile.nick_color = idx
 	_save_profile()
@@ -693,7 +699,7 @@ func _shop_buy(si: int) -> void:
 	if int(_profile.get("coins", 0)) < price:
 		return
 	_profile.coins = int(_profile.get("coins", 0)) - price
-	var key := "owned_frames" if kind == "frame" else "owned_colors"
+	var key := "owned_frames" if kind == "frame" else ("owned_colors" if kind == "nick_color" else "owned_outfits")
 	var arr: Array = _profile.get(key, [1, 0, 0]).duplicate()
 	while arr.size() <= idx:
 		arr.append(0)
@@ -783,6 +789,8 @@ func _load_profile() -> void:
 		"avatar_preset": 1,
 		"gender": "m",            # m/f — мужчина/женщина
 		"skin": 0,                # 0..3 — оттенок кожи
+		"outfit": 0,              # камуфляж отряда (индекс OUTFIT_SKINS)
+		"owned_outfits": [1, 0, 0, 0, 0],  # купленные камуфляжи (0 стандарт)
 		"frame": 0,               # рамка аватара: 0 стандарт, 1 неон, 2 золото (монетизация)
 		"nick_color": 0,          # цвет ника: 0 белый, 1 красный, 2 золото (монетизация)
 		"unlocked_slots": 1,      # стартовый игрок: 1 слот; остальные — заслуги/подписка
@@ -835,6 +843,8 @@ func _load_profile() -> void:
 	_profile.avatar_preset = int(cfg.get_value("player", "avatar_preset", 1))
 	_profile.gender = cfg.get_value("player", "gender", "m")
 	_profile.skin = int(cfg.get_value("player", "skin", 0))
+	_profile.outfit = int(cfg.get_value("player", "outfit", 0))
+	_profile.owned_outfits = cfg.get_value("player", "owned_outfits", [1, 0, 0, 0, 0])
 	_profile.frame = int(cfg.get_value("player", "frame", 0))
 	_profile.nick_color = int(cfg.get_value("player", "nick_color", 0))
 	_profile.unlocked_slots = int(cfg.get_value("player", "unlocked_slots", 1))
@@ -880,6 +890,8 @@ func _save_profile() -> void:
 	cfg.set_value("player", "avatar_preset", _profile.avatar_preset)
 	cfg.set_value("player", "gender", _profile.gender)
 	cfg.set_value("player", "skin", _profile.skin)
+	cfg.set_value("player", "outfit", int(_profile.get("outfit", 0)))
+	cfg.set_value("player", "owned_outfits", _profile.get("owned_outfits", [1, 0, 0, 0, 0]))
 	cfg.set_value("player", "frame", _profile.frame)
 	cfg.set_value("player", "nick_color", _profile.nick_color)
 	cfg.set_value("player", "unlocked_slots", _profile.unlocked_slots)
@@ -1589,6 +1601,7 @@ func _damage_covers(cell: Vector2i, radius: int) -> void:
 				_damage_cover_hit(ck2, 25, "Взрыв")
 
 var _plaster_tex: Texture2D = null
+var _outfit_mats := {}        # кэш тинтованных материалов камуфляжей: "mat_id|idx" -> Material
 func _paint_house(node: Node3D, col: Color) -> void:
 	# штукатурка: тинт + бесшовная текстура в трипланарной проекции (без полос атласа)
 	if _plaster_tex == null and ResourceLoader.exists("res://assets/tiles/plaster.png"):
@@ -1824,10 +1837,34 @@ func _weapon_by_id(wid: String) -> Dictionary:
 			return w
 	return {}
 
+func _apply_outfit(p: Node3D, idx: int) -> void:
+	# камуфляж: тинт главного материала одежды (Character_Main / Hazmat_Main / Enemy_Red),
+	# палитра модели и тон кожи сохраняются
+	if idx <= 0 or idx >= OUTFIT_SKINS.size():
+		return
+	var col: Color = OUTFIT_SKINS[idx].get("col") if OUTFIT_SKINS[idx].get("col") != null else Color.WHITE
+	for mi in p.find_children("*", "MeshInstance3D", true, false):
+		for si in mi.mesh.get_surface_count():
+			var mat: Material = mi.get_active_material(si)
+			if mat == null or not (mat is StandardMaterial3D):
+				continue
+			if not (str(mat.resource_name) in OUTFIT_MAIN_MATS):
+				continue
+			var ckey := "%d|%d" % [mat.get_instance_id(), idx]
+			if not _outfit_mats.has(ckey):
+				var dm: StandardMaterial3D = (mat as StandardMaterial3D).duplicate()
+				dm.albedo_color = col
+				_outfit_mats[ckey] = dm
+			mi.set_surface_override_material(si, _outfit_mats[ckey])
+
 func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}) -> void:
 	if st.is_empty():
 		st = _default_fighter_stats()
 	var p: Node3D = _place(H + model + ".gltf", gw(gx, gz), rot_y, HUMAN_SCALE)
+	if team_idx == 0:
+		_apply_outfit(p, int(_profile.get("outfit", 0)))
+	else:
+		_apply_outfit(p, _rng.randi_range(1, OUTFIT_SKINS.size() - 1))
 	for wn in WEAPON_NODES:
 		var w := p.find_child(wn, true, false)
 		if w and w is Node3D:
@@ -5446,6 +5483,15 @@ func _stat_points_left(st: Dictionary, lvl := 1) -> int:
 	return STAT_POINTS + 5 * mini(lvl - 1, 4) + 3 * maxi(0, lvl - 5) - spent
 
 const SKIN_NAMES := ["Светлый", "Смуглый", "Тёмный", "Фарфоровый"]
+# камуфляжи (скины одежды): тинт главного материала модели, текстура и лицо сохраняются
+const OUTFIT_MAIN_MATS := ["Character_Main", "Hazmat_Main", "Enemy_Red"]
+const OUTFIT_SKINS := [
+	{"name": "Штурм", "col": null},                      # 0 — стандарт, всегда есть
+	{"name": "Пустыня", "col": Color(0.88, 0.74, 0.45)},
+	{"name": "Север", "col": Color(0.72, 0.84, 0.96)},
+	{"name": "Тень", "col": Color(0.42, 0.44, 0.56)},
+	{"name": "Кровь", "col": Color(1.0, 0.42, 0.38)},
+]
 const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", "Камуфляж", "Пустыня", "Крипто", "Пламя", "Призрак", "Сиреневая"]
 const NICK_COLORS := [Color(1, 1, 1), Color(1, 0.35, 0.45), Color(1, 0.85, 0.3), Color(0.2, 0.9, 0.45), Color(0.5, 0.8, 1.0), Color(0.7, 0.4, 1.0), Color(1.0, 0.55, 0.2), Color(0.85, 0.12, 0.18), Color(1.0, 0.5, 1.0)]
 const NICK_COLOR_NAMES := ["Белый", "Красный", "Золотой", "Изумруд", "Ледяной", "Фиолет", "Закат", "Кровавый", "Сиреневый"]
@@ -5578,6 +5624,41 @@ func _show_menu_squad() -> void:
 				_show_menu_squad()
 			)
 			srow.add_child(sb)
+		# камуфляж отряда — свотчи цветов; не купленные показываем с замком
+		var orow := HBoxContainer.new()
+		orow.add_theme_constant_override("separation", 4)
+		vb.add_child(orow)
+		var ol := Label.new()
+		ol.text = "Камуфляж:"
+		orow.add_child(ol)
+		var owned_of: Array = _profile.get("owned_outfits", [1, 0, 0, 0, 0])
+		for oi in OUTFIT_SKINS.size():
+			var ob := Button.new()
+			ob.custom_minimum_size = Vector2(34, 30)
+			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
+			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "🔒"
+			var os: StyleBoxFlat = StyleBoxFlat.new()
+			os.bg_color = OUTFIT_SKINS[oi]["col"] if OUTFIT_SKINS[oi]["col"] != null else Color(0.25, 0.35, 0.25)
+			os.set_corner_radius_all(6)
+			if int(_profile.get("outfit", 0)) == oi:
+				os.border_color = Color(1, 1, 1)
+				os.set_border_width_all(2)
+			else:
+				os.border_color = Color(1, 1, 1, 0.3)
+				os.set_border_width_all(1)
+			ob.add_theme_stylebox_override("normal", os)
+			ob.add_theme_stylebox_override("hover", os)
+			ob.add_theme_stylebox_override("pressed", os)
+			ob.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
+			if owned_ofi:
+				var ov: int = oi
+				ob.pressed.connect(func():
+					_profile.outfit = ov
+					_save_profile()
+					_show_menu_squad()
+				)
+			orow.add_child(ob)
 		# цвет ника (монетизация) — 9 цветных квадратов (переносятся на узких экранах)
 		var crow := FlowContainer.new()
 		crow.add_theme_constant_override("h_separation", 4)
@@ -5775,7 +5856,7 @@ const BP_TABLE_PREM := {
 	9: {"kind": "nick", "idx": 6, "name": "Ник «Закат»"},
 	12: {"kind": "shards", "n": 120, "name": "120 💠"},
 	15: {"kind": "taunt", "idx": 1, "name": "Насмешки «Дерзкие»"},
-	18: {"kind": "coins", "n": 300, "name": "300 💰"},
+	18: {"kind": "outfit", "idx": 3, "name": "Камуфляж «Тень» (экскл.)"},
 	21: {"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
 	24: {"kind": "shards", "n": 240, "name": "240 💠"},
 	27: {"kind": "coins", "n": 450, "name": "450 💰"},
@@ -5815,6 +5896,9 @@ func _bp_claim(lv: int, prem: bool) -> void:
 		"taunt":
 			if _owned_grant("taunt", int(rw["idx"])):
 				_profile.shards = int(_profile.get("shards", 0)) + 25
+		"outfit":
+			if _owned_grant("outfit", int(rw["idx"])):
+				_profile.shards = int(_profile.get("shards", 0)) + 60
 		"teleport":
 			var ots: Array = _profile.get("owned_teleports", [1, 1, 0]).duplicate()
 			while ots.size() < 3:
@@ -5859,7 +5943,7 @@ func _show_menu_bp() -> void:
 	if int(_profile.get("bp_owned", 0)) != 1:
 		var buy := _menu_button("👑 Premium — 399 ₽ (платежи после запуска онлайна)")
 		buy.disabled = true
-		buy.tooltip_text = "Premium-лента сезона: 930 монет, 450 осколков, ник «Закат», насмешки, рамка «Крипто», телепорт «Шторм»"
+		buy.tooltip_text = "Premium-лента сезона: 630 монет, 450 осколков, ник «Закат», насмешки, камуфляж «Тень» (эксклюзив), рамка «Крипто», телепорт «Шторм»"
 		vb.add_child(buy)
 	else:
 		vb.add_child(_framed_label("👑 Premium активен", 14))
@@ -5934,7 +6018,13 @@ func _taunt_lines() -> Array:
 
 func _owned_grant(kind: String, idx: int) -> bool:
 	# выдать косметику; true = уже была (дубликат)
-	var key := "owned_frames" if kind == "frame" else ("owned_colors" if kind == "nick" else "owned_taunts")
+	var key := "owned_taunts"
+	if kind == "frame":
+		key = "owned_frames"
+	elif kind == "nick":
+		key = "owned_colors"
+	elif kind == "outfit":
+		key = "owned_outfits"
 	var arr: Array = _profile.get(key, [1, 0, 0]).duplicate()
 	while arr.size() <= idx:
 		arr.append(0)
@@ -6171,6 +6261,8 @@ func _show_menu_shop() -> void:
 		var pvs := StyleBoxFlat.new()
 		if kind == "nick_color" and idx < NICK_COLORS.size():
 			pvs.bg_color = NICK_COLORS[idx]
+		elif kind == "outfit" and idx < OUTFIT_SKINS.size() and OUTFIT_SKINS[idx].get("col") != null:
+			pvs.bg_color = OUTFIT_SKINS[idx]["col"]
 		else:
 			pvs.bg_color = Color(0.1, 0.12, 0.16)
 			pvs.border_color = FRAME_ACCENTS[idx] if idx < FRAME_ACCENTS.size() else Color.WHITE
