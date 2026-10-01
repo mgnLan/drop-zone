@@ -310,7 +310,7 @@ func _ready() -> void:
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		var name := "slice_3d_v5_closeup" if args.has("--closeup") else "slice_3d_v5"
-		get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/%s.png" % name)
+		get_viewport().get_texture().get_image().save_png("user://%s.png" % name)
 		print("SHOT_SAVED seed=", _rng.seed)
 		get_tree().quit()
 	elif args.has("--testplay"):
