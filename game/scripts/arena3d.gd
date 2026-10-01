@@ -45,6 +45,8 @@ const OPEN_CHEST_AP := 2
 const RELOAD_AP := 2
 const HIT_CHANCE := 0.8
 const VISION := 10           # радиус обзора бойца (туман войны)
+const GUARD_PER_AP := 2      # укрепление: непотраченное ОД -> временная броня (2 за ОД)
+const GUARD_MAX := 6         # потолок укрепления за ход
 
 var _fighters := []          # см. _spawn_human
 var _unit_at := {}           # "x,z" -> индекс в _fighters
@@ -2352,7 +2354,7 @@ func _alive_count(team: int) -> int:
 	return n
 
 func _defense(f: Dictionary) -> int:
-	var d := 0
+	var d := int(f.get("guard", 0))
 	for slot in ["helmets", "body", "pants"]:
 		if f.armor[slot]:
 			d += f.armor[slot].get("defense", 0)
@@ -2883,6 +2885,7 @@ func _recalc_derived(f: Dictionary, heal := false) -> void:
 	if heal:
 		f.hp = f.max_hp
 		f.ap = f.max_ap
+		f.guard = 0
 	f.hp = mini(int(f.hp), int(f.max_hp))
 	f.ap = mini(int(f.ap), int(f.max_ap))
 
@@ -3366,6 +3369,13 @@ func _end_turn() -> void:
 		_onboard_finish()
 	_busy = true
 	_deselect()
+	# УКРЕПЛЕНИЕ: непотраченные ОД отряда игрока -> временная броня до его следующего хода
+	for i in _fighters.size():
+		var f = _fighters[i]
+		if f.alive and f.team == 0:
+			f.guard = mini(GUARD_PER_AP * int(f.ap), GUARD_MAX)
+			if f.guard > 0:
+				_log("%s укрепляет позицию: +%d к броне" % [f.name, f.guard])
 	_log("Ход противника...")
 	await get_tree().create_timer(0.4).timeout
 	for i in _fighters.size():
@@ -3374,6 +3384,11 @@ func _end_turn() -> void:
 		var f = _fighters[i]
 		if f.team == 1 and f.alive:
 			await _bot_act(i)
+	# укрепление и для ботов (симметрия; обычно ОД у них не остаётся)
+	for i in _fighters.size():
+		var f = _fighters[i]
+		if f.alive and f.team == 1:
+			f.guard = mini(GUARD_PER_AP * int(f.ap), GUARD_MAX)
 	if not _game_over:
 		_tick_fire()
 	if not _game_over:
@@ -3381,6 +3396,7 @@ func _end_turn() -> void:
 		for f in _fighters:
 			if f.alive:
 				f.ap = f.max_ap
+				f.guard = 0
 		_log("Ход %d — ваши бойцы готовы" % _turn)
 	if not _game_over:
 		_tick_zone()
@@ -6165,6 +6181,8 @@ func _refresh_card() -> void:
 	_ui.card_ap.max_value = f.max_ap
 	_ui.card_ap.value = f.ap
 	_ui.card_ap_l.text = "ОД %d/%d" % [f.ap, f.max_ap]
+	if int(f.get("guard", 0)) > 0:
+		_ui.card_ap_l.text += "  +%d🛡" % int(f.guard)
 	# аватар игрока вместо 3D-портрета (только для своего отряда)
 	var ava_tex: Texture2D = _avatar_texture() if f.team == 0 else null
 	if ava_tex != null:
