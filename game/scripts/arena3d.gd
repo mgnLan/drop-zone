@@ -69,7 +69,7 @@ var _cam_yaw := 45.0         # азимут камеры (градусы)
 var _cam_pitch := 45.0       # угол наклона камеры (градусы)
 var _rmb_drag := false       # ПКМ зажата — вращение камеры
 var _rmb_moved := false      # было ли движение при зажатой ПКМ
-const CAM_MIN := 18.0
+const CAM_MIN := 14.0
 const CAM_MAX := 90.0
 const CAM_PITCH_MIN := 25.0
 const CAM_PITCH_MAX := 70.0
@@ -228,8 +228,57 @@ func _mob() -> bool:
 	# узкий экран — компактные раскладки
 	return _vw() < 520.0
 
+# ---------- rewarded-реклама: мост к VK/MAX Ads ----------
+# Веб-оболочка экспорта может определить window.dzRewarded.show():
+# в VK — VKWebAppShowNativeAds с колбэком награды, вне площадок — сразу награда (dev-режим).
+# Награда возвращается через вызов window.__dz_ad_reward() из оболочки.
+var _sponsor_used := false      # один дроп за бой
+
+func _setup_rewarded_bridge() -> void:
+	if not OS.has_feature("web"):
+		return
+	var jscb := JavaScriptBridge.create_callback(_on_rewarded_done)
+	JavaScriptBridge.get_interface("window").set("__dz_ad_reward", jscb)
+
+func _show_rewarded_ad() -> void:
+	if OS.has_feature("web"):
+		var r = JavaScriptBridge.eval("""
+			(function(){
+				if (window.dzRewarded && typeof window.dzRewarded.show === 'function') {
+					window.dzRewarded.show();
+					return true;
+				}
+				return false;
+			})()
+		""", true)
+		if r != null and bool(r):
+			return
+	# SDK площадки не подключён — dev-режим: награда сразу
+	_grant_sponsor_drop()
+
+func _on_rewarded_done(_args: Array) -> void:
+	_grant_sponsor_drop()
+
+func _grant_sponsor_drop() -> void:
+	if _sponsor_used:
+		return
+	_sponsor_used = true
+	if _ui.has("sponsor_btn") and _ui.sponsor_btn:
+		_ui.sponsor_btn.disabled = true
+		_ui.sponsor_btn.text = "🎁 Дроп получен"
+	if _selected >= 0 and _selected < _fighters.size() and _fighters[_selected].alive:
+		var f = _fighters[_selected]
+		f.ap = mini(int(f.ap) + 3, int(f.max_ap))
+		_log("🎁 Спонсорский дроп: +3 AP — %s благодарит спонсора!" % f.name)
+	else:
+		_log("🎁 Спонсорский дроп от спонсора шоу!")
+	_profile.coins = int(_profile.get("coins", 0)) + 25
+	_save_profile()
+	_sfx_play("levelup")
+
 func _ready() -> void:
 	_apply_display_scale()
+	_setup_rewarded_bridge()
 	get_viewport().size_changed.connect(func(): _apply_display_scale.call_deferred())
 	var args := OS.get_cmdline_user_args()
 	if args.has("--win324"):
@@ -306,8 +355,7 @@ func _ready() -> void:
 			_busy = false
 			if int(_profile.get("onboarded", 0)) == 1:
 				_stamina_update()
-				_profile.stamina = maxf(0.0, float(_profile.stamina) - STAMINA_COST)
-				_save_profile()
+				# списание энергии отключено: тренировки с ботами бесплатны (онлайн — позже)
 			_apply_graphics(_settings.graphics)
 			_update_fog()
 			_log("Тренировка %d×%d — ваш ход! ЛКМ — бойцы, ПКМ-тянуть — обзор." % [_mode, _mode])
@@ -672,9 +720,8 @@ func _stamina_update() -> void:
 	_profile.stamina_ts = now
 
 func _stamina_can_fight() -> bool:
-	_stamina_update()
-	# обучение (первый бой) — бесплатно
-	return int(_profile.get("onboarded", 0)) == 0 or float(_profile.get("stamina", STAMINA_MAX)) >= STAMINA_COST
+	# тренировки против ботов — бесплатно: энергия зарезервирована под будущий онлайн-режим
+	return true
 
 func _daily_add(qi: int, n: int) -> Array:
 	var msgs := []
@@ -771,6 +818,7 @@ func _load_profile() -> void:
 	_profile.owned_taunts = cfg.get_value("player", "owned_taunts", [1, 0, 0])
 	_profile.shards = int(cfg.get_value("player", "shards", 0))
 	_profile.pity = cfg.get_value("player", "pity", [0, 0, 0])
+	_profile.pity_siren = int(cfg.get_value("player", "pity_siren", 0))
 	_profile.chests_total = int(cfg.get_value("player", "chests_total", 0))
 	_profile.owned_teleports = cfg.get_value("player", "owned_teleports", [1, 1, 0])
 	_profile.bp_xp = int(cfg.get_value("player", "bp_xp", 0))
@@ -813,6 +861,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "owned_taunts", _profile.get("owned_taunts", [1, 0, 0]))
 	cfg.set_value("player", "shards", int(_profile.get("shards", 0)))
 	cfg.set_value("player", "pity", _profile.get("pity", [0, 0, 0]))
+	cfg.set_value("player", "pity_siren", int(_profile.get("pity_siren", 0)))
 	cfg.set_value("player", "chests_total", int(_profile.get("chests_total", 0)))
 	cfg.set_value("player", "owned_teleports", _profile.get("owned_teleports", [1, 1, 0]))
 	cfg.set_value("player", "bp_xp", int(_profile.get("bp_xp", 0)))
@@ -895,8 +944,8 @@ func _stat_acc(st: Dictionary) -> float:
 	return minf(0.20, 0.02 * int(st.get("int", 0)))
 
 func _stat_crit(st: Dictionary) -> float:
-	# крит: база 5% + 0.1% за очко удачи
-	return 0.05 + 0.001 * int(st.get("lck", 0))
+	# крит: база 5% + 1% за очко удачи (макс 35%) — удача снова живой стат
+	return minf(0.35, 0.05 + 0.01 * int(st.get("lck", 0)))
 
 func _armor_ap_penalty(f: Dictionary) -> int:
 	var p := 0
@@ -2083,7 +2132,7 @@ func _setup_camera() -> void:
 	cam.position = Vector3(36, 38, 36)
 	add_child(cam)
 	_cam = cam
-	_cam_dist = _size_n * 1.35
+	_cam_dist = _size_n * 1.1   # стартовый зум ближе — бойцы читаются лучше
 	if OS.get_cmdline_user_args().has("--closeup"):
 		cam.position = gw(20, 26, 3.0) + Vector3(3.2, 1.5, 3.2)
 		cam.fov = 40.0
@@ -2566,7 +2615,8 @@ func _update_aim() -> void:
 	var rng_w: int = w.get("range", 1)
 	var in_range: bool = dist <= rng_w
 	var los_ok: bool = w.has("aoe") or _los(a2.cell, d.cell)
-	var chance := clampf(_hit_chance(a2.cell, d.cell) + _stat_acc(a2.stats) - _stat_dodge(d.stats), 0.1, 0.95)
+	var base: float = HIT_CHANCE + _stat_acc(a2.stats)
+	var chance := clampf(_hit_chance(a2.cell, d.cell, rng_w) + _stat_acc(a2.stats) - _stat_dodge(d.stats), 0.1, 0.95)
 	var col := Color(0.35, 1.0, 0.45)
 	var txt := "%d%%" % int(chance * 100)
 	if not in_range:
@@ -2575,9 +2625,9 @@ func _update_aim() -> void:
 	elif not los_ok:
 		col = Color(1.0, 0.25, 0.25)
 		txt = "НЕТ ЛИНИИ ОГНЯ"
-	elif chance < HIT_CHANCE + _stat_acc(a2.stats) - 0.001:
+	elif chance < base - 0.001:
 		col = Color(1.0, 0.85, 0.2)
-		txt = "%d%% (укрытия)" % int(chance * 100)
+		txt = "%d%% (укрытия/далеко)" % int(chance * 100)
 	var p0: Vector3 = a2.node.position + Vector3(0, 1.15, 0)
 	var p1: Vector3 = d.node.position + Vector3(0, 0.95, 0)
 	if _aim_beam == null:
@@ -2634,8 +2684,16 @@ func _cover_on_line(a: Vector2i, b: Vector2i) -> int:
 			y += sy
 	return n
 
-func _hit_chance(a: Vector2i, b: Vector2i) -> float:
-	return clampf(HIT_CHANCE - 0.15 * _cover_on_line(a, b), 0.25, 0.95)
+func _hit_chance(a: Vector2i, b: Vector2i, w_range := 0) -> float:
+	# база 80% − 15% за каждое лёгкое укрытие на линии;
+	# дальность теперь важна: за половиной дальности ствола −5% за клетку
+	var ch := HIT_CHANCE - 0.15 * _cover_on_line(a, b)
+	if w_range > 0:
+		var dist := Vector2(a.x - b.x, a.y - b.y).length()
+		var over := dist - w_range * 0.5
+		if over > 0.0:
+			ch -= 0.05 * over
+	return clampf(ch, 0.15, 0.95)
 
 func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1) -> int:
 	var d = _fighters[victim]
@@ -2682,6 +2740,11 @@ func _shoot(att: int, def: int) -> void:
 		if a.team == 0:
 			_log("Нет линии огня — цель за укрытием")
 		return
+	# AoE: бросок невозможен в упор (себя подорвёшь)
+	if w.has("aoe") and dist < 3.0:
+		if a.team == 0:
+			_log("Слишком близко для броска — минимум 3 клетки")
+		return
 	a.ap -= cost
 	if w.has("ammo"):
 		a.ammo -= burst
@@ -2689,8 +2752,13 @@ func _shoot(att: int, def: int) -> void:
 	_sfx_play("shot")
 	var aoe: int = w.get("aoe", 0)
 	if aoe > 0:
-		# площадной урон: все бойцы в радиусе aoe от клетки цели (дружественный огонь!)
-		_explode_at(d.cell, aoe)
+		# площадной урон: все бойцы в радиусе aoe от клетки взрыва (дружественный огонь!)
+		# бросок может отклониться: 25% — смещение на соседнюю клетку
+		var boom: Vector2i = d.cell
+		if _rng.randf() < 0.25:
+			boom = d.cell + Vector2i(_rng.randi_range(-1, 1), _rng.randi_range(-1, 1))
+			_log("%s: граната отклонилась от цели!" % a.name)
+		_explode_at(boom, aoe)
 		_log("%s: %s — взрыв на площади!" % [a.name, w.get("name", "?")])
 		var did := false
 		var real_sum := 0
@@ -2698,9 +2766,9 @@ func _shoot(att: int, def: int) -> void:
 			var v = _fighters[vi]
 			if not v.alive or vi == att:
 				continue
-			var vd := Vector2(v.cell.x - d.cell.x, v.cell.y - d.cell.y).length()
+			var vd := Vector2(v.cell.x - boom.x, v.cell.y - boom.y).length()
 			if vd <= aoe:
-				# взрыв не мажет: полный урон в центре, 60% по краю радиуса
+				# центр радиуса — полный урон, по краю — 60%
 				var tot: int = w.get("damage", 10) * burst
 				if vd > 0.5:
 					tot = int(tot * 0.6)
@@ -2713,13 +2781,13 @@ func _shoot(att: int, def: int) -> void:
 			if cls2 != "":
 				a.prof[cls2] = int(a.prof.get(cls2, 0)) + real_sum
 		if w.get("burn", false):
-			_ignite(d.cell, aoe)
+			_ignite(boom, aoe)
 		if w.get("consumable", false):
 			_spend_consumable(att)
 		return
 	var cls := _weapon_class(w)
 	var pl := _prof_lvl(a, cls)
-	var chance := clampf(_hit_chance(a.cell, d.cell) + _stat_acc(a.stats) + 0.03 * pl - _stat_dodge(d.stats), 0.1, 0.95)
+	var chance := clampf(_hit_chance(a.cell, d.cell, int(w.get("range", 1))) + _stat_acc(a.stats) + 0.03 * pl - _stat_dodge(d.stats), 0.1, 0.95)
 	var total := 0
 	var crit := false
 	for i in burst:
@@ -2729,6 +2797,19 @@ func _shoot(att: int, def: int) -> void:
 				dm = int(dm * 1.5)
 				crit = true
 			total += dm
+	if w.get("spread", false):
+		# дробовик: дробь задевает и соседей цели — радиус 1 клетки,
+		# 35% попадания за дробину, 50% урона
+		for vi in _fighters.size():
+			var v = _fighters[vi]
+			if not v.alive or vi == def or v.team == a.team:
+				continue
+			var vd := Vector2(v.cell.x - d.cell.x, v.cell.y - d.cell.y).length()
+			if vd > 1.5:
+				continue
+			for i in burst:
+				if _rng.randf() < 0.35:
+					_apply_damage(vi, maxi(1, int(w.get("damage", 10) * 0.5 * (1.0 + 0.03 * pl))), a.name, att)
 	if total > 0:
 		var real: int = _apply_damage(def, total, a.name, att)
 		_gain_xp(att, 25 + real)
@@ -3549,6 +3630,22 @@ func _build_ui() -> void:
 	layer.name = "UI"
 	add_child(layer)
 	_ui.layer = layer
+	# виньетка по краям кадра — фокус на арене (под HUD-элементами)
+	var vgrad := Gradient.new()
+	vgrad.set_color(0, Color(0, 0, 0, 0))
+	vgrad.set_color(1, Color(0.01, 0.01, 0.03, 0.5))
+	var vtex := GradientTexture2D.new()
+	vtex.gradient = vgrad
+	vtex.fill = GradientTexture2D.FILL_RADIAL
+	vtex.fill_from = Vector2(0.5, 0.5)
+	vtex.fill_to = Vector2(1.0, 1.0)
+	var vig := TextureRect.new()
+	vig.texture = vtex
+	vig.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	vig.stretch_mode = TextureRect.STRETCH_SCALE
+	vig.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vig.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(vig)
 	_http = HTTPRequest.new()
 	_http.request_completed.connect(_on_api_done)
 	layer.add_child(_http)
@@ -3597,6 +3694,22 @@ func _build_ui() -> void:
 	lobby.tooltip_text = "Выйти в главное меню (бой будет потерян)"
 	lobby.pressed.connect(_go_lobby)
 	layer.add_child(lobby)
+	# --- спонсорский дроп: rewarded-реклама → +3 AP выбранному бойцу и 25 монет ---
+	var sponsor := Button.new()
+	sponsor.text = "🎁 Дроп"
+	sponsor.anchor_left = 1.0
+	sponsor.anchor_right = 1.0
+	sponsor.offset_left = -150.0 if _mob() else -212.0
+	sponsor.offset_right = -8.0 if _mob() else -16.0
+	sponsor.offset_top = 114.0
+	sponsor.offset_bottom = 160.0
+	sponsor.tooltip_text = "Спонсорский дроп: посмотри ролик — получи +3 AP и 25 монет"
+	sponsor.pressed.connect(func():
+		_show_rewarded_ad()
+		sponsor.disabled = _sponsor_used
+	)
+	layer.add_child(sponsor)
+	_ui.sponsor_btn = sponsor
 	# --- карточка бойца слева сверху: портрет + HP/AP + рюкзак под анимацией ---
 	var card := PanelContainer.new()
 	card.position = Vector2(12, 48)
@@ -5036,7 +5149,7 @@ func _show_menu_main() -> void:
 		_stamina_update()
 		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
 		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
-		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0))), "Энергия — тратится на бой, восстанавливается со временем"))
+		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0))), "Энергия — под будущие онлайн-бои. Тренировки бесплатны"))
 		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — открывают слоты бойцов: 2-й на 3 победах, далее 10 и 25"))
 		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0)), "Всего противников уничтожено"))
 	# --- секция БОЙ: три карточки режимов (иконки-пиктограммы) ---
@@ -5664,6 +5777,9 @@ func _roll_rarity() -> int:
 		res = maxi(res, 3)
 	elif int(pity[0]) >= 9:
 		res = maxi(res, 2)
+	# сиреневый 0.1% — без гаранта это ~1 на 1000 сундуков; мягкий гарант: 200 открытий
+	if int(_profile.get("pity_siren", 0)) >= 199:
+		res = 5
 	return res
 
 func _open_show_chest() -> void:
@@ -5701,6 +5817,8 @@ func _open_show_chest() -> void:
 	if rarity >= 4:
 		pity[2] = 0
 	_profile.pity = pity
+	# гарант сиреневого: гарантированно на 200-м открытии без него
+	_profile.pity_siren = 0 if rarity == 5 else int(_profile.get("pity_siren", 0)) + 1
 	_profile.chests_total = int(_profile.get("chests_total", 0)) + 1
 	_chest_last = str(it["name"]) + ("  (дубликат → +%d 💠)" % dup_shards if dup_shards > 0 else "")
 	_chest_last_rarity = rarity
@@ -5725,23 +5843,25 @@ func _show_menu_chests() -> void:
 	vb.add_child(_framed_label("Баланс: %d 💰  ·  %d 💠 осколков  ·  открыто сундуков: %d" % [
 		int(_profile.get("coins", 0)), int(_profile.get("shards", 0)), int(_profile.get("chests_total", 0))], 14))
 	var pity: Array = _profile.get("pity", [0, 0, 0])
+	var pity_siren: int = int(_profile.get("pity_siren", 0))
 	# гаранты с тонкими прогресс-барами
 	var gbox := VBoxContainer.new()
 	gbox.add_theme_constant_override("separation", 4)
 	vb.add_child(gbox)
-	var gn := ["Эпик", "Легенда", "Мифик"]
-	var gn_max := [10, 30, 80]
-	for gi in 3:
+	var gn := ["Эпик", "Легенда", "Мифик", "Сиреневый"]
+	var gn_max := [10, 30, 80, 200]
+	var gn_vals := [int(pity[0]), int(pity[1]), int(pity[2]), pity_siren]
+	for gi in 4:
 		var grow3 := HBoxContainer.new()
 		grow3.add_theme_constant_override("separation", 8)
 		gbox.add_child(grow3)
-		var gl2 := _mk_label("%s через %d" % [gn[gi], maxi(1, int(gn_max[gi]) - int(pity[gi]))], 12)
+		var gl2 := _mk_label("%s через %d" % [gn[gi], maxi(1, int(gn_max[gi]) - gn_vals[gi])], 12)
 		gl2.custom_minimum_size = Vector2(130, 0)
 		gl2.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9))
 		grow3.add_child(gl2)
 		var pb := ProgressBar.new()
 		pb.max_value = gn_max[gi]
-		pb.value = clampi(int(pity[gi]), 0, int(gn_max[gi]))
+		pb.value = clampi(gn_vals[gi], 0, int(gn_max[gi]))
 		pb.custom_minimum_size = Vector2(0, 8)
 		pb.show_percentage = false
 		pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
