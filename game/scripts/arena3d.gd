@@ -693,6 +693,8 @@ const WEAPON_CLASS := {"Pistol": "pistols", "Revolver_Small": "pistols", "Revolv
 	"GrenadeLauncher": "heavy", "ShortCannon": "heavy", "RocketLauncher": "heavy",
 	"knife_1": "melee", "Shovel": "melee", "Knife_2": "melee"}
 const PROF_XP := [100, 250, 500]
+# стартовый пистолет бойца (выбор игрока в отряде); нож — всегда при себе
+const SIDEARMS := ["Pistol", "Revolver_Small", "Revolver"]
 const CLASS_NAMES := {"pistols": "Пистолеты", "smg": "ПП", "rifles": "Винтовки",
 	"shotguns": "Дробовики", "sniper": "Снайперское", "heavy": "Тяжёлое", "melee": "Ближний бой"}
 const DAILY_QUESTS := [
@@ -880,6 +882,7 @@ func _load_profile() -> void:
 		"talents": [{}, {}, {}, {}],  # таланты бойцов (id -> ранг)
 		"tpts": [0, 0, 0, 0],         # очки талантов
 		"prof": [{}, {}, {}, {}],     # владение оружием (класс -> урон)
+		"sidearm": [0, 0, 0, 0],      # стартовый пистолет бойца (индекс SIDEARMS)
 	}
 	var cfg := ConfigFile.new()
 	if cfg.load("user://profile.cfg") != OK:
@@ -895,6 +898,7 @@ func _load_profile() -> void:
 		_profile.talents[i] = cfg.get_value("fighter%d" % i, "talents", {})
 		_profile.tpts[i] = int(cfg.get_value("fighter%d" % i, "tpts", 0))
 		_profile.prof[i] = cfg.get_value("fighter%d" % i, "prof", {})
+		_profile.sidearm[i] = int(cfg.get_value("fighter%d" % i, "sidearm", 0))
 	_profile.city = cfg.get_value("player", "city", "")
 	_profile.avatar = cfg.get_value("player", "avatar", "")
 	_profile.avatar_preset = int(cfg.get_value("player", "avatar_preset", 1))
@@ -943,6 +947,7 @@ func _save_profile() -> void:
 		cfg.set_value("fighter%d" % i, "talents", _profile.talents[i])
 		cfg.set_value("fighter%d" % i, "tpts", _profile.tpts[i])
 		cfg.set_value("fighter%d" % i, "prof", _profile.prof[i])
+		cfg.set_value("fighter%d" % i, "sidearm", _profile.sidearm[i])
 	cfg.set_value("player", "city", _profile.city)
 	cfg.set_value("player", "avatar", _profile.avatar)
 	cfg.set_value("player", "avatar_preset", _profile.avatar_preset)
@@ -1873,8 +1878,10 @@ func _spawn_teams() -> void:
 	var mid := _grid_n / 2
 	for i in _mode:
 		var cell := _free_cell_sector(lo, mid - 4, mid + 4, hi)
+		# стартовое оружие: нож (всегда) + выбранный в отряде пистолет; стволы — трофеи с поля боя
+		var sidearm: String = SIDEARMS[clampi(int(_profile.sidearm[i]), 0, SIDEARMS.size() - 1)]
 		_spawn_human(red_models[i][0], cell.x, cell.y, _rng.randf_range(-30, 90),
-			red_models[i][1], Color("#ff4757"), 0, _profile.names[i], _profile.stats[i], _profile.lvl[i], _profile.xp[i],
+			sidearm, Color("#ff4757"), 0, _profile.names[i], _profile.stats[i], _profile.lvl[i], _profile.xp[i],
 			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i])
 	for i in _mode:
 		var m = blue_models[i]
@@ -5689,6 +5696,25 @@ func _show_menu_squad() -> void:
 			_save_profile()
 	)
 	nrow.add_child(ne)
+	# --- стартовый пистолет бойца (нож у всех всегда; стволы — трофеи с поля боя) ---
+	var wrow := HBoxContainer.new()
+	vb.add_child(wrow)
+	var wl := Label.new()
+	wl.text = "Оружие:"
+	wrow.add_child(wl)
+	for wi in SIDEARMS.size():
+		var wd: Dictionary = _weapon_by_id(SIDEARMS[wi])
+		var wb := Button.new()
+		wb.text = str(wd.get("name", SIDEARMS[wi])) + (" ✓" if int(_profile.sidearm[_squad_edit]) == wi else "")
+		wb.tooltip_text = "Урон %d · %d ОД · обойма %d · дальность %d" % [
+			int(wd.get("damage", 0)), int(wd.get("ap_cost", 0)), int(wd.get("ammo", 0)), int(wd.get("range", 0))]
+		var wv: int = wi
+		wb.pressed.connect(func():
+			_profile.sidearm[_squad_edit] = wv
+			_save_profile()
+			_show_menu_squad()
+		)
+		wrow.add_child(wb)
 	# --- пол и внешность (только для основного бойца, слот 0) ---
 	if _squad_edit == 0:
 		var grow2 := HBoxContainer.new()
