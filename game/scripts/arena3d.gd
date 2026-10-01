@@ -896,6 +896,10 @@ func _load_profile() -> void:
 		"prof": [{}, {}, {}, {}],     # владение оружием (класс -> урон)
 		"sidearm": [0, 0, 0, 0],      # стартовый пистолет бойца (индекс SIDEARMS)
 		"cls": [0, 0, 0, 0],          # класс бойца (индекс FIGHTER_CLASSES)
+		"hp": [-1, -1, -1, -1],       # здоровье между боями (-1 = полное)
+		"hp_ts": 0.0,                 # unixtime последнего сохранения HP (реген)
+		"vip": 0,                     # 1 = подписка: слот 4, реген ×2, награды (скоро)
+		"reserve": [],                # запасные бойцы (словари; ротация вручную)
 	}
 	var cfg := ConfigFile.new()
 	if cfg.load("user://profile.cfg") != OK:
@@ -946,6 +950,10 @@ func _load_profile() -> void:
 	_profile.bp_owned = int(cfg.get_value("player", "bp_owned", 0))
 	_profile.bp_claimed_free = cfg.get_value("player", "bp_claimed_free", [])
 	_profile.bp_claimed_prem = cfg.get_value("player", "bp_claimed_prem", [])
+	_profile.hp = cfg.get_value("player", "hp", [-1, -1, -1, -1])
+	_profile.hp_ts = float(cfg.get_value("player", "hp_ts", 0.0))
+	_profile.vip = int(cfg.get_value("player", "vip", 0))
+	_profile.reserve = cfg.get_value("player", "reserve", [])
 	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
 	_profile.weekly = cfg.get_value("player", "weekly", {})
 	_daily_check()
@@ -996,6 +1004,10 @@ func _save_profile() -> void:
 	cfg.set_value("player", "bp_owned", int(_profile.get("bp_owned", 0)))
 	cfg.set_value("player", "bp_claimed_free", _profile.get("bp_claimed_free", []))
 	cfg.set_value("player", "bp_claimed_prem", _profile.get("bp_claimed_prem", []))
+	cfg.set_value("player", "hp", _profile.get("hp", [-1, -1, -1, -1]))
+	cfg.set_value("player", "hp_ts", float(_profile.get("hp_ts", 0.0)))
+	cfg.set_value("player", "vip", int(_profile.get("vip", 0)))
+	cfg.set_value("player", "reserve", _profile.get("reserve", []))
 	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
 	cfg.set_value("player", "weekly", _profile.get("weekly", {}))
 	cfg.save("user://profile.cfg")
@@ -1898,7 +1910,7 @@ func _spawn_teams() -> void:
 		var model_c: String = FIGHTER_CLASSES[cls_i]["model"]
 		_spawn_human(model_c, cell.x, cell.y, _rng.randf_range(-30, 90),
 			sidearm, Color("#ff4757"), 0, _profile.names[i], _profile.stats[i], _profile.lvl[i], _profile.xp[i],
-			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i], cls_i)
+			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i], cls_i, i)
 	for i in _mode:
 		var m = blue_models[i]
 		var cell := _free_cell_sector(mid + 4, hi, lo, mid - 4)
@@ -1939,7 +1951,7 @@ func _apply_outfit(p: Node3D, idx: int) -> void:
 				_outfit_mats[ckey] = dm
 			mi.set_surface_override_material(si, _outfit_mats[ckey])
 
-func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}, cls_idx := -1) -> void:
+func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}, cls_idx := -1, slot := -1) -> void:
 	if st.is_empty():
 		st = _default_fighter_stats()
 	var p: Node3D = _place(H + model + ".gltf", gw(gx, gz), rot_y, HUMAN_SCALE)
@@ -1989,12 +2001,18 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 	# регистрация бойца в игровом состоянии (характеристики — из очков навыков профиля)
 	var gun := _weapon_by_id(weapon)
 	var hp_max := _stat_hp(st) + 3 * (lvl - 1)
+	var hp_now := hp_max
+	# раненый боец выходит с сохранённым HP (минимум 1 — в бой пускаем, но рискованно)
+	if team_idx == 0 and slot >= 0:
+		var saved_hp: Array = _profile.get("hp", [-1, -1, -1, -1])
+		if slot < saved_hp.size() and int(saved_hp[slot]) >= 0:
+			hp_now = clampi(int(saved_hp[slot]), 1, hp_max)
 	var ap_max := _stat_ap(st) + mini(3, lvl / 3)
 	var pts0 := _stat_points_left(st, lvl)
 	_fighters.append({
 		"node": p, "pad": pad, "cell": Vector2i(gx, gz), "team": team_idx, "name": fname,
 		"model": model, "stats": st,
-		"hp": hp_max, "max_hp": hp_max, "ap": ap_max, "max_ap": ap_max,
+		"hp": hp_now, "max_hp": hp_max, "ap": ap_max, "max_ap": ap_max,
 		"carry_base": _stat_carry(st) + 0.5 * (lvl - 1),
 		"vision": _stat_vision(st) + (2 if cls_idx == 2 else 0),   # разведчик: +2 обзор
 		"gun": gun, "weapon": gun, "ammo": gun.get("ammo", 0), "spare": gun.get("spare", -1),
@@ -2745,6 +2763,53 @@ func _step_face(f: Dictionary, s: Vector2i) -> void:
 func _sniper_focus(a) -> float:
 	# снайпер: +10% к точности, если не двигался в текущем ходе
 	return 0.10 if int(a.get("cls", -1)) == 1 and not a.get("moved", false) else 0.0
+
+# ---------- медцентр ----------
+const MED_HEAL_COST := 15      # лечение раненого до полного
+const MED_REVIVE_COST := 25    # реанимация погибшего
+const MED_HIRE_COST := 200     # найм запасного бойца
+const RESERVE_MAX := 2         # запасных бойцов максимум
+# «Доктор за ролик»: 25% max HP на уровнях 1–10, далее −5 п.п. за каждые 10 уровней
+func _doc_heal_pct(lvl: int) -> float:
+	return maxf(0.10, 0.25 - 0.05 * maxi(0, (lvl - 1) / 10))
+
+# полное время восстановления HP в минутах (ВИП — скорость ×2)
+func _med_full_minutes(lvl: int) -> float:
+	var fm := 10.0 + 0.5 * lvl
+	if int(_profile.get("vip", 0)) == 1:
+		fm /= 2.0
+	return fm
+
+func _fighter_hp_max(i: int) -> int:
+	return _stat_hp(_profile.stats[mini(maxi(i, 0), 3)]) + 3 * (int(_profile.lvl[i]) - 1)
+
+# офлайн-реген: HP восстанавливается от времени с последнего боя
+func _med_tick() -> void:
+	var now := Time.get_unix_time_from_system()
+	var ts := float(_profile.get("hp_ts", 0.0))
+	if ts <= 0.0:
+		_profile.hp_ts = now
+		return
+	var elapsed_min := (now - ts) / 60.0
+	if elapsed_min <= 0.0:
+		return
+	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
+	for i in mini(int(_profile.get("unlocked_slots", 1)), hp_arr.size()):
+		var h := int(hp_arr[i])
+		if h < 0:
+			continue
+		var mx := _fighter_hp_max(i)
+		if h >= mx:
+			hp_arr[i] = -1
+			continue
+		if h <= 0:
+			continue   # погибший сам не восстанавливается — только реанимация
+		var regen := mx * elapsed_min / _med_full_minutes(int(_profile.lvl[i]))
+		var nh := mini(mx, h + int(regen))
+		hp_arr[i] = -1 if nh >= mx else nh
+	_profile.hp = hp_arr
+	_profile.hp_ts = now
+	_save_profile()
 
 func _move_fighter(i: int, cell: Vector2i, path: Array = []) -> void:
 	var f = _fighters[i]
@@ -3760,6 +3825,9 @@ func _check_end() -> void:
 			_profile.talents[pi] = pf.get("talents", {})
 			_profile.tpts[pi] = int(pf.get("tpts", 0))
 			_profile.prof[pi] = pf.get("prof", {})
+			# здоровье бойцов сохраняется: живые — с текущим HP, погибшие — 0 (медцентр)
+			_profile.hp[pi] = int(pf.hp) if pf.alive else 0
+		_profile.hp_ts = Time.get_unix_time_from_system()
 		# --- награды за бой: монеты, победы, открытие слотов ---
 		var win := blue == 0
 		var p_kills := 0
@@ -4495,6 +4563,10 @@ func _run_testmenu(mobile := false) -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_progress%s.png" % sfx)
+	_show_menu_med()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_med%s.png" % sfx)
 	print("TESTMENU_SAVED")
 	get_tree().quit()
 
@@ -5483,6 +5555,7 @@ func _style_locked_button(b: Button) -> void:
 	b.add_theme_color_override("font_disabled_color", Color(0.65, 0.7, 0.8))
 
 func _show_menu_main() -> void:
+	_med_tick()   # офлайн-восстановление HP бойцов
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -5521,11 +5594,13 @@ func _show_menu_main() -> void:
 	bp.pressed.connect(_show_menu_bp)
 	var prog := _ctrl_button("trophy", "Прогрессия")
 	prog.pressed.connect(_show_menu_progress)
+	var med := _ctrl_button("shield", "Медцентр")
+	med.pressed.connect(_show_menu_med)
 	var prof := _ctrl_button("profile", "Личные")
 	prof.pressed.connect(_show_menu_profile)
 	var sett := _ctrl_button("gear", "Настройки")
 	sett.pressed.connect(_show_menu_settings)
-	var ctrls: Array = [squad, shop, chests, bp, prog, prof, sett]
+	var ctrls: Array = [squad, shop, chests, bp, prog, med, prof, sett]
 	var vw4: float = _vw()
 	vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92) if vw4 >= 980.0 else minf(560.0, vw4 * 0.92), 0)
 	vb.add_child(_section_title("БОЙ"))
@@ -6127,6 +6202,184 @@ func _bp_claim(lv: int, prem: bool) -> void:
 	arr[lv] = 1
 	_profile[key] = arr
 	_save_profile()
+
+# ---------- экран «Медцентр»: лечение, реген, ротация с запасом ----------
+func _show_menu_med() -> void:
+	_med_tick()
+	var vb: VBoxContainer = _ui.menu_box
+	for c in vb.get_children():
+		c.queue_free()
+	vb.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
+	vb.add_child(_screen_title("shield", "Медцентр"))
+	var info := Label.new()
+	var vip_txt := " · ВИП: реген ×2" if int(_profile.get("vip", 0)) == 1 else ""
+	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший сам не поднимается — нужна реанимация." % vip_txt
+	info.add_theme_font_size_override("font_size", 12)
+	info.add_theme_color_override("font_color", Color(0.65, 0.72, 0.78))
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(info)
+	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
+	for i in int(_profile.get("unlocked_slots", 1)):
+		var mx := _fighter_hp_max(i)
+		var h := mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		vb.add_child(row)
+		var nm := Label.new()
+		nm.text = _profile.names[i]
+		nm.custom_minimum_size = Vector2(90, 0)
+		row.add_child(nm)
+		# полоска HP
+		var hb := ProgressBar.new()
+		hb.custom_minimum_size = Vector2(120, 18)
+		hb.max_value = mx
+		hb.value = h
+		row.add_child(hb)
+		var st := Label.new()
+		st.add_theme_font_size_override("font_size", 12)
+		st.custom_minimum_size = Vector2(120, 0)
+		if h >= mx:
+			st.text = "%d/%d · боевой" % [h, mx]
+			st.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
+		elif h <= 0:
+			st.text = "☠ погиб"
+			st.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
+		else:
+			var mins := int(ceil(_med_full_minutes(int(_profile.lvl[i])) * (mx - h) / float(mx)))
+			st.text = "%d/%d · ранен (~%d мин)" % [h, mx, mins]
+			st.add_theme_color_override("font_color", Color(1.0, 0.75, 0.3))
+		row.add_child(st)
+		# кнопки лечения
+		if h < mx and h > 0:
+			var bdoc := Button.new()
+			bdoc.text = "Доктор +%d%%" % int(_doc_heal_pct(int(_profile.lvl[i])) * 100)
+			bdoc.disabled = true   # реклама ВК ещё не подключена
+			bdoc.tooltip_text = "За просмотр ролика — скоро (реклама ВК)"
+			row.add_child(bdoc)
+			var bheal := Button.new()
+			bheal.text = "%d 🪙" % MED_HEAL_COST
+			bheal.icon = _icon_tex("coin")
+			bheal.disabled = int(_profile.get("coins", 0)) < MED_HEAL_COST
+			bheal.tooltip_text = "Лечение до полного"
+			var hi: int = i
+			bheal.pressed.connect(func():
+				if int(_profile.get("coins", 0)) >= MED_HEAL_COST:
+					_profile.coins = int(_profile.coins) - MED_HEAL_COST
+					var ha: Array = _profile.get("hp", [-1, -1, -1, -1])
+					ha[hi] = -1
+					_profile.hp = ha
+					_save_profile()
+					_show_menu_med()
+			)
+			row.add_child(bheal)
+		elif h <= 0:
+			var brev := Button.new()
+			brev.text = "Реанимация %d 🪙" % MED_REVIVE_COST
+			brev.icon = _icon_tex("coin")
+			brev.disabled = int(_profile.get("coins", 0)) < MED_REVIVE_COST
+			brev.tooltip_text = "Вернуть бойца к полному здоровью"
+			var ri: int = i
+			brev.pressed.connect(func():
+				if int(_profile.get("coins", 0)) >= MED_REVIVE_COST:
+					_profile.coins = int(_profile.coins) - MED_REVIVE_COST
+					var ra: Array = _profile.get("hp", [-1, -1, -1, -1])
+					ra[ri] = -1
+					_profile.hp = ra
+					_save_profile()
+					_show_menu_med()
+			)
+			row.add_child(brev)
+	# --- запасные бойцы: ручная ротация ---
+	var rsv: Array = _profile.get("reserve", [])
+	var rl := Label.new()
+	rl.text = "Запас (%d/%d) — ротация вручную:" % [rsv.size(), RESERVE_MAX]
+	rl.add_theme_font_size_override("font_size", 15)
+	rl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.45))
+	vb.add_child(rl)
+	if rsv.is_empty():
+		var rnone := Label.new()
+		rnone.text = "Пусто. Найми бойца — заменит раненого без простоя."
+		rnone.add_theme_font_size_override("font_size", 12)
+		rnone.add_theme_color_override("font_color", Color(0.6, 0.66, 0.72))
+		vb.add_child(rnone)
+	for ri2 in rsv.size():
+		var rb: Dictionary = rsv[ri2]
+		var rrow := HBoxContainer.new()
+		rrow.add_theme_constant_override("separation", 6)
+		vb.add_child(rrow)
+		var rnm := Label.new()
+		var rcls: int = clampi(int(rb.get("cls", 0)), 0, FIGHTER_CLASSES.size() - 1)
+		rnm.text = "%s · ур.%d · %s" % [str(rb.get("name", "?")), int(rb.get("lvl", 1)), FIGHTER_CLASSES[rcls]["name"]]
+		rnm.custom_minimum_size = Vector2(230, 0)
+		rrow.add_child(rnm)
+		for si in int(_profile.get("unlocked_slots", 1)):
+			var sb := Button.new()
+			sb.text = "⇄ Слот %d" % (si + 1)
+			sb.tooltip_text = "Поменять местами с «%s»" % _profile.names[si]
+			var ridx: int = ri2
+			var sidx: int = si
+			sb.pressed.connect(func():
+				_reserve_swap(ridx, sidx)
+				_show_menu_med()
+			)
+			rrow.add_child(sb)
+	if rsv.size() < RESERVE_MAX:
+		var bhire := Button.new()
+		bhire.text = "Нанять бойца — %d 🪙" % MED_HIRE_COST
+		bhire.icon = _icon_tex("coin")
+		bhire.add_theme_color_override("icon_normal_color", COIN_COLOR)
+		bhire.add_theme_color_override("icon_hover_color", COIN_COLOR)
+		bhire.add_theme_color_override("icon_pressed_color", COIN_COLOR)
+		bhire.disabled = int(_profile.get("coins", 0)) < MED_HIRE_COST
+		bhire.pressed.connect(func():
+			if int(_profile.get("coins", 0)) >= MED_HIRE_COST:
+				_profile.coins = int(_profile.coins) - MED_HIRE_COST
+				_profile.reserve.append(_new_reserve_fighter())
+				_save_profile()
+				_show_menu_med()
+		)
+		vb.add_child(bhire)
+	var back := Button.new()
+	back.text = "← Назад"
+	_style_menu_button(back)
+	back.pressed.connect(_show_menu_main)
+	vb.add_child(back)
+
+# обмен слота отряда с запасным бойцом (полный перенос прогресса)
+func _reserve_swap(ridx: int, sidx: int) -> void:
+	var rsv: Array = _profile.get("reserve", [])
+	if ridx < 0 or ridx >= rsv.size() or sidx < 0 or sidx > 3:
+		return
+	var rb: Dictionary = rsv[ridx]
+	# [поле профиля (массив), ключ резерва]
+	var pairs := [["names", "name"], ["lvl", "lvl"], ["xp", "xp"], ["sidearm", "sidearm"],
+		["cls", "cls"], ["hp", "hp"], ["stats", "stats"], ["talents", "talents"], ["prof", "prof"]]
+	for pr in pairs:
+		var tmp = _profile[pr[0]][sidx]
+		_profile[pr[0]][sidx] = rb.get(pr[1], tmp)
+		rb[pr[1]] = tmp
+	var tmp_t: int = int(_profile.tpts[sidx])
+	_profile.tpts[sidx] = int(rb.get("tpts", 0))
+	rb["tpts"] = tmp_t
+	rsv[ridx] = rb
+	_profile.reserve = rsv
+	_save_profile()
+
+# новый запасной боец: случайный ник, класс и пистолет
+func _new_reserve_fighter() -> Dictionary:
+	var nicks := ["Ястреб", "Гризли", "Вепрь", "Сумрак", "Гюрза", "Кедр", "Шторм", "Булат"]
+	var free := []
+	for nn in nicks:
+		var used: bool = nn in _profile.names
+		for rb2 in _profile.get("reserve", []):
+			if str(rb2.get("name", "")) == nn:
+				used = true
+		if not used:
+			free.append(nn)
+	var nm: String = free[_rng.randi_range(0, free.size() - 1)] if not free.is_empty() else "Боец %d" % (_profile.get("reserve", []).size() + 5)
+	return {"name": nm, "lvl": 1, "xp": 0, "sidearm": _rng.randi_range(0, SIDEARMS.size() - 1),
+		"cls": _rng.randi_range(0, FIGHTER_CLASSES.size() - 1), "hp": -1,
+		"stats": _default_fighter_stats(), "talents": {}, "tpts": 0, "prof": {}}
 
 # ---------- экран «Прогрессия»: лестница уровней и тиров ----------
 func _show_menu_progress() -> void:
