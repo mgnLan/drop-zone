@@ -241,6 +241,38 @@ func _setup_rewarded_bridge() -> void:
 		return
 	var jscb := JavaScriptBridge.create_callback(_on_rewarded_done)
 	JavaScriptBridge.get_interface("window").set("__dz_ad_reward", jscb)
+	# покупки: оболочка ВК шлёт сюда {status:"paid", pack:N, order_id:"..."}
+	var order_cb := JavaScriptBridge.create_callback(_on_order_event)
+	JavaScriptBridge.get_interface("window").set("__dz_order", order_cb)
+
+func _on_order_event(args: Array) -> void:
+	if args.is_empty() or not (args[0] is Dictionary):
+		return
+	var d: Dictionary = args[0]
+	if str(d.get("status", "")) != "paid":
+		return
+	_server_credit_pack(int(d.get("pack", -1)), str(d.get("order_id", "")))
+
+func _server_credit_pack(pack_idx: int, order_id: String) -> void:
+	# начисляет монеты ТОЛЬКО сервер (верификация order_id у ВК); клиент — лишь запрос
+	if _auth_token == "" or _http == null or order_id == "":
+		return
+	_api_call("buy", {"token": _auth_token, "pack": pack_idx, "order_id": order_id})
+
+func _on_buy_result(d: Dictionary) -> void:
+	if not bool(d.get("ok", false)):
+		_log("Покупка не прошла: %s" % str(d.get("error", "ошибка сервера")))
+		return
+	# сервер начислил и вернул актуальный баланс
+	if d.has("coins"):
+		_profile.coins = int(d["coins"])
+		_sync_push = false
+		_save_profile()
+		_sync_push = true
+	_sfx_play("levelup")
+	_log("Пак монет начислен сервером: +%d 💰" % int(d.get("credited", 0)))
+	if _menu_open:
+		_show_menu_shop()
 
 func _show_rewarded_ad() -> void:
 	if OS.has_feature("web"):
@@ -427,7 +459,10 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 		return
 	var d: Dictionary = js.data
 	if not bool(d.get("ok", false)):
-		_auth_fail(str(d.get("error", "Ошибка")), act)
+		if act == "buy":
+			_on_buy_result(d)
+		else:
+			_auth_fail(str(d.get("error", "Ошибка")), act)
 		return
 	match act:
 		"register", "login":
@@ -440,6 +475,8 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_profile_from_server(d.get("profile", {}))
 			_auth_close()
 			_build_menu()
+		"buy":
+			_on_buy_result(d)
 		_:
 			pass
 
@@ -664,8 +701,15 @@ const DAILY_QUESTS := [
 	{"name": "Выиграй бой", "need": 1, "reward": 10},
 ]
 var _chests_opened := 0       # ящиков открыто игроком за текущий бой
-const SHOP_ITEMS := [
-	{"kind": "frame", "idx": 1, "name": "Рамка «Неон»", "price": 200},
+# паки монет за реальные деньги; bonus — сверх базового объёма (комиссия площадки ~45% заложена в цену)
+const COIN_PACKS := [
+	{"coins": 200, "bonus": 10, "price": 29},
+	{"coins": 750, "bonus": 75, "price": 99},
+	{"coins": 1700, "bonus": 250, "price": 199},
+	{"coins": 4000, "bonus": 800, "price": 399},
+]
+const PAYMENTS_ENABLED := false   # включим с онлайн-запуском: голоса ВК + серверная проверка order_id
+const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неон»", "price": 200},
 	{"kind": "frame", "idx": 2, "name": "Рамка «Золото»", "price": 500},
 	{"kind": "nick_color", "idx": 1, "name": "Цвет ника «Красный»", "price": 150},
 	{"kind": "nick_color", "idx": 2, "name": "Цвет ника «Золотой»", "price": 400},
@@ -690,6 +734,18 @@ func _shop_equip(kind: String, idx: int) -> void:
 	else:
 		_profile.nick_color = idx
 	_save_profile()
+
+func _buy_coin_pack(pi: int) -> void:
+	# покупка пака: мост к VK (JS), вне ВК — начисляем сразу (отладка)
+	if pi < 0 or pi >= COIN_PACKS.size() or not PAYMENTS_ENABLED:
+		return
+	var pk: Dictionary = COIN_PACKS[pi]
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.dzOrder && window.dzOrder(%d)" % pi)
+	else:
+		_profile.coins = int(_profile.get("coins", 0)) + int(pk["coins"]) + int(pk.get("bonus", 0))
+		_save_profile()
+		_show_menu_shop()
 
 func _shop_buy(si: int) -> void:
 	var it: Dictionary = SHOP_ITEMS[si]
@@ -6315,6 +6371,50 @@ func _show_menu_shop() -> void:
 				_show_menu_shop()
 			)
 		row.add_child(b)
+	# --- паки монет (реальные деньги; платежи — после запуска онлайна) ---
+	var packs_title := Label.new()
+	packs_title.text = "Паки монет"
+	packs_title.add_theme_font_size_override("font_size", 17)
+	packs_title.add_theme_color_override("font_color", Color(0.95, 0.9, 0.7))
+	vb.add_child(packs_title)
+	for pi in COIN_PACKS.size():
+		var pk: Dictionary = COIN_PACKS[pi]
+		var card2 := PanelContainer.new()
+		card2.add_theme_stylebox_override("panel", _card_style())
+		vb.add_child(card2)
+		var row2 := HBoxContainer.new()
+		row2.add_theme_constant_override("separation", 10)
+		card2.add_child(row2)
+		var pl := Label.new()
+		pl.text = "%d 💰" % int(pk["coins"])
+		pl.add_theme_font_size_override("font_size", 16)
+		pl.custom_minimum_size = Vector2(90, 40)
+		pl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row2.add_child(pl)
+		var pn := Label.new()
+		var bonus := int(pk.get("bonus", 0))
+		pn.text = ("+%d бонусом (%d%%)" % [bonus, int(round(bonus * 100.0 / maxf(1.0, float(int(pk["coins"]) - bonus))))]) if bonus > 0 else "без бонуса"
+		pn.add_theme_font_size_override("font_size", 13)
+		pn.add_theme_color_override("font_color", Color(0.65, 0.85, 0.6))
+		pn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row2.add_child(pn)
+		var pb := Button.new()
+		pb.text = "%d ₽" % int(pk["price"])
+		pb.custom_minimum_size = Vector2(140, 40)
+		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pb.disabled = not PAYMENTS_ENABLED
+		pb.tooltip_text = "Платежи заработают с онлайн-запуском (голоса ВК + серверная проверка)"
+		var pbs := StyleBoxFlat.new()
+		pbs.bg_color = Color(0.16, 0.5, 0.24, 0.95)
+		pbs.border_color = Color(0.4, 0.9, 0.5, 0.9)
+		pbs.set_border_width_all(1)
+		pbs.set_corner_radius_all(12)
+		pb.add_theme_stylebox_override("normal", pbs)
+		pb.add_theme_color_override("font_color", Color.WHITE)
+		var pi2: int = pi
+		pb.pressed.connect(func(): _buy_coin_pack(pi2))
+		row2.add_child(pb)
 	var note := Label.new()
 	note.text = "Скины бойца и подписка с призами — в онлайн-версии."
 	note.add_theme_font_size_override("font_size", 12)

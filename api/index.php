@@ -82,4 +82,59 @@ if ($action === 'load') {
     out(['ok' => true, 'profile' => $profile]);
 }
 
+if ($action === 'buy') {
+    // покупка пака монет: сервер верифицирует order_id у ВК и начисляет монеты сам.
+    // Клиент НИКОГДА не начисляет покупки — только сервер (экономика не на клиенте).
+    $token   = (string)($in['token'] ?? '');
+    $pack_id = (int)($in['pack'] ?? -1);
+    $orderId = trim((string)($in['order_id'] ?? ''));
+    if ($token === '' || $orderId === '') out(['ok' => false, 'error' => 'bad request']);
+    // серверная таблица цен — клиентскую не доверяем
+    $PACKS = [0 => 210, 1 => 825, 2 => 1950, 3 => 4800]; // coins+bonus по индексу пака
+    if (!isset($PACKS[$pack_id])) out(['ok' => false, 'error' => 'unknown pack']);
+    $st = $db->prepare("SELECT id, profile FROM users WHERE token = ?");
+    $st->execute([$token]);
+    $u = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$u) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
+    // idempotency: один order_id — одно начисление
+    $db->exec("CREATE TABLE IF NOT EXISTS orders (
+        order_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        pack INTEGER,
+        coins INTEGER,
+        created_at TEXT
+    )");
+    $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
+    $st->execute([$orderId]);
+    if ($st->fetch()) out(['ok' => true, 'duplicate' => true]); // уже начислено
+    // верификация заказа у ВК. Токен приложения — в config.php (не в репо):
+    //   <?php return ['vk_app_token' => '...'];
+    $VK_APP_TOKEN = '';
+    if (file_exists(__DIR__ . '/config.php')) {
+        $cfg = include __DIR__ . '/config.php';
+        if (is_array($cfg) && isset($cfg['vk_app_token'])) $VK_APP_TOKEN = $cfg['vk_app_token'];
+    }
+    if ($VK_APP_TOKEN !== '') {
+        $vk = @file_get_contents('https://api.vk.com/method/orders.getById?'
+            . http_build_query(['order_id' => $orderId, 'access_token' => $VK_APP_TOKEN, 'v' => '5.199']));
+        $vkr = $vk ? json_decode($vk, true) : null;
+        $status = $vkr['response']['status'] ?? null;
+        if ($status === null || (int)$status !== 1) { // 1 = оплачен
+            out(['ok' => false, 'error' => 'Заказ не подтверждён ВК']);
+        }
+    } else {
+        // токен не настроен — платежи выключены: не начисляем
+        out(['ok' => false, 'error' => 'payments disabled']);
+    }
+    // начисление: профиль хранится целиком — поправим coins на сервере
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
+    if (!is_array($profile)) $profile = [];
+    $profile['coins'] = (int)($profile['coins'] ?? 0) + $PACKS[$pack_id];
+    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+    $db->prepare("INSERT INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
+       ->execute([$orderId, $u['id'], $pack_id, $PACKS[$pack_id]]);
+    out(['ok' => true, 'coins' => $profile['coins'], 'credited' => $PACKS[$pack_id]]);
+}
+
 out(['ok' => false, 'error' => 'unknown action']);
