@@ -344,6 +344,8 @@ func _ready() -> void:
 		_run_testauth("test_auth_mobile.png")
 	elif args.has("--rendericons"):
 		_run_rendericons()
+	elif args.has("--testhouses"):
+		_run_testhouses()
 	else:
 		_load_sfx()
 		_ambient_start()
@@ -1233,24 +1235,8 @@ func _generate_houses() -> void:
 				hcells.append(hc)
 		var model: String = HOUSE_MODELS[_rng.randi() % HOUSE_MODELS.size()]
 		var pal: String = HOUSE_PALETTES[_rng.randi() % HOUSE_PALETTES.size()]
-		var hnode := _place(B + model, gw(cell.x, cell.y), _rng.randf() * 360.0, 2.9 * k + 0.7, pal)
-		# подгонка: модель не должна визуально вылезать за занятые клетки (иначе «сквозь стены»)
-		var hb := AABB()
-		var hfirst := true
-		for mi in hnode.find_children("*", "MeshInstance3D", true, false):
-			var mt: Transform3D = hnode.global_transform.affine_inverse() * mi.global_transform
-			var mb: AABB = mt * mi.get_aabb()
-			hb = mb if hfirst else hb.merge(mb)
-			hfirst = false
-		if not hfirst:
-			var hw: float = maxf(hb.size.x, hb.size.z)
-			var target := (fp + 1) * CELL * 0.92
-			if hw > target:
-				hnode.scale *= target / hw
-		var tints := [Color(0.55, 0.33, 0.24), Color(0.42, 0.46, 0.54), Color(0.60, 0.52, 0.38), Color(0.36, 0.44, 0.32)]
-		_paint_house(hnode, tints[_rng.randi() % tints.size()])
-		_add_house_windows(hnode)
-		# дверь — «от границы»: сторона с наибольшим запасом свободного места до края карты
+		# дверь — «от границы»: сторона с наибольшим запасом свободного места до края карты.
+		# выбираем ДО установки модели, чтобы повернуть реальный проём двери на клетку входа
 		var door := Vector2i(-1, -1)
 		var half := fp / 2 + 1
 		var cands := [Vector2i(cell.x, cell.y + half), Vector2i(cell.x, cell.y - half),
@@ -1266,6 +1252,33 @@ func _generate_houses() -> void:
 				continue
 			door = cand
 			break
+		# у всех моделей Quaternius дверь смотрит на +Z при нулевом повороте (проверено
+		# тестовым режимом --testhouses): крутим дом так, чтобы проём оказался на клетке двери
+		var door_yaw := 0.0
+		if door.x >= 0:
+			if door.y < cell.y:
+				door_yaw = 180.0
+			elif door.x > cell.x:
+				door_yaw = 90.0
+			elif door.x < cell.x:
+				door_yaw = 270.0
+		var hnode := _place(B + model, gw(cell.x, cell.y), door_yaw, 2.9 * k + 0.7, pal)
+		# подгонка: модель не должна визуально вылезать за занятые клетки (иначе «сквозь стены»)
+		var hb := AABB()
+		var hfirst := true
+		for mi in hnode.find_children("*", "MeshInstance3D", true, false):
+			var mt: Transform3D = hnode.global_transform.affine_inverse() * mi.global_transform
+			var mb: AABB = mt * mi.get_aabb()
+			hb = mb if hfirst else hb.merge(mb)
+			hfirst = false
+		if not hfirst:
+			var hw: float = maxf(hb.size.x, hb.size.z)
+			var target := fp * CELL * 0.85
+			if hw > target:
+				hnode.scale *= target / hw
+		var tints := [Color(0.55, 0.33, 0.24), Color(0.42, 0.46, 0.54), Color(0.60, 0.52, 0.38), Color(0.36, 0.44, 0.32)]
+		_paint_house(hnode, tints[_rng.randi() % tints.size()])
+		_add_house_windows(hnode)
 		var hid := _houses.size()
 		for hc2 in hcells:
 			_house_at[_key(hc2)] = hid
@@ -4252,6 +4265,45 @@ func _run_testauth(fname: String) -> void:
 		await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://" + fname)
 	print("TESTAUTH_SAVED " + fname)
+	get_tree().quit()
+
+func _run_testhouses() -> void:
+	# каждую модель по очереди в центр, 4 скриншота с 4 сторон — видно, где проём двери
+	# далеко от арены, чтобы ничего не заслоняло (арена ≈ ±40 по осям)
+	var base := Vector3(0, 0, 140)
+	var sides := [Vector3(0, 5, 13), Vector3(13, 5, 0), Vector3(0, 5, -13), Vector3(-13, 5, 0)]
+	var mi := 0
+	for m in HOUSE_MODELS:
+		for ch in get_children():
+			if str(ch.name).begins_with("HT_"):
+				ch.queue_free()
+		await get_tree().process_frame
+		var node: Node3D = _place(B + m, base, 0.0, 3.0, "Texture_Grey")
+		node.name = "HT_0"
+		_cam.fov = 50.0
+		var si := 0
+		for sp in sides:
+			_cam.position = base + sp
+			_cam.look_at(base + Vector3(0, 2.2, 0), Vector3.UP)
+			for f in 3:
+				await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("user://test_house_%d_%d.png" % [mi, si])
+			si += 1
+		print("HOUSE_SHOT ", m)
+		mi += 1
+	# контроль направления поворота: модель с yaw=90 снята с +X — дверь должна смотреть на камеру
+	for ch in get_children():
+		if str(ch.name).begins_with("HT_"):
+			ch.queue_free()
+	await get_tree().process_frame
+	var vn: Node3D = _place(B + HOUSE_MODELS[0], base, 90.0, 3.0, "Texture_Grey")
+	vn.name = "HT_0"
+	_cam.position = base + Vector3(13, 5, 0)
+	_cam.look_at(base + Vector3(0, 2.2, 0), Vector3.UP)
+	for f in 3:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_house_yaw90_fromX.png")
+	print("HOUSE_SHOT yaw90_fromX")
 	get_tree().quit()
 
 # ============================================================
