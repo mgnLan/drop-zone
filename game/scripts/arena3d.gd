@@ -674,7 +674,9 @@ const STAT_HINTS := {"str": "+2 кг веса/очко; СИЛ 4+ для тяж�
 	"end": "+15 HP за очко", "per": "+1 обзор за 2 очка",
 	"int": "+2% точности (макс 20%) и +10% опыта/очко", "lck": "+0.1% к криту (база 5%, x1.5)/очко"}
 const STAT_POINTS := 5        # очков на распределение каждому бойцу
-const SLOT_WINS := {2: 3, 3: 10, 4: 25}   # слот -> сколько побед нужно
+const SLOT2_WINS := 15   # слот 2 — за 15 побед (открывает режим 2×2)
+const SLOT3_LVL := 35    # слот 3 — запасной, за 35 уровень любого бойца
+# слот 4 — ТОЛЬКО по подписке ВИП и после открытия слота 3 (на механику не влияем, открываем возможности)
 # таланты: ранг N стоит N очков (1/2/3); очко талантов — каждые 3 уровня бойца
 const TALENTS := [
 	{"id": "reload1", "icon": "⚡", "name": "Быстрая перезарядка", "max": 1, "desc": "Перезарядка стоит 1 ОД"},
@@ -2764,6 +2766,27 @@ func _sniper_focus(a) -> float:
 	# снайпер: +10% к точности, если не двигался в текущем ходе
 	return 0.10 if int(a.get("cls", -1)) == 1 and not a.get("moved", false) else 0.0
 
+# ---------- слоты отряда ----------
+func _max_squad_lvl() -> int:
+	var m := 1
+	for i in 4:
+		m = maxi(m, int(_profile.lvl[i]))
+	return m
+
+# разблокировка слотов: 2 — победы, 3 — уровень, 4 — только ВИП после слота 3
+func _slot_unlock_check() -> String:
+	var msg := ""
+	if _profile.unlocked_slots < 2 and int(_profile.get("wins", 0)) >= SLOT2_WINS:
+		_profile.unlocked_slots = 2
+		msg = "🔓 Открыт слот бойца №2 — режим 2×2!"
+	if _profile.unlocked_slots < 3 and _max_squad_lvl() >= SLOT3_LVL:
+		_profile.unlocked_slots = 3
+		msg = "🔓 Открыт слот бойца №3 (запасной)!"
+	if _profile.unlocked_slots == 3 and int(_profile.get("vip", 0)) == 1:
+		_profile.unlocked_slots = 4
+		msg = "🔓 Открыт слот бойца №4 — ВИП!"
+	return msg
+
 # ---------- медцентр ----------
 const MED_HEAL_COST := 15      # лечение раненого до полного
 const MED_REVIVE_COST := 25    # реанимация погибшего
@@ -3841,12 +3864,7 @@ func _check_end() -> void:
 		_profile.total_kills = int(_profile.get("total_kills", 0)) + p_kills
 		if win:
 			_profile.wins = int(_profile.get("wins", 0)) + 1
-		var unlock_msg := ""
-		var wn := int(_profile.get("wins", 0))
-		for si in range(2, 5):
-			if _profile.unlocked_slots < si and wn >= int(SLOT_WINS[si]):
-				_profile.unlocked_slots = si
-				unlock_msg = "🔓 Открыт слот бойца №%d!" % si
+		var unlock_msg := _slot_unlock_check()
 		var daily_msgs: Array = _daily_add(0, p_kills)
 		daily_msgs.append_array(_daily_add(1, _chests_opened))
 		if win:
@@ -5556,6 +5574,8 @@ func _style_locked_button(b: Button) -> void:
 
 func _show_menu_main() -> void:
 	_med_tick()   # офлайн-восстановление HP бойцов
+	if _slot_unlock_check() != "":
+		_save_profile()   # подхват слотов (уровень/ВИП открылись вне боя)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -5576,11 +5596,14 @@ func _show_menu_main() -> void:
 	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
 	m1.pressed.connect(func(): _start_mode(1))
 	var lock2: bool = _profile.unlocked_slots < 2
-	var m2 := _fight_card("fighter2", "2×2 · Пара", "Побед %d/%d до слота №2" % [wins, int(SLOT_WINS[2])], Color(1.0, 0.78, 0.28), lock2)
+	var m2 := _fight_card("fighter2", "2×2 · Пара", "Побед %d/%d до слота №2" % [wins, SLOT2_WINS], Color(1.0, 0.78, 0.28), lock2)
 	if not lock2:
 		m2.pressed.connect(func(): _start_mode(2))
 	var lock4: bool = _profile.unlocked_slots < 4
-	var m4 := _fight_card("fighter4", "4×4 · Отряд", "Побед %d/%d до слота №4" % [wins, int(SLOT_WINS[4])], Color(1.0, 0.78, 0.28), lock4)
+	var s4 := "Только по подписке ВИП"
+	if int(_profile.get("vip", 0)) == 1:
+		s4 = "Сначала слот №3 (35 ур.)" if _profile.unlocked_slots < 3 else "ВИП-доступ активен"
+	var m4 := _fight_card("fighter4", "4×4 · Отряд", s4, Color(1.0, 0.78, 0.28), lock4)
 	if not lock4:
 		m4.pressed.connect(func(): _start_mode(4))
 	# --- секция УПРАВЛЕНИЕ: горизонтальный ряд иконок ---
@@ -5784,12 +5807,19 @@ func _show_menu_squad() -> void:
 		)
 		tabs.add_child(b)
 	if _squad_edit >= _profile.unlocked_slots:
-		# закрытый слот — монетизация/прогресс
+		# закрытый слот — условия открытия
+		var cond := ""
+		match _squad_edit + 1:
+			2:
+				cond = "Нужно побед: %d (у вас %d)." % [SLOT2_WINS, int(_profile.get("wins", 0))]
+			3:
+				cond = "Нужен %d уровень любого бойца (у вас макс. %d)." % [SLOT3_LVL, _max_squad_lvl()]
+			_:
+				cond = "Только по месячной подписке ВИП (с призами) — появится в магазине. Слот 4 открывается после слота 3."
 		var lock := Label.new()
-		var need_w: int = int(SLOT_WINS.get(_squad_edit + 1, 25))
-		lock.text = "Слот закрыт. Нужно побед: %d (у вас %d)
-или месячная подписка (с призами) — скоро." % [need_w, int(_profile.get("wins", 0))]
+		lock.text = "Слот закрыт. " + cond
 		lock.add_theme_font_size_override("font_size", 15)
+		lock.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vb.add_child(lock)
 		var back := Button.new()
 		back.text = "← Назад"
