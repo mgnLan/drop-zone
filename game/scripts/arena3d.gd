@@ -695,6 +695,18 @@ const WEAPON_CLASS := {"Pistol": "pistols", "Revolver_Small": "pistols", "Revolv
 const PROF_XP := [100, 250, 500]
 # стартовый пистолет бойца (выбор игрока в отряде); нож — всегда при себе
 const SIDEARMS := ["Pistol", "Revolver_Small", "Revolver"]
+# классы бойцов: перк — стиль игры, а не сила; класс задаёт и модель бойца
+const FIGHTER_CLASSES := [
+	{"id": "assault", "name": "Штурмовик", "model": "Character_Soldier",
+		"desc": "Адреналин: +1 ОД за убийство (раз за ход)"},
+	{"id": "sniper", "name": "Снайпер", "model": "Character_Enemy",
+		"desc": "+10% к точности, если не двигался в ход"},
+	{"id": "scout", "name": "Разведчик", "model": "Character_Hazmat",
+		"desc": "+2 к обзору — видит дальше в тумане войны"},
+	{"id": "gunner", "name": "Оружейник", "model": "Character_Soldier",
+		"desc": "Перезарядка бесплатно (раз за ход); трофеи — с двойным запасом патронов"},
+]
+const RETRAIN_STATS_COST := 300  # монет за переподготовку: сброс очков статов
 const CLASS_NAMES := {"pistols": "Пистолеты", "smg": "ПП", "rifles": "Винтовки",
 	"shotguns": "Дробовики", "sniper": "Снайперское", "heavy": "Тяжёлое", "melee": "Ближний бой"}
 const DAILY_QUESTS := [
@@ -883,6 +895,7 @@ func _load_profile() -> void:
 		"tpts": [0, 0, 0, 0],         # очки талантов
 		"prof": [{}, {}, {}, {}],     # владение оружием (класс -> урон)
 		"sidearm": [0, 0, 0, 0],      # стартовый пистолет бойца (индекс SIDEARMS)
+		"cls": [0, 0, 0, 0],          # класс бойца (индекс FIGHTER_CLASSES)
 	}
 	var cfg := ConfigFile.new()
 	if cfg.load("user://profile.cfg") != OK:
@@ -899,6 +912,7 @@ func _load_profile() -> void:
 		_profile.tpts[i] = int(cfg.get_value("fighter%d" % i, "tpts", 0))
 		_profile.prof[i] = cfg.get_value("fighter%d" % i, "prof", {})
 		_profile.sidearm[i] = int(cfg.get_value("fighter%d" % i, "sidearm", 0))
+		_profile.cls[i] = int(cfg.get_value("fighter%d" % i, "cls", 0))
 	_profile.city = cfg.get_value("player", "city", "")
 	_profile.avatar = cfg.get_value("player", "avatar", "")
 	_profile.avatar_preset = int(cfg.get_value("player", "avatar_preset", 1))
@@ -948,6 +962,7 @@ func _save_profile() -> void:
 		cfg.set_value("fighter%d" % i, "tpts", _profile.tpts[i])
 		cfg.set_value("fighter%d" % i, "prof", _profile.prof[i])
 		cfg.set_value("fighter%d" % i, "sidearm", _profile.sidearm[i])
+		cfg.set_value("fighter%d" % i, "cls", _profile.cls[i])
 	cfg.set_value("player", "city", _profile.city)
 	cfg.set_value("player", "avatar", _profile.avatar)
 	cfg.set_value("player", "avatar_preset", _profile.avatar_preset)
@@ -1867,9 +1882,7 @@ func _bar_tex() -> Texture2D:
 
 # ---------------- БОЙЦЫ 4v4 ----------------
 func _spawn_teams() -> void:
-	# RED (0) — отряд игрока (ники и статы из профиля), BLUE (1) — боты
-	var red_models := [["Character_Soldier", "AK"], ["Character_Soldier", "Shotgun"],
-		["Character_Hazmat", "SMG"], ["Character_Enemy", "Sniper"]]
+	# RED (0) — отряд игрока (модели из классов, ники и статы из профиля), BLUE (1) — боты
 	var blue_models := [["Character_Soldier", "AK", "Ворон"], ["Character_Hazmat", "SMG", "Клык"],
 		["Character_Soldier", "Shotgun", "Гром"], ["Character_Enemy", "Sniper", "Лёд"]]
 	# RED — юго-западный сектор, BLUE — северо-восточный; число бойцов = режим
@@ -1880,9 +1893,12 @@ func _spawn_teams() -> void:
 		var cell := _free_cell_sector(lo, mid - 4, mid + 4, hi)
 		# стартовое оружие: нож (всегда) + выбранный в отряде пистолет; стволы — трофеи с поля боя
 		var sidearm: String = SIDEARMS[clampi(int(_profile.sidearm[i]), 0, SIDEARMS.size() - 1)]
-		_spawn_human(red_models[i][0], cell.x, cell.y, _rng.randf_range(-30, 90),
+		# класс задаёт модель и перк (перк — стиль, а не сила)
+		var cls_i := clampi(int(_profile.cls[i]), 0, FIGHTER_CLASSES.size() - 1)
+		var model_c: String = FIGHTER_CLASSES[cls_i]["model"]
+		_spawn_human(model_c, cell.x, cell.y, _rng.randf_range(-30, 90),
 			sidearm, Color("#ff4757"), 0, _profile.names[i], _profile.stats[i], _profile.lvl[i], _profile.xp[i],
-			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i])
+			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i], cls_i)
 	for i in _mode:
 		var m = blue_models[i]
 		var cell := _free_cell_sector(mid + 4, hi, lo, mid - 4)
@@ -1923,7 +1939,7 @@ func _apply_outfit(p: Node3D, idx: int) -> void:
 				_outfit_mats[ckey] = dm
 			mi.set_surface_override_material(si, _outfit_mats[ckey])
 
-func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}) -> void:
+func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}, cls_idx := -1) -> void:
 	if st.is_empty():
 		st = _default_fighter_stats()
 	var p: Node3D = _place(H + model + ".gltf", gw(gx, gz), rot_y, HUMAN_SCALE)
@@ -1979,13 +1995,15 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 		"node": p, "pad": pad, "cell": Vector2i(gx, gz), "team": team_idx, "name": fname,
 		"model": model, "stats": st,
 		"hp": hp_max, "max_hp": hp_max, "ap": ap_max, "max_ap": ap_max,
-		"carry_base": _stat_carry(st) + 0.5 * (lvl - 1), "vision": _stat_vision(st),
+		"carry_base": _stat_carry(st) + 0.5 * (lvl - 1),
+		"vision": _stat_vision(st) + (2 if cls_idx == 2 else 0),   # разведчик: +2 обзор
 		"gun": gun, "weapon": gun, "ammo": gun.get("ammo", 0), "spare": gun.get("spare", -1),
 		"melee": _items["melee_fixed"],
 		"armor": {"helmets": null, "body": null, "pants": null},
 		"backpack": [], "alive": true,
 		"lvl": lvl, "xp": xp, "kills": 0, "pts": pts0, "dmg": 0,
 		"talents": talents.duplicate(), "tpts": tpts, "prof": prof.duplicate(),
+		"cls": cls_idx, "moved": false, "adren_used": false, "freerel_used": false,
 		"aggro_to": -1, "aggro_ttl": 0,
 		"hp_fg": hp_fg, "hp_bg": hp_bg
 	})
@@ -2723,8 +2741,14 @@ func _step_face(f: Dictionary, s: Vector2i) -> void:
 	_face_cell(f, s)
 	_sfx_play("step")
 
+# ---------- перки классов ----------
+func _sniper_focus(a) -> float:
+	# снайпер: +10% к точности, если не двигался в текущем ходе
+	return 0.10 if int(a.get("cls", -1)) == 1 and not a.get("moved", false) else 0.0
+
 func _move_fighter(i: int, cell: Vector2i, path: Array = []) -> void:
 	var f = _fighters[i]
+	f.moved = true   # для перка снайпера «не двигался в ход»
 	_unit_at.erase(_key(f.cell))
 	f.cell = cell
 	_unit_at[_key(cell)] = i
@@ -2772,7 +2796,7 @@ func _update_aim() -> void:
 	var in_range: bool = dist <= rng_w
 	var los_ok: bool = w.has("aoe") or _los(a2.cell, d.cell)
 	var base: float = HIT_CHANCE + _stat_acc(a2.stats)
-	var chance := clampf(_hit_chance(a2.cell, d.cell, rng_w) + _stat_acc(a2.stats) - _stat_dodge(d.stats), 0.1, 0.95)
+	var chance := clampf(_hit_chance(a2.cell, d.cell, rng_w) + _stat_acc(a2.stats) + _sniper_focus(a2) - _stat_dodge(d.stats), 0.1, 0.95)
 	var col := Color(0.35, 1.0, 0.45)
 	var txt := "%d%%" % int(chance * 100)
 	if not in_range:
@@ -2866,8 +2890,14 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1) -> in
 	if d.hp <= 0:
 		_kill(victim)
 		if src_idx >= 0 and src_idx < _fighters.size():
-			_fighters[src_idx].kills = int(_fighters[src_idx].kills) + 1
+			var k = _fighters[src_idx]
+			k.kills = int(k.kills) + 1
 			_gain_xp(src_idx, 50)
+			# штурмовик: адреналин — +1 ОД за убийство (раз за ход)
+			if int(k.get("cls", -1)) == 0 and not k.get("adren_used", false) and k.alive:
+				k.adren_used = true
+				k.ap = int(k.ap) + 1
+				_log("%s: адреналин — +1 ОД!" % k.name)
 	else:
 		_spawn_burst(d.node.position + Vector3(0, 1.0, 0), Color(0.55, 0.05, 0.08))
 	return real
@@ -2943,7 +2973,7 @@ func _shoot(att: int, def: int) -> void:
 		return
 	var cls := _weapon_class(w)
 	var pl := _prof_lvl(a, cls)
-	var chance := clampf(_hit_chance(a.cell, d.cell, int(w.get("range", 1))) + _stat_acc(a.stats) + 0.03 * pl - _stat_dodge(d.stats), 0.1, 0.95)
+	var chance := clampf(_hit_chance(a.cell, d.cell, int(w.get("range", 1))) + _stat_acc(a.stats) + 0.03 * pl + _sniper_focus(a) - _stat_dodge(d.stats), 0.1, 0.95)
 	var total := 0
 	var crit := false
 	for i in burst:
@@ -3260,6 +3290,11 @@ func _reload_selected() -> void:
 	var rc: int = f.weapon.get("reload_ap", RELOAD_AP)
 	if _tal(f, "reload1") > 0:
 		rc = 1
+	# оружейник: перезарядка бесплатно, раз за ход
+	if rc > 0 and int(f.get("cls", -1)) == 3 and not f.get("freerel_used", false):
+		f.freerel_used = true
+		rc = 0
+		_log("%s: оружейник — перезарядка бесплатно" % f.name)
 	if f.ap < rc:
 		_log("Нужно %d AP на перезарядку" % rc)
 		return
@@ -3395,6 +3430,10 @@ func _use_backpack(idx: int) -> void:
 			f.weapon = entry["item"]
 			f.ammo = entry["item"].get("ammo", 0)
 			f.spare = entry["item"].get("spare", -1)
+			# оружейник: трофейное оружие — с двойным запасом патронов
+			if int(f.get("cls", -1)) == 3 and int(f.spare) > 0:
+				f.spare = int(f.spare) * 2
+				_log("%s: оружейник — удвоен запас патронов (%d)" % [f.name, int(f.spare)])
 			_log("%s взял в руки: %s" % [f.name, entry["item"]["name"]])
 		"armor":
 			var cat: String = entry["cat"]
@@ -3594,6 +3633,9 @@ func _end_turn() -> void:
 			if f.alive:
 				f.ap = f.max_ap
 				f.guard = 0
+				f.moved = false
+				f.adren_used = false
+				f.freerel_used = false
 		_log("Ход %d — ваши бойцы готовы" % _turn)
 	if not _game_over:
 		_tick_zone()
@@ -5715,6 +5757,23 @@ func _show_menu_squad() -> void:
 			_show_menu_squad()
 		)
 		wrow.add_child(wb)
+	# --- класс бойца: перк — стиль игры, класс задаёт модель ---
+	var crow3 := HBoxContainer.new()
+	vb.add_child(crow3)
+	var cl3 := Label.new()
+	cl3.text = "Класс:"
+	crow3.add_child(cl3)
+	for ci in FIGHTER_CLASSES.size():
+		var cb := Button.new()
+		cb.text = FIGHTER_CLASSES[ci]["name"] + (" ✓" if int(_profile.cls[_squad_edit]) == ci else "")
+		cb.tooltip_text = str(FIGHTER_CLASSES[ci]["desc"])
+		var cv: int = ci
+		cb.pressed.connect(func():
+			_profile.cls[_squad_edit] = cv
+			_save_profile()
+			_show_menu_squad()
+		)
+		crow3.add_child(cb)
 	# --- пол и внешность (только для основного бойца, слот 0) ---
 	if _squad_edit == 0:
 		var grow2 := HBoxContainer.new()
@@ -5895,6 +5954,28 @@ func _show_menu_squad() -> void:
 		hint.text = "  " + STAT_HINTS[k]
 		hint.add_theme_font_size_override("font_size", 10 if _mob() else 12)
 		row.add_child(hint)
+	# переподготовка: сброс очков статов за монеты (вернёт все вложенные очки)
+	var invested := 0
+	for k2 in STAT_KEYS:
+		invested += int(st.get(k2, 0))
+	if invested > 0:
+		var rstat := Button.new()
+		rstat.text = "Переподготовка (сброс статов) — %d 🪙" % RETRAIN_STATS_COST
+		rstat.icon = _icon_tex("coin")
+		rstat.add_theme_color_override("icon_normal_color", COIN_COLOR)
+		rstat.add_theme_color_override("icon_hover_color", COIN_COLOR)
+		rstat.add_theme_color_override("icon_pressed_color", COIN_COLOR)
+		rstat.disabled = int(_profile.get("coins", 0)) < RETRAIN_STATS_COST
+		rstat.tooltip_text = "Вернёт %d вложенных очков для перераспределения" % invested
+		rstat.pressed.connect(func():
+			if int(_profile.get("coins", 0)) >= RETRAIN_STATS_COST:
+				_profile.coins = int(_profile.coins) - RETRAIN_STATS_COST
+				for k4 in STAT_KEYS:
+					_profile.stats[_squad_edit][k4] = 0
+				_save_profile()
+				_show_menu_squad()
+		)
+		vb.add_child(rstat)
 	var tl2 := Label.new()
 	tl2.text = "Таланты — очков: %d (+1 каждые 3 уровня)" % int(_profile.tpts[_squad_edit])
 	tl2.add_theme_font_size_override("font_size", 15)
