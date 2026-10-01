@@ -235,6 +235,7 @@ func _mob() -> bool:
 # в VK — VKWebAppShowNativeAds с колбэком награды, вне площадок — сразу награда (dev-режим).
 # Награда возвращается через вызов window.__dz_ad_reward() из оболочки.
 var _sponsor_used := false      # один дроп за бой
+var _ad_reward_cb: Callable = Callable()   # награда за текущий просмотр (ставится перед show)
 
 func _setup_rewarded_bridge() -> void:
 	if not OS.has_feature("web"):
@@ -274,7 +275,9 @@ func _on_buy_result(d: Dictionary) -> void:
 	if _menu_open:
 		_show_menu_shop()
 
-func _show_rewarded_ad() -> void:
+func _show_rewarded_ad(on_reward: Callable = Callable()) -> void:
+	# on_reward — что выдать за просмотр; пусто — спонсорский дроп (боевой бонус)
+	_ad_reward_cb = on_reward
 	if OS.has_feature("web"):
 		var r = JavaScriptBridge.eval("""
 			(function(){
@@ -288,10 +291,15 @@ func _show_rewarded_ad() -> void:
 		if r != null and bool(r):
 			return
 	# SDK площадки не подключён — dev-режим: награда сразу
-	_grant_sponsor_drop()
+	_on_rewarded_done([])
 
 func _on_rewarded_done(_args: Array) -> void:
-	_grant_sponsor_drop()
+	var cb := _ad_reward_cb
+	_ad_reward_cb = Callable()
+	if cb.is_valid():
+		cb.call()
+	else:
+		_grant_sponsor_drop()
 
 func _grant_sponsor_drop() -> void:
 	if _sponsor_used:
@@ -2834,6 +2842,24 @@ func _med_tick() -> void:
 	_profile.hp_ts = now
 	_save_profile()
 
+# «Доктор за ролик»: +% от max HP (процент по уровню), награда за просмотр рекламы
+func _med_doctor(i: int) -> void:
+	if i < 0 or i > 3:
+		return
+	var mx := _fighter_hp_max(i)
+	var ha: Array = _profile.get("hp", [-1, -1, -1, -1])
+	var h: int = mx if i >= ha.size() or int(ha[i]) < 0 else int(ha[i])
+	if h >= mx:
+		return
+	var pct := _doc_heal_pct(int(_profile.lvl[i]))
+	var nh := mini(mx, h + maxi(1, int(mx * pct)))
+	ha[i] = -1 if nh >= mx else nh
+	_profile.hp = ha
+	_save_profile()
+	_log("📺 Доктор вылечил %s: +%d HP (%d/%d)" % [_profile.names[i], nh - h, nh, mx])
+	if _menu_open:
+		_show_menu_med()
+
 func _move_fighter(i: int, cell: Vector2i, path: Array = []) -> void:
 	var f = _fighters[i]
 	f.moved = true   # для перка снайпера «не двигался в ход»
@@ -3912,6 +3938,25 @@ func _check_end() -> void:
 				rw.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				rw.custom_minimum_size = Vector2(min(500.0, _vw() * 0.9), 0)
 				vb.add_child(rw)
+				# удвоение награды за просмотр ролика
+				var bdouble := Button.new()
+				bdouble.text = "📺 Удвоить награду ×2"
+				bdouble.custom_minimum_size = Vector2(280, 42)
+				bdouble.add_theme_font_size_override("font_size", 16)
+				var rw_coins: int = int(_battle_reward.coins)
+				bdouble.pressed.connect(func():
+					bdouble.disabled = true
+					bdouble.text = "📺 Показ ролика..."
+					_show_rewarded_ad(func():
+						_profile.coins = int(_profile.get("coins", 0)) + rw_coins
+						_battle_reward["coins"] = rw_coins * 2
+						_save_profile()
+						if is_instance_valid(rw):
+							rw.text = "Награда: +%d монет (удвоено за ролик) · Всего: %d 💰" % [rw_coins * 2, int(_profile.get("coins", 0))]
+						bdouble.text = "✓ Награда удвоена"
+					)
+				)
+				vb.add_child(bdouble)
 				if str(_battle_reward.get("unlock", "")) != "":
 					var ul := Label.new()
 					ul.text = str(_battle_reward.unlock)
@@ -6282,9 +6327,12 @@ func _show_menu_med() -> void:
 		# кнопки лечения
 		if h < mx and h > 0:
 			var bdoc := Button.new()
-			bdoc.text = "Доктор +%d%%" % int(_doc_heal_pct(int(_profile.lvl[i])) * 100)
-			bdoc.disabled = true   # реклама ВК ещё не подключена
-			bdoc.tooltip_text = "За просмотр ролика — скоро (реклама ВК)"
+			bdoc.text = "Доктор +%d%% 📺" % int(_doc_heal_pct(int(_profile.lvl[i])) * 100)
+			bdoc.tooltip_text = "Посмотри ролик — врач подлечит бойца"
+			var di: int = i
+			bdoc.pressed.connect(func():
+				_show_rewarded_ad(func(): _med_doctor(di))
+			)
 			row.add_child(bdoc)
 			var bheal := Button.new()
 			bheal.text = "%d 🪙" % MED_HEAL_COST
