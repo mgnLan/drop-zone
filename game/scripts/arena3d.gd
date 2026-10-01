@@ -4142,8 +4142,8 @@ func _refresh_fighter_panel() -> void:
 # ---------- тестовый прогон для скриншота ----------
 func _run_testplay() -> void:
 	await get_tree().process_frame
-	_profile.onboarded = 0
-	_onboard_start()
+	_profile.onboarded = 1
+	_onboard_step = -1
 	var f = _fighters[0]
 	f.ap = 40
 	_unit_at.erase(_key(f.cell))
@@ -4179,7 +4179,7 @@ func _run_testplay() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_play.png")
+	get_viewport().get_texture().get_image().save_png("user://test_play.png")
 	print("TESTPLAY_SAVED")
 	get_tree().quit()
 
@@ -4209,7 +4209,7 @@ func _run_testbots() -> void:
 	print("TESTBOTS: конец, HP игрока0 = ", p0.hp, " живых красных = ", _alive_count(0))
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_bots.png")
+	get_viewport().get_texture().get_image().save_png("user://test_bots.png")
 	print("TESTBOTS_SAVED")
 	get_tree().quit()
 
@@ -4224,23 +4224,23 @@ func _run_testmenu(mobile := false) -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_menu%s.png" % sfx)
+	get_viewport().get_texture().get_image().save_png("user://test_menu%s.png" % sfx)
 	_show_menu_squad()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_squad%s.png" % sfx)
+	get_viewport().get_texture().get_image().save_png("user://test_squad%s.png" % sfx)
 	_show_menu_shop()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_shop%s.png" % sfx)
+	get_viewport().get_texture().get_image().save_png("user://test_shop%s.png" % sfx)
 	_show_menu_chests()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_chests%s.png" % sfx)
+	get_viewport().get_texture().get_image().save_png("user://test_chests%s.png" % sfx)
 	_show_menu_profile()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/test_profile%s.png" % sfx)
+	get_viewport().get_texture().get_image().save_png("user://test_profile%s.png" % sfx)
 	print("TESTMENU_SAVED")
 	get_tree().quit()
 
@@ -4250,7 +4250,7 @@ func _run_testauth(fname: String) -> void:
 	_build_auth(false)
 	for i in 4:
 		await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("G:/Kimi project/Drop Zone/docs/" + fname)
+	get_viewport().get_texture().get_image().save_png("user://" + fname)
 	print("TESTAUTH_SAVED " + fname)
 	get_tree().quit()
 
@@ -4684,6 +4684,42 @@ func _section_title(t: String) -> HBoxContainer:
 	hb.add_child(line)
 	return hb
 
+# ---- единый стиль экранов: заголовок с пиктограммой, валюта чипами (без эмодзи) ----
+const COIN_COLOR := Color(1.0, 0.82, 0.25)
+const SHARD_COLOR := Color(0.55, 0.75, 1.0)
+
+func _screen_title(icon: String, txt: String) -> HBoxContainer:
+	# заголовок экрана: пиктограмма в подложке + крупный текст
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 10)
+	var chip := _icon_chip(icon, 22)
+	hb.add_child(chip)
+	var l := Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", 20 if _mob() else 26)
+	hb.add_child(l)
+	return hb
+
+func _currency_chip(icon: String, col: Color, txt: String) -> PanelContainer:
+	# чип валюты: цветная пиктограмма + значение, неоновая рамка как у _frame_box
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _frame_box())
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	var tr := TextureRect.new()
+	tr.texture = _icon_tex(icon)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.custom_minimum_size = Vector2(18, 18)
+	tr.modulate = col
+	h.add_child(tr)
+	var l := Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", 14)
+	h.add_child(l)
+	pc.add_child(h)
+	return pc
+
 func _logo_pulse(logo: CanvasItem) -> void:
 	# мигающая ярко-голубая подсветка логотипа
 	var tw := logo.create_tween().set_loops()
@@ -4949,14 +4985,15 @@ func _build_menu() -> void:
 	_logo_pulse(logo)
 	_ui.menu_logo = logo
 	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sp.size_flags_horizontal = Control.SIZE_FILL
 	top.add_child(sp)
-	# чипы: на узком экране переносятся в 2 ряда (FlowContainer)
+	# чипы: на десктопе — одна строка вправо, на узком экране переносятся в 2 ряда (FlowContainer)
 	var chips := FlowContainer.new()
 	chips.add_theme_constant_override("h_separation", 4)
 	chips.add_theme_constant_override("v_separation", 4)
 	chips.alignment = FlowContainer.ALIGNMENT_END
 	chips.custom_minimum_size = Vector2(190, 0) if mob_w else Vector2(0, 0)
+	chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(chips)
 	_ui.menu_chips = chips
 	# --- центральная зона: скролл, чтобы меню влезало на любых экранах ---
@@ -5244,10 +5281,7 @@ func _show_menu_settings() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
-	var t := Label.new()
-	t.text = "Настройки"
-	t.add_theme_font_size_override("font_size", 30)
-	vb.add_child(t)
+	vb.add_child(_screen_title("gear", "Настройки"))
 	var gl := Label.new()
 	gl.text = "Графика:"
 	vb.add_child(gl)
@@ -5349,11 +5383,7 @@ func _show_menu_squad() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
-	var t := Label.new()
-	t.text = "Отряд — создание бойцов"
-	t.add_theme_font_size_override("font_size", 20 if _mob() else 26)
-	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(t)
+	vb.add_child(_screen_title("squad", "Отряд — создание бойцов"))
 	# вкладки 4 слотов: открыт только первый, остальные — заслуги/подписка
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 4)
@@ -5436,6 +5466,9 @@ func _show_menu_squad() -> void:
 			if _profile.skin == si:
 				ss.border_color = Color(1, 1, 1)
 				ss.set_border_width_all(2)
+			else:
+				ss.border_color = Color(1, 1, 1, 0.3)
+				ss.set_border_width_all(1)
 			sb.add_theme_stylebox_override("normal", ss)
 			sb.add_theme_stylebox_override("hover", ss)
 			sb.add_theme_stylebox_override("pressed", ss)
@@ -5465,6 +5498,9 @@ func _show_menu_squad() -> void:
 			if _profile.nick_color == ci:
 				cs.border_color = Color(1, 1, 1)
 				cs.set_border_width_all(2)
+			else:
+				cs.border_color = Color(1, 1, 1, 0.3)
+				cs.set_border_width_all(1)
 			cb.add_theme_stylebox_override("normal", cs)
 			cb.add_theme_stylebox_override("hover", cs)
 			cb.add_theme_stylebox_override("pressed", cs)
@@ -5592,7 +5628,11 @@ func _show_menu_squad() -> void:
 		spent += r3 * (r3 + 1) / 2
 	if spent > 0:
 		var rst := Button.new()
-		rst.text = "♻ Сброс талантов — %d 💰 (вернёт %d очк.)" % [TALENT_RESET_COST, spent]
+		rst.text = "Сброс талантов — %d (вернёт %d очк.)" % [TALENT_RESET_COST, spent]
+		rst.icon = _icon_tex("coin")
+		rst.add_theme_color_override("icon_normal_color", COIN_COLOR)
+		rst.add_theme_color_override("icon_hover_color", COIN_COLOR)
+		rst.add_theme_color_override("icon_pressed_color", COIN_COLOR)
 		rst.custom_minimum_size = Vector2(0, 40)
 		rst.disabled = int(_profile.get("coins", 0)) < TALENT_RESET_COST
 		rst.pressed.connect(func():
@@ -5670,10 +5710,7 @@ func _show_menu_bp() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
-	var t := Label.new()
-	t.text = "🏅 Battle Pass — сезон 1 «Первый снег»"
-	t.add_theme_font_size_override("font_size", 26)
-	vb.add_child(t)
+	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1 «Первый снег»"))
 	var lvl := _bp_level()
 	var cur_xp := int(_profile.get("bp_xp", 0))
 	vb.add_child(_framed_label("Уровень %d/%d · сезонный опыт %d (+%d за бой, +5 за убийство, +20 за победу)" % [
@@ -5852,12 +5889,13 @@ func _show_menu_chests() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(520.0, _vw() * 0.94), 0)
-	var t := Label.new()
-	t.text = "🎁 Сундуки удачи"
-	t.add_theme_font_size_override("font_size", 28)
-	vb.add_child(t)
-	vb.add_child(_framed_label("Баланс: %d 💰  ·  %d 💠 осколков  ·  открыто сундуков: %d" % [
-		int(_profile.get("coins", 0)), int(_profile.get("shards", 0)), int(_profile.get("chests_total", 0))], 14))
+	vb.add_child(_screen_title("chest", "Сундуки удачи"))
+	var bal := HBoxContainer.new()
+	bal.add_theme_constant_override("separation", 8)
+	bal.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
+	bal.add_child(_currency_chip("shard", SHARD_COLOR, str(int(_profile.get("shards", 0)))))
+	bal.add_child(_currency_chip("chest", Color(0.88, 0.9, 0.93), "открыто: %d" % int(_profile.get("chests_total", 0))))
+	vb.add_child(bal)
 	var pity: Array = _profile.get("pity", [0, 0, 0])
 	var pity_siren: int = int(_profile.get("pity_siren", 0))
 	# гаранты с тонкими прогресс-барами
@@ -5895,7 +5933,11 @@ func _show_menu_chests() -> void:
 			rn.add_theme_color_override("font_color", RARITY_COLORS[_chest_last_rarity])
 			vb.add_child(rn)
 		vb.add_child(rl)
-	var ob := _menu_button("📦 Открыть сундук — %d 💰" % CHEST_PRICE)
+	var ob := _menu_button("Открыть сундук — %d" % CHEST_PRICE)
+	ob.icon = _icon_tex("coin")
+	ob.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
+	ob.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
+	ob.add_theme_color_override("icon_pressed_color", Color(0.12, 0.08, 0.02))
 	ob.custom_minimum_size = Vector2(0, 56)
 	# крупная золотая кнопка открытия
 	var obs := StyleBoxFlat.new()
@@ -5919,7 +5961,7 @@ func _show_menu_chests() -> void:
 	leg.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	vb.add_child(leg)
 	# обмен осколков: любая косметика из пула (кроме сиреневой)
-	vb.add_child(_framed_label("💠 Обмен осколков — точно то, что нужно", 15))
+	vb.add_child(_framed_label("Обмен осколков — точно то, что нужно", 15))
 	for r in 5:
 		for it in CHEST_POOL[r]:
 			var kind := str(it["kind"])
@@ -5941,7 +5983,12 @@ func _show_menu_chests() -> void:
 				eb.text = "✓ Есть"
 				eb.disabled = true
 			else:
-				eb.text = "%d 💠" % RARITY_EXCHANGE[r]
+				eb.text = "%d" % RARITY_EXCHANGE[r]
+				eb.icon = _icon_tex("shard")
+				eb.add_theme_color_override("icon_normal_color", SHARD_COLOR)
+				eb.add_theme_color_override("icon_hover_color", SHARD_COLOR)
+				eb.add_theme_color_override("icon_pressed_color", SHARD_COLOR)
+				eb.add_theme_color_override("icon_disabled_color", Color(0.4, 0.45, 0.55))
 				eb.disabled = int(_profile.get("shards", 0)) < RARITY_EXCHANGE[r]
 				var k2 := kind
 				var i2 := idx
@@ -5960,11 +6007,16 @@ func _show_menu_shop() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
-	var t := Label.new()
-	t.text = "🛒 Магазин"
-	t.add_theme_font_size_override("font_size", 28)
-	vb.add_child(t)
-	vb.add_child(_framed_label("Баланс: %d 💰 — монеты за бои и задания дня" % int(_profile.get("coins", 0)), 15))
+	vb.add_child(_screen_title("shop", "Магазин"))
+	var bal2 := HBoxContainer.new()
+	bal2.add_theme_constant_override("separation", 8)
+	bal2.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
+	var bal_note := Label.new()
+	bal_note.text = "монеты за бои и задания дня"
+	bal_note.add_theme_font_size_override("font_size", 13)
+	bal_note.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
+	bal2.add_child(bal_note)
+	vb.add_child(bal2)
 	for si in SHOP_ITEMS.size():
 		var it: Dictionary = SHOP_ITEMS[si]
 		var kind := str(it["kind"])
@@ -6014,7 +6066,12 @@ func _show_menu_shop() -> void:
 				_show_menu_shop()
 			)
 		else:
-			b.text = "Купить · %d 💰" % price
+			b.text = "Купить · %d" % price
+			b.icon = _icon_tex("coin")
+			b.add_theme_color_override("icon_normal_color", COIN_COLOR)
+			b.add_theme_color_override("icon_hover_color", COIN_COLOR)
+			b.add_theme_color_override("icon_pressed_color", COIN_COLOR)
+			b.add_theme_color_override("icon_disabled_color", Color(0.5, 0.45, 0.35))
 			# красная кнопка покупки
 			var bs := StyleBoxFlat.new()
 			bs.bg_color = Color(0.72, 0.16, 0.20, 0.95)
@@ -6044,10 +6101,7 @@ func _show_menu_profile() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
-	var t := Label.new()
-	t.text = "Личные настройки"
-	t.add_theme_font_size_override("font_size", 28)
-	vb.add_child(t)
+	vb.add_child(_screen_title("profile", "Личные настройки"))
 	# аватар
 	var arow := HBoxContainer.new()
 	vb.add_child(arow)
