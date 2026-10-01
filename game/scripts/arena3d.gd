@@ -741,6 +741,35 @@ func _daily_add(qi: int, n: int) -> Array:
 		_profile.coins = int(_profile.get("coins", 0)) + int(DAILY_QUESTS[qi]["reward"])
 		msgs.append("📅 Задание дня «%s» — +%d 💰" % [str(DAILY_QUESTS[qi]["name"]), int(DAILY_QUESTS[qi]["reward"])])
 	return msgs
+
+# ---------- задания недели (задел: XP Battle Pass, сброс раз в 7 дней) ----------
+const WEEKLY_TASKS := [
+	{"name": "Проведи 5 боёв", "target": 5, "xp": 150},
+	{"name": "Убей 10 врагов на арене", "target": 10, "xp": 150},
+	{"name": "Победи 2 раза", "target": 2, "xp": 200},
+	{"name": "Открой 3 ящика на арене", "target": 3, "xp": 100},
+]
+
+func _weekly_check() -> void:
+	var wk := int(Time.get_unix_time_from_system() / 604800.0)
+	var w: Dictionary = _profile.get("weekly", {})
+	if int(w.get("week", -1)) != wk:
+		_profile.weekly = {"week": wk, "prog": [0, 0, 0, 0], "claimed": [0, 0, 0, 0]}
+
+func _weekly_add(qi: int, n: int) -> Array:
+	var msgs := []
+	if n <= 0 or qi < 0 or qi >= WEEKLY_TASKS.size():
+		return msgs
+	_weekly_check()
+	var w: Dictionary = _profile.weekly
+	var prog: Array = w.prog
+	var claimed: Array = w.claimed
+	prog[qi] = mini(int(prog[qi]) + n, int(WEEKLY_TASKS[qi]["target"]))
+	if int(prog[qi]) >= int(WEEKLY_TASKS[qi]["target"]) and int(claimed[qi]) == 0:
+		claimed[qi] = 1
+		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + int(WEEKLY_TASKS[qi]["xp"])
+		msgs.append("🎯 Задание недели «%s» — +%d XP Battle Pass" % [str(WEEKLY_TASKS[qi]["name"]), int(WEEKLY_TASKS[qi]["xp"])])
+	return msgs
 var _battle_reward := {}      # итоги последнего боя для экрана победы
 
 func _default_fighter_stats() -> Dictionary:
@@ -763,6 +792,8 @@ func _load_profile() -> void:
 		"stamina_ts": 0.0,        # unixtime последнего пересчёта
 		"wins": 0,                # побед всего
 		"total_kills": 0,         # убийств всего
+		"total_battles": 0,       # боёв всего
+		"weekly": {},             # задания недели (задел под BP XP)
 		"daily_date": "",           # дата текущих ежедневных заданий
 		"daily_prog": [0, 0, 0],    # прогресс по 3 заданиям
 		"daily_claimed": [0, 0, 0], # награды получены
@@ -829,6 +860,8 @@ func _load_profile() -> void:
 	_profile.bp_owned = int(cfg.get_value("player", "bp_owned", 0))
 	_profile.bp_claimed_free = cfg.get_value("player", "bp_claimed_free", [])
 	_profile.bp_claimed_prem = cfg.get_value("player", "bp_claimed_prem", [])
+	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
+	_profile.weekly = cfg.get_value("player", "weekly", {})
 	_daily_check()
 
 func _save_profile() -> void:
@@ -872,6 +905,8 @@ func _save_profile() -> void:
 	cfg.set_value("player", "bp_owned", int(_profile.get("bp_owned", 0)))
 	cfg.set_value("player", "bp_claimed_free", _profile.get("bp_claimed_free", []))
 	cfg.set_value("player", "bp_claimed_prem", _profile.get("bp_claimed_prem", []))
+	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
+	cfg.set_value("player", "weekly", _profile.get("weekly", {}))
 	cfg.save("user://profile.cfg")
 	if _sync_push and _auth_token != "" and _http != null:
 		_api_call("save", {"token": _auth_token, "profile": _profile})
@@ -3557,6 +3592,13 @@ func _check_end() -> void:
 		daily_msgs.append_array(_daily_add(1, _chests_opened))
 		if win:
 			daily_msgs.append_array(_daily_add(2, 1))
+		# задания недели — прогресс к XP Battle Pass
+		_profile.total_battles = int(_profile.get("total_battles", 0)) + 1
+		daily_msgs.append_array(_weekly_add(0, 1))
+		daily_msgs.append_array(_weekly_add(1, p_kills))
+		daily_msgs.append_array(_weekly_add(3, _chests_opened))
+		if win:
+			daily_msgs.append_array(_weekly_add(2, 1))
 		_battle_reward = {"coins": reward, "kills": p_kills, "win": win, "unlock": unlock_msg, "daily": daily_msgs}
 		_save_profile()
 		var msg := "ПОБЕДА! Арена ваша!" if blue == 0 else "Поражение. Шоу окончено."
@@ -4254,6 +4296,10 @@ func _run_testmenu(mobile := false) -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_profile%s.png" % sfx)
+	_show_menu_bp()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_bp%s.png" % sfx)
 	print("TESTMENU_SAVED")
 	get_tree().quit()
 
@@ -5710,23 +5756,38 @@ func _show_menu_squad() -> void:
 # ---------- Battle Pass: сезон 1 ----------
 const BP_LEVELS := 30
 const BP_XP_PER := 120          # сезонного опыта на уровень
+# сезон 1 «Первый сброс»: награды каждые 3 уровня; free-лента — каждому, premium — видимые награды
+const BP_TABLE_FREE := {
+	3: {"kind": "coins", "n": 60, "name": "60 💰"},
+	6: {"kind": "shards", "n": 40, "name": "40 💠"},
+	9: {"kind": "coins", "n": 90, "name": "90 💰"},
+	12: {"kind": "nick", "idx": 1, "name": "Ник «Красный»"},
+	15: {"kind": "coins", "n": 120, "name": "120 💰"},
+	18: {"kind": "shards", "n": 60, "name": "60 💠"},
+	21: {"kind": "coins", "n": 150, "name": "150 💰"},
+	24: {"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"},
+	27: {"kind": "coins", "n": 200, "name": "200 💰"},
+	30: {"kind": "frame", "idx": 6, "name": "Рамка «Пламя»"},
+}
+const BP_TABLE_PREM := {
+	3: {"kind": "shards", "n": 90, "name": "90 💠"},
+	6: {"kind": "coins", "n": 180, "name": "180 💰"},
+	9: {"kind": "nick", "idx": 6, "name": "Ник «Закат»"},
+	12: {"kind": "shards", "n": 120, "name": "120 💠"},
+	15: {"kind": "taunt", "idx": 1, "name": "Насмешки «Дерзкие»"},
+	18: {"kind": "coins", "n": 300, "name": "300 💰"},
+	21: {"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
+	24: {"kind": "shards", "n": 240, "name": "240 💠"},
+	27: {"kind": "coins", "n": 450, "name": "450 💰"},
+	30: {"kind": "teleport", "name": "⚡ Телепорт «Шторм»"},
+}
 
 func _bp_level() -> int:
 	return mini(BP_LEVELS, int(_profile.get("bp_xp", 0)) / BP_XP_PER)
 
 func _bp_reward_for(lv: int, prem: bool) -> Dictionary:
-	# награды каждые 3 уровня; финал 30: free — рамка «Пламя», premium — телепорт «Шторм»
-	if lv % 3 != 0:
-		return {}
-	if prem:
-		if lv == BP_LEVELS:
-			return {"kind": "teleport", "name": "⚡ Телепорт «Шторм»"}
-		return {"kind": "shards", "n": lv * 3, "name": "%d 💠" % (lv * 3)}
-	if lv == BP_LEVELS:
-		return {"kind": "frame", "idx": 6, "name": "Рамка «Пламя»"}
-	if lv % 6 == 0:
-		return {"kind": "coins", "n": lv * 2, "name": "%d 💰" % (lv * 2)}
-	return {"kind": "shards", "n": lv * 2, "name": "%d 💠" % (lv * 2)}
+	var tbl: Dictionary = BP_TABLE_PREM if prem else BP_TABLE_FREE
+	return tbl.get(lv, {})
 
 func _bp_claim(lv: int, prem: bool) -> void:
 	if lv > _bp_level():
@@ -5746,7 +5807,14 @@ func _bp_claim(lv: int, prem: bool) -> void:
 		"coins":
 			_profile.coins = int(_profile.get("coins", 0)) + int(rw["n"])
 		"frame":
-			_owned_grant("frame", int(rw["idx"]))
+			if _owned_grant("frame", int(rw["idx"])):
+				_profile.shards = int(_profile.get("shards", 0)) + 40   # дубликат → осколки
+		"nick":
+			if _owned_grant("nick", int(rw["idx"])):
+				_profile.shards = int(_profile.get("shards", 0)) + 25
+		"taunt":
+			if _owned_grant("taunt", int(rw["idx"])):
+				_profile.shards = int(_profile.get("shards", 0)) + 25
 		"teleport":
 			var ots: Array = _profile.get("owned_teleports", [1, 1, 0]).duplicate()
 			while ots.size() < 3:
@@ -5762,7 +5830,7 @@ func _show_menu_bp() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
-	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1 «Первый снег»"))
+	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1 «Первый сброс»"))
 	var lvl := _bp_level()
 	var cur_xp := int(_profile.get("bp_xp", 0))
 	vb.add_child(_framed_label("Уровень %d/%d · сезонный опыт %d (+%d за бой, +5 за убийство, +20 за победу)" % [
@@ -5773,10 +5841,25 @@ func _show_menu_bp() -> void:
 	bar.custom_minimum_size = Vector2(0, 14)
 	bar.show_percentage = false
 	vb.add_child(bar)
+	# задания недели — прогресс к XP Battle Pass
+	_weekly_check()
+	var wdata: Dictionary = _profile.weekly
+	for qi in WEEKLY_TASKS.size():
+		var prog2 := 0
+		if qi < wdata.prog.size():
+			prog2 = int(wdata.prog[qi])
+		var done: bool = qi < wdata.claimed.size() and int(wdata.claimed[qi]) == 1
+		var wl := Label.new()
+		wl.add_theme_font_size_override("font_size", 12)
+		wl.text = ("✅ " if done else "🎯 ") + "%s — %d/%d (+%d XP)" % [
+			str(WEEKLY_TASKS[qi]["name"]), prog2, int(WEEKLY_TASKS[qi]["target"]), int(WEEKLY_TASKS[qi]["xp"])]
+		if done:
+			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
+		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
 		var buy := _menu_button("👑 Premium — 399 ₽ (платежи после запуска онлайна)")
 		buy.disabled = true
-		buy.tooltip_text = "Premium-лента: осколки x1.5 и телепорт «Шторм» на 30 уровне"
+		buy.tooltip_text = "Premium-лента сезона: 930 монет, 450 осколков, ник «Закат», насмешки, рамка «Крипто», телепорт «Шторм»"
 		vb.add_child(buy)
 	else:
 		vb.add_child(_framed_label("👑 Premium активен", 14))
@@ -6379,6 +6462,7 @@ func _show_inventory() -> void:
 	var title := Label.new()
 	title.text = "Снаряжение: %s" % f.name
 	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
 	box.add_child(title)
 	if _mob():
 		_show_inventory_mobile(f, box)
@@ -6420,7 +6504,16 @@ func _show_inventory() -> void:
 				b.add_theme_constant_override("icon_max_width", 30)
 			b.tooltip_text = _item_tooltip({"kind": "armor", "cat": cat, "item": it}) + "\n—\nКлик — снять"
 		else:
-			b.tooltip_text = "Пусто — перетащи броню из рюкзака"
+			# пустой слот — «призрак»: тусклая рамка и подпись, а не серая кнопка
+			b.text = "%s · пусто" % sd[0]
+			var gb := StyleBoxFlat.new()
+			gb.bg_color = Color(0.03, 0.05, 0.08, 0.45)
+			gb.border_color = Color(0.45, 0.55, 0.65, 0.35)
+			gb.set_border_width_all(1)
+			gb.set_corner_radius_all(6)
+			b.add_theme_stylebox_override("normal", gb)
+			b.add_theme_color_override("font_color", Color(0.42, 0.5, 0.58))
+			b.tooltip_text = "Не экипировано — перетащи броню из рюкзака"
 		b.pressed.connect(func(): _unequip(cat))
 		# drag&drop: слот принимает только броню своей категории
 		b.set_drag_forwarding(Callable(),
