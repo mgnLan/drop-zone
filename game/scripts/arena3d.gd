@@ -519,6 +519,24 @@ func _ready() -> void:
 			else:
 				_build_auth(false)
 
+func _auth_watchdog() -> void:
+	# через 8 с в автовходе — если экран входа всё ещё висит, показываем ВНУТРЕННЮЮ диагностику:
+	# без этого с удалённой стороны невозможно отличить «нет sign» от «запрос умер»
+	await get_tree().create_timer(8.0).timeout
+	if _auth_layer == null or not is_instance_valid(_auth_layer):
+		return   # уже вошли / ушли с экрана
+	if _auth_status != null and is_instance_valid(_auth_status):
+		var env := "да" if _vk_env() else "нет"
+		var sg := "есть" if str(_vk_launch_params().get("sign", "")) != "" else "НЕТ"
+		var bridge := _vk_bridge_error if _vk_bridge_error != "" else "ок"
+		_auth_status.text = ("Диагностика: токен=%s · ВК-окружение=%s · sign=%s · мост=%s · в полёте=[%s]" % [
+			"есть" if _auth_token != "" else "нет", env, sg, bridge, _auth_pending]).left(220)
+
+func _auth_watchdog_cancel() -> void:
+	# вход удался — гасим диагностический статус, чтобы не мелькал поверх меню
+	if _auth_status != null and is_instance_valid(_auth_status):
+		_auth_status.text = ""
+
 func _load_items() -> void:
 	var f := FileAccess.open("res://data/items.json", FileAccess.READ)
 	var json := JSON.new()
@@ -770,7 +788,10 @@ func _build_auth(auto: bool) -> void:
 		var w := Label.new()
 		w.text = "Проверка аккаунта…"
 		w.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		w.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vb.add_child(w)
+		_auth_status = w
+		_auth_watchdog()
 		return
 	# внутри ВК — главный вход: большая VK-кнопка, почта остаётся запасной ниже
 	if _vk_env():
