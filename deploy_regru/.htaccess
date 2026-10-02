@@ -10,6 +10,10 @@ AddType application/wasm .wasm
 
 # Кэш: index.html — всегда свежий; тяжёлые файлы — 1 сутки (иначе wasm ~10 МБ качается заново каждый визит)
 <IfModule mod_headers.c>
+  # ВК грузит мини-приложение в iframe (vk.com) и WebView — глобальный
+  # X-Frame-Options: SAMEORIGIN от nginx должен быть снят, иначе вечный спиннер
+  Header always unset X-Frame-Options
+  Header set Content-Security-Policy "frame-ancestors https://vk.com https://*.vk.com https://vk.ru https://*.vk.ru https://m.vk.com;"
   <FilesMatch "\.html$">
     Header set Cache-Control "no-cache, must-revalidate"
   </FilesMatch>

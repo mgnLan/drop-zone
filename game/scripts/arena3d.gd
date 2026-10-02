@@ -264,19 +264,33 @@ func _on_order_event(args: Array) -> void:
 	_server_credit_pack(int(d.get("pack", -1)), str(d.get("order_id", "")))
 
 # бесшовный вход через ВК: личность подтверждает подпись launch-параметров (sign),
-# vk_id берём из ПОДПИСАННЫХ параметров URL, а не из клиентских данных
+# vk_id берём из ПОДПИСАННЫХ параметров URL, а не из клиентских данных.
+# ВАЖНО: вход не зависит от VKWebAppGetUserInfo — имя подхватываем, если успело прийти.
+var _vk_name := ""
+var _vk_login_tried := false
+var _boot_done := false
+
+func _vk_env() -> bool:
+	# мы внутри VK Mini App (iframe ВК подписал launch-параметры)
+	return OS.has_feature("web") and str(_vk_launch_params().get("sign", "")) != ""
+
+func _try_vk_login() -> void:
+	if _vk_login_tried or _auth_token != "" or not _vk_env():
+		return
+	_vk_login_tried = true
+	if _auth_status != null and is_instance_valid(_auth_status):
+		_auth_status.text = "Входим через ВК…"
+	_api_call("vklogin", {"launch": _vk_launch_params(), "name": _vk_name})
+
 func _on_vk_ready(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
 		return
 	if _auth_token != "":
 		return   # уже вошли (почта/токен) — не перебиваем
-	var d: Dictionary = args[0]
-	var launch := _vk_launch_params()
-	if launch.is_empty() or str(launch.get("sign", "")) == "":
-		return   # не в iframe ВК (браузер) — остаются почта/гость
-	if _auth_status != null and is_instance_valid(_auth_status):
-		_auth_status.text = "Входим через ВК…"
-	_api_call("vklogin", {"launch": launch, "name": str(d.get("name", ""))})
+	_vk_name = str(args[0].get("name", ""))   # может быть "" — вход всё равно сработает по sign
+	if not _boot_done:
+		return   # бут ещё не решил, есть ли сохранённый токен — решаем там
+	_try_vk_login()
 
 # launch-параметры VK Mini Apps из URL iframe (query string целиком — подпись ВК покрывает все)
 func _vk_launch_params() -> Dictionary:
@@ -431,6 +445,7 @@ func _ready() -> void:
 			as_cfg.save("user://autostart.cfg")
 			_menu_open = false
 			_busy = false
+			_auth_cfg_load()   # после перезагрузки сцены восстанавливаем сессию (save/buy)
 			if int(_profile.get("onboarded", 0)) == 1:
 				_stamina_update()
 				# списание энергии отключено: тренировки с ботами бесплатны (онлайн — позже)
@@ -441,9 +456,14 @@ func _ready() -> void:
 			_onboard_start()
 		else:
 			_auth_cfg_load()
+			_boot_done = true
 			if _auth_token != "":
 				_build_auth(true)
 				_api_call("load", {"token": _auth_token})
+			elif _vk_env():
+				# внутри ВК без сохранённой сессии — молчаливый вход по подписи (главный способ)
+				_build_auth(true)
+				_try_vk_login()
 			else:
 				_build_auth(false)
 
@@ -496,6 +516,8 @@ func _api_call(action: String, data: Dictionary) -> void:
 func _api_next() -> void:
 	if _api_queue.is_empty() or _http == null:
 		return
+	if _auth_pending != "":
+		return   # в полёте другой запрос (напр. свежий vklogin) — очередь ждёт его ответа
 	var q: Dictionary = _api_queue.pop_front()
 	_auth_pending = str(q["action"])
 	var body: Dictionary = q["data"]
@@ -520,10 +542,31 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 		return
 	var d: Dictionary = js.data
 	if not bool(d.get("ok", false)):
+		var err := str(d.get("error", "Ошибка"))
 		if act == "buy":
 			_on_buy_result(d)
+		elif err.contains("Сессия устарела"):
+			# протухшая сессия: сбрасываем и молча перелогиниваемся (в ВК — по подписи)
+			_auth_token = ""
+			_auth_cfg_save()
+			if _vk_env():
+				if _auth_layer == null or not is_instance_valid(_auth_layer):
+					_build_auth(true)
+				_vk_login_tried = false
+				_try_vk_login()
+			else:
+				_auth_close()
+				_build_auth(false)
+				if _auth_status != null and is_instance_valid(_auth_status):
+					_auth_status.text = "Сессия устарела — войди снова"
+		elif act == "vklogin":
+			# вход по ВК не прошёл (bad sign / нет ключа) — показываем почту с ошибкой
+			_auth_close()
+			_build_auth(false)
+			if _auth_status != null and is_instance_valid(_auth_status):
+				_auth_status.text = err
 		else:
-			_auth_fail(str(d.get("error", "Ошибка")), act)
+			_auth_fail(err, act)
 		_api_next()
 		return
 	match act:
@@ -644,6 +687,29 @@ func _build_auth(auto: bool) -> void:
 		w.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vb.add_child(w)
 		return
+	# внутри ВК — главный вход: большая VK-кнопка, почта остаётся запасной ниже
+	if _vk_env():
+		var vkb := _menu_button("ВОЙТИ ЧЕРЕЗ ВК")
+		vkb.custom_minimum_size = Vector2(0, 56)
+		var vks := StyleBoxFlat.new()
+		vks.bg_color = Color(0.0, 0.47, 1.0, 0.95)   # фирменный синий ВК
+		vks.border_color = Color(0.35, 0.65, 1.0, 0.9)
+		vks.set_border_width_all(2)
+		vks.set_corner_radius_all(12)
+		vkb.add_theme_stylebox_override("normal", vks)
+		vkb.pressed.connect(func():
+			_vk_login_tried = false
+			_try_vk_login()
+		)
+		vb.add_child(vkb)
+		# авто-вход сразу после показа экрана — кнопка остаётся на случай сбоя
+		_try_vk_login.call_deferred()
+		var sep := Label.new()
+		sep.text = "или через почту"
+		sep.add_theme_font_size_override("font_size", 12)
+		sep.add_theme_color_override("font_color", Color(0.65, 0.72, 0.8))
+		sep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(sep)
 	var em := LineEdit.new()
 	em.placeholder_text = "✉ Почта"
 	em.text = _auth_email
@@ -727,8 +793,7 @@ func _build_auth(auto: bool) -> void:
 	vb.add_child(gs)
 	_auth_guest = gs
 	var note := Label.new()
-	note.text = "Аккаунт синхронизирует прогресс между устройствами.
-В версии для ВК вход мгновенный — по аккаунту ВКонтакте."
+	note.text = "Вход мгновенный — по аккаунту ВКонтакте. Прогресс синхронизируется между устройствами." if _vk_env() else "Аккаунт синхронизирует прогресс между устройствами."
 	note.add_theme_font_size_override("font_size", 12)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -5777,12 +5842,42 @@ func _show_menu_main() -> void:
 		lb.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
 		links.add_child(lb)
 
+# ---------- полный экран: браузер (вкл/выкл), в ВК ещё и расширение окна ----------
+func _request_fullscreen() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("""
+			(function(){
+				var el = document.documentElement;
+				if (!document.fullscreenElement) {
+					var p = el.requestFullscreen && el.requestFullscreen();
+					if (p && p.catch) { p.catch(function(){}); }
+				} else if (document.exitFullscreen) {
+					document.exitFullscreen();
+				}
+				try {
+					if (window.vkBridge) {
+						window.vkBridge.send('VKWebAppResizeWindow',
+							{width: window.screen.width, height: window.screen.height});
+					}
+				} catch (e) {}
+			})()
+		""", true)
+	else:
+		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		else:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
 func _show_menu_settings() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	vb.add_child(_screen_title("gear", "Настройки"))
+	var fsb := Button.new()
+	fsb.text = "⛶  Полный экран"
+	fsb.pressed.connect(_request_fullscreen)
+	vb.add_child(fsb)
 	var gl := Label.new()
 	gl.text = "Графика:"
 	vb.add_child(gl)
