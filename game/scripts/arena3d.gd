@@ -569,8 +569,18 @@ func _auth_cfg_save() -> void:
 	cfg.set_value("auth", "email", _auth_email)
 	cfg.save("user://auth.cfg")
 
+func _ensure_http() -> bool:
+	# HTTPRequest создаётся лениво при первом API-вызове. Раньше он собирался
+	# только в боевом UI — поэтому vklogin/load на экране входа молча не отправлялись.
+	if _http != null and is_instance_valid(_http):
+		return true
+	_http = HTTPRequest.new()
+	_http.request_completed.connect(_on_api_done)
+	add_child(_http)
+	return true
+
 func _api_call(action: String, data: Dictionary) -> void:
-	if _http == null:
+	if not _ensure_http():
 		return
 	# очередь запросов: пока один в полёте — копим (не теряем buy/login)
 	if _auth_pending != "":
@@ -584,7 +594,7 @@ func _api_call(action: String, data: Dictionary) -> void:
 	_http.request(API_URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
 
 func _api_next() -> void:
-	if _api_queue.is_empty() or _http == null:
+	if _api_queue.is_empty() or not _ensure_http():
 		return
 	if _auth_pending != "":
 		return   # в полёте другой запрос (напр. свежий vklogin) — очередь ждёт его ответа
@@ -4285,8 +4295,7 @@ func _build_ui() -> void:
 	vig.set_anchors_preset(Control.PRESET_FULL_RECT)
 	vig.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(vig)
-	_http = HTTPRequest.new()
-	_http.request_completed.connect(_on_api_done)
+	_ensure_http()
 	layer.add_child(_http)
 	var turn := Label.new()
 	turn.position = Vector2(16, 10)
