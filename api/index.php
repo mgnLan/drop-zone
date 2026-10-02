@@ -61,6 +61,29 @@ if ($action === 'login') {
     out(['ok' => true, 'token' => $token, 'profile' => $profile]);
 }
 
+if ($action === 'vklogin') {
+    // бесшовный вход из мини-приложения ВК: vk_id от VKWebAppGetUserInfo.
+    // Аккаунт создаётся молча (служебная почта vk<ID>@dropzone.local), пароль не нужен.
+    $vkId = trim((string)($in['vk_id'] ?? ''));
+    $name = trim(mb_substr((string)($in['name'] ?? ''), 0, 32));
+    if ($vkId === '' || !ctype_digit($vkId)) out(['ok' => false, 'error' => 'bad request']);
+    $st = $db->prepare("SELECT * FROM users WHERE vk_id = ?");
+    $st->execute([$vkId]);
+    $u = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$u) {
+        $email = 'vk' . $vkId . '@dropzone.local';
+        $token = bin2hex(random_bytes(24));
+        $db->prepare("INSERT INTO users (email, pass_hash, token, vk_id, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))")
+           ->execute([email, password_hash($token, PASSWORD_DEFAULT), $token, $vkId]);
+        out(['ok' => true, 'token' => $token, 'profile' => new stdClass(), 'new' => 1, 'name' => $name]);
+    }
+    $token = bin2hex(random_bytes(24));
+    $db->prepare("UPDATE users SET token = ?, updated_at = datetime('now') WHERE id = ?")->execute([$token, $u['id']]);
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : new stdClass();
+    if ($profile === null) $profile = new stdClass();
+    out(['ok' => true, 'token' => $token, 'profile' => $profile, 'name' => $name]);
+}
+
 if ($action === 'save') {
     $token = (string)($in['token'] ?? '');
     $profile = $in['profile'] ?? null;

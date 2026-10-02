@@ -245,6 +245,15 @@ func _setup_rewarded_bridge() -> void:
 	# покупки: оболочка ВК шлёт сюда {status:"paid", pack:N, order_id:"..."}
 	var order_cb := JavaScriptBridge.create_callback(_on_order_event)
 	JavaScriptBridge.get_interface("window").set("__dz_order", order_cb)
+	# бесшовный вход ВК: оболочка после GetUserInfo шлёт {id, name}
+	var vk_cb := JavaScriptBridge.create_callback(_on_vk_ready)
+	JavaScriptBridge.get_interface("window").set("__dz_vk_ready", vk_cb)
+	# оболочка могла ответить раньше, чем мы установили колбэк — проверяем готовность
+	var pre = JavaScriptBridge.eval("(function(){ return window.dzVK ? JSON.stringify(window.dzVK) : ''; })()", true)
+	if pre != null and str(pre) != "":
+		var d0 = JSON.parse_string(str(pre))
+		if d0 is Dictionary:
+			_on_vk_ready([d0])
 
 func _on_order_event(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
@@ -253,6 +262,20 @@ func _on_order_event(args: Array) -> void:
 	if str(d.get("status", "")) != "paid":
 		return
 	_server_credit_pack(int(d.get("pack", -1)), str(d.get("order_id", "")))
+
+# бесшовный вход через ВК: vk_id -> сервер создаёт/логинит аккаунт молча
+func _on_vk_ready(args: Array) -> void:
+	if args.is_empty() or not (args[0] is Dictionary):
+		return
+	if _auth_token != "":
+		return   # уже вошли (почта/токен) — не перебиваем
+	var d: Dictionary = args[0]
+	var vk_id := str(int(d.get("id", 0)))
+	if vk_id == "0":
+		return
+	if _auth_status != null and is_instance_valid(_auth_status):
+		_auth_status.text = "Входим через ВК…"
+	_api_call("vklogin", {"vk_id": vk_id, "name": str(d.get("name", ""))})
 
 func _server_credit_pack(pack_idx: int, order_id: String) -> void:
 	# начисляет монеты ТОЛЬКО сервер (верификация order_id у ВК); клиент — лишь запрос
@@ -473,10 +496,16 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_auth_fail(str(d.get("error", "Ошибка")), act)
 		return
 	match act:
-		"register", "login":
+		"register", "login", "vklogin":
 			_auth_token = str(d.get("token", ""))
 			_auth_cfg_save()
 			_profile_from_server(d.get("profile", {}))
+			# новый VK-аккаунт: подставляем имя из ВК первому бойцу
+			if act == "vklogin" and int(d.get("new", 0)) == 1 and str(d.get("name", "")) != "":
+				var vk_name := str(d.name).split(" ")[0]
+				if vk_name != "":
+					_profile.names[0] = vk_name
+					_save_profile()
 			_auth_close()
 			_build_menu()
 		"load":
@@ -666,8 +695,8 @@ func _build_auth(auto: bool) -> void:
 	vb.add_child(gs)
 	_auth_guest = gs
 	var note := Label.new()
-	note.text = "Аккаунт синхронизирует прогресс между браузером, ВК и MAX.
-Вход через ВК и MAX — скоро."
+	note.text = "Аккаунт синхронизирует прогресс между устройствами.
+В версии для ВК вход мгновенный — по аккаунту ВКонтакте."
 	note.add_theme_font_size_override("font_size", 12)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -732,7 +761,7 @@ const COIN_PACKS := [
 	{"coins": 1700, "bonus": 250, "price": 199},
 	{"coins": 4000, "bonus": 800, "price": 399},
 ]
-const PAYMENTS_ENABLED := false   # включим с онлайн-запуском: голоса ВК + серверная проверка order_id
+const PAYMENTS_ENABLED := true   # VK: ShowOrderBox -> серверная верификация order_id; вне ВК — dev-начисление
 const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неон»", "price": 200},
 	{"kind": "frame", "idx": 2, "name": "Рамка «Золото»", "price": 500},
 	{"kind": "nick_color", "idx": 1, "name": "Цвет ника «Красный»", "price": 150},
@@ -765,7 +794,9 @@ func _buy_coin_pack(pi: int) -> void:
 		return
 	var pk: Dictionary = COIN_PACKS[pi]
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval("window.dzOrder && window.dzOrder(%d)" % pi)
+		var r = JavaScriptBridge.eval("(function(){ if (typeof window.dzOrder === 'function') { window.dzOrder(%d); return true; } return false; })()" % pi, true)
+		if r == null or not bool(r):
+			_log("Платежи доступны в версии для ВК")
 	else:
 		_profile.coins = int(_profile.get("coins", 0)) + int(pk["coins"]) + int(pk.get("bonus", 0))
 		_save_profile()
