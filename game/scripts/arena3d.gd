@@ -267,7 +267,9 @@ func _on_order_event(args: Array) -> void:
 # vk_id берём из ПОДПИСАННЫХ параметров URL, а не из клиентских данных.
 # ВАЖНО: вход не зависит от VKWebAppGetUserInfo — имя подхватываем, если успело прийти.
 var _vk_name := ""
+var _vk_id := ""
 var _vk_login_tried := false
+var _vk_net_retry := false
 var _boot_done := false
 
 func _vk_env() -> bool:
@@ -280,7 +282,13 @@ func _try_vk_login() -> void:
 	_vk_login_tried = true
 	if _auth_status != null and is_instance_valid(_auth_status):
 		_auth_status.text = "Входим через ВК…"
-	_api_call("vklogin", {"launch": _vk_launch_params(), "name": _vk_name})
+	var launch := _vk_launch_params()
+	var body := {"launch": launch, "name": _vk_name}
+	if str(launch.get("sign", "")) == "" and _vk_id != "":
+		# sign не дошёл до клиента (кэш/окружение) — сервер пустит только
+		# существующий аккаунт по vk_id от GetUserInfo, новый создастся только по подписи
+		body["vk_id"] = _vk_id
+	_api_call("vklogin", body)
 
 func _on_vk_ready(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
@@ -288,6 +296,7 @@ func _on_vk_ready(args: Array) -> void:
 	if _auth_token != "":
 		return   # уже вошли (почта/токен) — не перебиваем
 	_vk_name = str(args[0].get("name", ""))   # может быть "" — вход всё равно сработает по sign
+	_vk_id = str(args[0].get("id", ""))
 	if not _boot_done:
 		return   # бут ещё не решил, есть ли сохранённый токен — решаем там
 	_try_vk_login()
@@ -529,10 +538,19 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 	_auth_pending = ""
 	if result != HTTPRequest.RESULT_SUCCESS:
 		if act == "vklogin":
+			if not _vk_net_retry:
+				# один автоповтор через 2с: мини-приложение могло стартовать до готовности сети
+				_vk_net_retry = true
+				_vk_login_tried = false
+				await get_tree().create_timer(2.0).timeout
+				_try_vk_login()
+				if _vk_login_tried:
+					_api_next()
+					return
 			_auth_close()
 			_build_auth(false)
 			if _auth_status != null and is_instance_valid(_auth_status):
-				_auth_status.text = "Нет соединения с сервером — проверь интернет"
+				_auth_status.text = "Сеть недоступна (код %d) — проверь интернет, VPN, блокировщик" % result
 		else:
 			_auth_fail("Нет соединения с сервером — проверь интернет", act, true)
 		_api_next()

@@ -98,15 +98,23 @@ if ($action === 'login') {
 }
 
 if ($action === 'vklogin') {
-    // бесшовный вход из мини-приложения ВК. Личность подтверждается ТОЛЬКО
-    // подписью launch-параметров (sign + защищённый ключ) — vk_id из подписи,
-    // а не из клиентского поля. Аккаунт создаётся молча, пароль не нужен.
+    // бесшовный вход из мини-приложения ВК. Полноценный путь: подпись launch-параметров
+    // (sign + защищённый ключ) подтверждает личность, аккаунт создаётся молча.
+    // Запасной путь: sign не дошёл до клиента (кэш/окружение) — пускаем ТОЛЬКО уже
+    // существующий аккаунт по vk_id от GetUserInfo; новые аккаунты строго по подписи,
+    // иначе аккаунты крадутся по публичному vk_id.
     $launch = $in['launch'] ?? null;
     $secret = (string)($DZ_CFG['vk_secure_key'] ?? '');
     if ($secret === '') out(['ok' => false, 'error' => 'secure key not configured']);
-    if (!vk_launch_valid($launch, $secret)) out(['ok' => false, 'error' => 'bad sign']);
-    $vkId = trim((string)$launch['vk_user_id']);
     $name = trim(mb_substr((string)($in['name'] ?? ''), 0, 32));
+    if (is_array($launch) && vk_launch_valid($launch, $secret)) {
+        $vkId = trim((string)$launch['vk_user_id']);
+    } else {
+        $vkId = trim((string)($in['vk_id'] ?? ''));
+        $chk = $db->prepare("SELECT id FROM users WHERE vk_id = ?");
+        $chk->execute([$vkId]);
+        if ($vkId === '' || !ctype_digit($vkId) || !$chk->fetch()) out(['ok' => false, 'error' => 'bad sign']);
+    }
     if ($vkId === '' || !ctype_digit($vkId)) out(['ok' => false, 'error' => 'bad request']);
     $st = $db->prepare("SELECT * FROM users WHERE vk_id = ?");
     $st->execute([$vkId]);
