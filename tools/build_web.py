@@ -29,6 +29,23 @@ def main() -> int:
     if not m:
         print("Не найден executable в index.html — это Godot-экспорт?")
         return 1
+
+    # СТРАЖ МОСТА ВК: наш инжект из head_include живёт в ОДНУ строку.
+    # Любой // внутри dz-скрипта съест весь остаток строки -> SyntaxError,
+    # вход молча умирает (проверено на проде, v6.71). Комментарии только /* */.
+    a = src.find("<script>(function(){ window.dzVKError")
+    b = src.find("</script>", a) if a >= 0 else -1
+    if a < 0 or b < 0:
+        print("НЕ НАЙДЕН dz-мост ВК в index.html — экспорт без head_include?")
+        return 1
+    dz = src[a:b]
+    if "//" in dz:
+        print("ОТКАЗ: '//' внутри dz-моста ВК — замени на /* */ (одна строка!)")
+        return 1
+    for marker in ("dzFired", "2500"):
+        if marker not in dz:
+            print(f"ОТКАЗ: маркер {marker} не найден в мосте — вход сломан")
+            return 1
     old = m.group(1)
     if old != "index":
         print(f"executable уже версионирован: {old} — сначала чистая пересборка")
