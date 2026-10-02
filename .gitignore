@@ -23,3 +23,6 @@ deploy_regru/ftp_config.json
 docs/_shot_b64.txt
 *.tmp
 __pycache__/
+
+# --- СЕКРЕТЫ: ключи ВК не коммитим (только на сервере) ---
+api/config.php
