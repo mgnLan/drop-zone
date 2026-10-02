@@ -4310,8 +4310,7 @@ func _build_ui() -> void:
 	vig.set_anchors_preset(Control.PRESET_FULL_RECT)
 	vig.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(vig)
-	_ensure_http()
-	layer.add_child(_http)
+	_ensure_http()   # сам добавляет _http в дерево; повторный add_child = ошибка репарента
 	var turn := Label.new()
 	turn.position = Vector2(16, 10)
 	turn.add_theme_font_size_override("font_size", 14 if _mob() else 20)
@@ -4906,6 +4905,11 @@ func _run_testmenu(mobile := false) -> void:
 func _run_testauth(fname: String) -> void:
 	_load_sfx()
 	_build_ui()
+	if _dbg_vp.x > 0:
+		# честный мобильный скриншот: меняем окно, а не только логику вёрстки
+		get_window().size = _dbg_vp
+		await get_tree().process_frame
+		await get_tree().process_frame
 	_build_auth(false)
 	for i in 4:
 		await RenderingServer.frame_post_draw
@@ -5307,6 +5311,7 @@ func _framed_label(txt: String, fsize := 14) -> PanelContainer:
 	l.text = txt
 	l.add_theme_font_size_override("font_size", fsize)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pc.add_child(l)
 	return pc
 
@@ -5921,7 +5926,17 @@ func _show_menu_main() -> void:
 		var ch: Control = _ui.menu_chips
 		for cc in ch.get_children():
 			cc.queue_free()
-		ch.add_child(_chip("person", _auth_email if _auth_email != "" else "Гость", "Твой аккаунт. Гость — прогресс только на этом устройстве"))
+		# чип аккаунта: почта, если входил по почте; имя из ВК, если через ВК; иначе Гость.
+		# подсказка честная: у гостя прогресс локальный, у аккаунта — на сервере
+		var acc_name := _auth_email
+		if acc_name == "" and _auth_token != "":
+			acc_name = _vk_name if _vk_name != "" else str(_profile.names[0])
+		var acc_tip := "Твой аккаунт. Гость — прогресс только на этом устройстве"
+		if _auth_token != "":
+			acc_tip = "Твой аккаунт. Вход через ВК — прогресс сохраняется на сервере"
+		elif _auth_email != "":
+			acc_tip = "Твой аккаунт. Прогресс сохраняется на сервере"
+		ch.add_child(_chip("person", acc_name if acc_name != "" else "Гость", acc_tip))
 		_stamina_update()
 		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
 		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
@@ -6211,7 +6226,16 @@ func _show_menu_squad() -> void:
 	)
 	nrow.add_child(ne)
 	# --- стартовый пистолет бойца (нож у всех всегда; стволы — трофеи с поля боя) ---
-	var wrow := HBoxContainer.new()
+	# на мобильном — сетка 2 колонки: FlowContainer нестабилен с кнопками без min-size
+	var wrow: Container
+	if _mob():
+		var wg := GridContainer.new()
+		wg.columns = 2
+		wg.add_theme_constant_override("h_separation", 4)
+		wg.add_theme_constant_override("v_separation", 4)
+		wrow = wg
+	else:
+		wrow = HBoxContainer.new()
 	vb.add_child(wrow)
 	var wl := Label.new()
 	wl.text = "Оружие:"
@@ -6230,7 +6254,15 @@ func _show_menu_squad() -> void:
 		)
 		wrow.add_child(wb)
 	# --- класс бойца: перк — стиль игры, класс задаёт модель ---
-	var crow3 := HBoxContainer.new()
+	var crow3: Container
+	if _mob():
+		var cg := GridContainer.new()
+		cg.columns = 2
+		cg.add_theme_constant_override("h_separation", 4)
+		cg.add_theme_constant_override("v_separation", 4)
+		crow3 = cg
+	else:
+		crow3 = HBoxContainer.new()
 	vb.add_child(crow3)
 	var cl3 := Label.new()
 	cl3.text = "Класс:"
@@ -6294,12 +6326,24 @@ func _show_menu_squad() -> void:
 			)
 			srow.add_child(sb)
 		# камуфляж отряда — свотчи цветов; не купленные показываем с замком
-		var orow := HBoxContainer.new()
-		orow.add_theme_constant_override("separation", 4)
+		var orow: Container
+		if _mob():
+			# сетка 3 колонки, подпись над ней — надёжнее FlowContainer
+			vb.add_child(_mk_label("Камуфляж:", 14))
+			var og := GridContainer.new()
+			og.columns = 3
+			og.add_theme_constant_override("h_separation", 4)
+			og.add_theme_constant_override("v_separation", 4)
+			orow = og
+		else:
+			var oh := HBoxContainer.new()
+			oh.add_theme_constant_override("separation", 4)
+			orow = oh
 		vb.add_child(orow)
-		var ol := Label.new()
-		ol.text = "Камуфляж:"
-		orow.add_child(ol)
+		if not _mob():
+			var ol := Label.new()
+			ol.text = "Камуфляж:"
+			orow.add_child(ol)
 		var owned_of: Array = _profile.get("owned_outfits", [1, 0, 0, 0, 0])
 		for oi in OUTFIT_SKINS.size():
 			var ob := Button.new()
@@ -6793,6 +6837,7 @@ func _show_menu_progress() -> void:
 	var ttl := str(_profile.get("title", ""))
 	head.text = "%s — %d ур. · тир «%s»%s%s" % [_profile.names[bi], lvl, tname, (" · титул «%s»" % ttl) if ttl != "" else "", nxt]
 	head.add_theme_font_size_override("font_size", 15)
+	head.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(head)
 	var bar := ProgressBar.new()
 	bar.max_value = _xp_need(lvl)
@@ -6874,11 +6919,16 @@ func _show_menu_bp() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
-	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1 «Первый сброс»"))
+	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1" if _mob() else "Battle Pass — сезон 1 «Первый сброс»"))
 	var lvl := _bp_level()
 	var cur_xp := int(_profile.get("bp_xp", 0))
-	vb.add_child(_framed_label("Уровень %d/%d · сезонный опыт %d (+%d за бой, +5 за убийство, +20 за победу)" % [
-		lvl, BP_LEVELS, cur_xp, 5], 13))
+	# на мобильном явный перенос: PanelContainer не сжимает Label до ширины экрана
+	var bp_head := "Уровень %d/%d · сезонный опыт %d (+%d за бой, +5 за убийство, +20 за победу)" % [
+		lvl, BP_LEVELS, cur_xp, 5]
+	if _mob():
+		bp_head = "Уровень %d/%d · сезонный опыт %d\n(+%d за бой, +5 за убийство, +20 за победу)" % [
+			lvl, BP_LEVELS, cur_xp, 5]
+	vb.add_child(_framed_label(bp_head, 13))
 	var bar := ProgressBar.new()
 	bar.max_value = BP_XP_PER
 	bar.value = (0 if lvl >= BP_LEVELS else cur_xp - lvl * BP_XP_PER)
@@ -6901,14 +6951,14 @@ func _show_menu_bp() -> void:
 			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
 		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
-		var buy := _menu_button("Premium — 399 ₽ (платежи после запуска онлайна)")
+		var buy := _menu_button("Premium — 399 ₽" if _mob() else "Premium — 399 ₽ (платежи после запуска онлайна)")
 		buy.disabled = true
 		buy.tooltip_text = "Premium-лента сезона: 630 монет, 450 осколков, ник «Закат», насмешки, камуфляж «Тень» (эксклюзив), рамка «Крипто», телепорт «Шторм»"
 		vb.add_child(buy)
 	else:
 		vb.add_child(_framed_label("Premium активен", 14))
 	var grid := GridContainer.new()
-	grid.columns = 6
+	grid.columns = 2 if _mob() else 6
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
 	vb.add_child(grid)
@@ -6959,6 +7009,7 @@ func _show_menu_bp() -> void:
 	note.text = "Free-лента бесплатна всем. Premium — косметика и бустеры, без продажи силы."
 	note.add_theme_font_size_override("font_size", 12)
 	note.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
 	var back := _menu_button("← Назад")
 	back.pressed.connect(_show_menu_main)
