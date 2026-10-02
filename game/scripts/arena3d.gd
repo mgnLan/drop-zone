@@ -6966,7 +6966,14 @@ func _show_menu_med() -> void:
 				_show_menu_med()
 			)
 			rrow.add_child(sb)
-	if rsv.size() < RESERVE_MAX:
+	# наём: максимум ОДНА активная аренда (решение Антона) — взял бойца, жди конца срока.
+	# второй слот резерва закрыт за наградами Battle Pass (они обходят ограничение).
+	var now_h := Time.get_unix_time_from_system()
+	var rent_active := false
+	for rb3 in rsv:
+		if float(rb3.get("expires", 0.0)) > now_h:
+			rent_active = true
+	if rsv.size() < RESERVE_MAX and not rent_active:
 		var bhire := Button.new()
 		bhire.text = "Нанять бойца — %d монет · %d дней" % [MED_HIRE_COST, HIRE_DAYS]
 		bhire.icon = _icon_tex("coin")
@@ -6974,6 +6981,7 @@ func _show_menu_med() -> void:
 		bhire.add_theme_color_override("icon_hover_color", COIN_COLOR)
 		bhire.add_theme_color_override("icon_pressed_color", COIN_COLOR)
 		bhire.disabled = int(_profile.get("coins", 0)) < MED_HIRE_COST
+		bhire.tooltip_text = "Аренда одна активная: пока срок не вышел, второго найма не будет"
 		bhire.pressed.connect(func():
 			if int(_profile.get("coins", 0)) >= MED_HIRE_COST:
 				_profile.coins = int(_profile.coins) - MED_HIRE_COST
@@ -6984,6 +6992,16 @@ func _show_menu_med() -> void:
 				_show_menu_med()
 		)
 		vb.add_child(bhire)
+	else:
+		var hire_note := Label.new()
+		if rent_active:
+			hire_note.text = "Аренда активна — следующий наём доступен после окончания срока. Второй слот резерва — только из наград Battle Pass."
+		else:
+			hire_note.text = "Резерв полон."
+		hire_note.add_theme_font_size_override("font_size", 12)
+		hire_note.add_theme_color_override("font_color", Color(0.65, 0.72, 0.78))
+		hire_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(hire_note)
 	var back := Button.new()
 	back.text = "← Назад"
 	_style_menu_button(back)
