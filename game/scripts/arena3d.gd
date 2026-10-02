@@ -3124,8 +3124,10 @@ func _slot_unlock_check() -> String:
 	return msg
 
 # ---------- медцентр ----------
-const MED_HEAL_COST := 15      # лечение раненого до полного
-const MED_REVIVE_COST := 25    # реанимация: мгновенный полный HP для пришедшего в себя (1 HP)
+const MED_HEAL_COST := 50      # лечение раненого до полного — монеты (терпи)
+const MED_HEAL_SHARDS := 10    # то же за осколки — быстрее (двухвалютная связка)
+const MED_REVIVE_COST := 100   # реанимация: мгновенный полный HP — монеты, без лимита (pay-per-use)
+const MED_REVIVE_SHARDS := 15  # то же за осколки
 const MED_HIRE_COST := 350     # наём запасного бойца (аренда)
 const HIRE_DAYS := 7           # срок найма: неделя, дальше — продлить или расстанемся
 const RESERVE_MAX := 2         # запасных бойцов максимум
@@ -6247,6 +6249,17 @@ func _show_menu_settings() -> void:
 	var note := Label.new()
 	note.text = "(звуки: выстрел, попадание, шаги, вскрытие ящика)"
 	vb.add_child(note)
+	# бета-фидбек: канал для тестировщиков (боевое тестирование)
+	var bfb := _menu_button("Бета: сообщить об ошибке")
+	bfb.icon = _icon_tex("squad")
+	bfb.pressed.connect(func():
+		var dlg := AcceptDialog.new()
+		dlg.title = "Бета-фидбек"
+		dlg.dialog_text = "Игра в боевом тестировании.\n\nНашёл баг или есть идея — напиши в сообщения сообщества:\nvk.ru/dropzone_game\n\nПрикрепи скриншот и укажи, что делал перед ошибкой. Каждый отклик читаем."
+		_ui.menu_layer.add_child(dlg)
+		dlg.popup_centered()
+	)
+	vb.add_child(bfb)
 	var back := Button.new()
 	back.text = "← Назад"
 	back.pressed.connect(_show_menu_main)
@@ -6865,7 +6878,7 @@ func _show_menu_med() -> void:
 	vb.add_child(_screen_title("shield", "Медцентр"))
 	var info := Label.new()
 	var vip_txt := " · ВИП: реген ×2" if int(_profile.get("vip", 0)) == 1 else ""
-	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший приходит в себя здесь с 1 HP и регенерирует; реанимация — %d монет, сразу полный HP." % [vip_txt, MED_REVIVE_COST]
+	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший приходит в себя здесь с 1 HP и регенерирует. Мгновенно: лечение — %d монет или %d осколков, реанимация — %d монет или %d осколков (без лимита)." % [vip_txt, MED_HEAL_COST, MED_HEAL_SHARDS, MED_REVIVE_COST, MED_REVIVE_SHARDS]
 	info.add_theme_font_size_override("font_size", 12)
 	info.add_theme_color_override("font_color", Color(0.65, 0.72, 0.78))
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -6909,14 +6922,17 @@ func _show_menu_med() -> void:
 			)
 			row.add_child(bdoc)
 			var bheal := Button.new()
-			# только что пришедший в себя (1 HP) — премиум-реанимация 25, иначе обычное лечение 15
-			var heal_cost: int = MED_REVIVE_COST if h <= 1 else MED_HEAL_COST
-			bheal.text = "Реанимация %d" % heal_cost if h <= 1 else "%d" % heal_cost
+			# только что пришедший в себя (1 HP) — реанимация, иначе обычное лечение; монеты или осколки
+			var is_revive: bool = h <= 1
+			var cost_c: int = MED_REVIVE_COST if is_revive else MED_HEAL_COST
+			var cost_s: int = MED_REVIVE_SHARDS if is_revive else MED_HEAL_SHARDS
+			bheal.text = "Реанимация %d" % cost_c if is_revive else "Лечить %d" % cost_c
 			bheal.icon = _icon_tex("coin")
-			bheal.disabled = int(_profile.get("coins", 0)) < heal_cost
-			bheal.tooltip_text = "Мгновенное полное восстановление после смерти" if h <= 1 else "Лечение до полного"
+			bheal.add_theme_color_override("icon_normal_color", COIN_COLOR)
+			bheal.disabled = int(_profile.get("coins", 0)) < cost_c
+			bheal.tooltip_text = "Мгновенный полный выход после смерти — монеты" if is_revive else "Лечение до полного — монеты"
 			var hi: int = i
-			var hc: int = heal_cost
+			var hc: int = cost_c
 			bheal.pressed.connect(func():
 				if int(_profile.get("coins", 0)) >= hc:
 					_profile.coins = int(_profile.coins) - hc
@@ -6927,6 +6943,23 @@ func _show_menu_med() -> void:
 					_show_menu_med()
 			)
 			row.add_child(bheal)
+			var bheal_s := Button.new()
+			bheal_s.text = "%d" % cost_s
+			bheal_s.icon = _icon_tex("shard")
+			bheal_s.add_theme_color_override("icon_normal_color", SHARD_COLOR)
+			bheal_s.disabled = int(_profile.get("shards", 0)) < cost_s
+			bheal_s.tooltip_text = "То же мгновенно, но за осколки — быстрее, чем копить монеты"
+			var hc_s: int = cost_s
+			bheal_s.pressed.connect(func():
+				if int(_profile.get("shards", 0)) >= hc_s:
+					_profile.shards = int(_profile.get("shards", 0)) - hc_s
+					var ha2: Array = _profile.get("hp", [-1, -1, -1, -1])
+					ha2[hi] = -1
+					_profile.hp = ha2
+					_save_profile()
+					_show_menu_med()
+			)
+			row.add_child(bheal_s)
 	# --- запасные бойцы: ручная ротация ---
 	var rsv: Array = _profile.get("reserve", [])
 	var rl := Label.new()
