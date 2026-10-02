@@ -2997,7 +2997,6 @@ func _slot_unlock_check() -> String:
 
 # ---------- медцентр ----------
 const MED_HEAL_COST := 15      # лечение раненого до полного
-const MED_REVIVE_COST := 25    # реанимация погибшего
 const MED_HIRE_COST := 200     # найм запасного бойца
 const RESERVE_MAX := 2         # запасных бойцов максимум
 # «Доктор за ролик»: 25% max HP на уровнях 1–10, далее −5 п.п. за каждые 10 уровней
@@ -3022,9 +3021,8 @@ func _med_tick() -> void:
 		_profile.hp_ts = now
 		return
 	var elapsed_min := (now - ts) / 60.0
-	if elapsed_min <= 0.0:
-		return
 	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
+	var woke := false
 	for i in mini(int(_profile.get("unlocked_slots", 1)), hp_arr.size()):
 		var h := int(hp_arr[i])
 		if h < 0:
@@ -3034,13 +3032,19 @@ func _med_tick() -> void:
 			hp_arr[i] = -1
 			continue
 		if h <= 0:
-			continue   # погибший сам не восстанавливается — только реанимация
+			h = 1
+			hp_arr[i] = 1
+			woke = true   # погибший пришёл в себя в медцентре: 1 HP, дальше — регенерация
+		if elapsed_min <= 0.0:
+			continue
 		var regen := mx * elapsed_min / _med_full_minutes(int(_profile.lvl[i]))
 		var nh := mini(mx, h + int(regen))
 		hp_arr[i] = -1 if nh >= mx else nh
 	_profile.hp = hp_arr
 	_profile.hp_ts = now
 	_save_profile()
+	if woke:
+		_log("Боец пришёл в себя в медцентре: 1 HP, регенерация идёт")
 
 # «Доктор за ролик»: +% от max HP (процент по уровню), награда за просмотр рекламы
 func _med_doctor(i: int) -> void:
@@ -5558,37 +5562,14 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	_ui[key] = p
 
 func _start_mode(m: int) -> void:
-	# погибший боец в бой не идёт (реанимация — в Медцентре); раненых — предупреждаем
+	# погибший приходит в себя в медцентре с 1 HP и регенерирует; раненых — предупреждаем
 	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
 	var low: Array[String] = []
 	for i in mini(m, 4):
 		var mx := _fighter_hp_max(i)
 		var h: int = mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
 		if h <= 0:
-			var dd := ConfirmationDialog.new()
-			dd.title = "Боец погиб"
-			dd.dialog_text = "«%s» погиб в прошлом бою и ждёт реанимации.\n\nРеанимация стоит %d монет. Или выйди в бой с 1 HP — рискованно, но бесплатно." % [str(_profile.names[i]), MED_REVIVE_COST]
-			dd.ok_button_text = "Реанимировать (%d)" % MED_REVIVE_COST
-			dd.cancel_button_text = "В бой с 1 HP"
-			_ui.menu_layer.add_child(dd)
-			dd.popup_centered()
-			dd.confirmed.connect(func():
-				if int(_profile.get("coins", 0)) < MED_REVIVE_COST:
-					var dn := AcceptDialog.new()
-					dn.title = "Не хватает монет"
-					dn.dialog_text = "Реанимация стоит %d монет, у тебя %d.\n\nЗаработай монеты в бою (или войди с 1 HP — рискованно)." % [MED_REVIVE_COST, int(_profile.get("coins", 0))]
-					_ui.menu_layer.add_child(dn)
-					dn.popup_centered()
-					return
-				_profile["coins"] = int(_profile.get("coins", 0)) - MED_REVIVE_COST
-				var hparr: Array = _profile.get("hp", [-1, -1, -1, -1])
-				hparr[i] = -1
-				_profile["hp"] = hparr
-				_save_profile()
-				_log("Реанимирован «%s» за %d монет" % [str(_profile.names[i]), MED_REVIVE_COST])
-				_start_mode_go(m)
-			)
-			return
+			h = 1   # страховка: медцентр уже должен был поднять до 1 HP
 		if h * 100 < mx * 50:
 			low.append("«%s» ранен: %d/%d HP" % [str(_profile.names[i]), h, mx])
 	if low.size() > 0:
@@ -6577,7 +6558,7 @@ func _show_menu_med() -> void:
 	vb.add_child(_screen_title("shield", "Медцентр"))
 	var info := Label.new()
 	var vip_txt := " · ВИП: реген ×2" if int(_profile.get("vip", 0)) == 1 else ""
-	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший сам не поднимается — нужна реанимация." % vip_txt
+	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший приходит в себя здесь с 1 HP и дальше регенерирует." % vip_txt
 	info.add_theme_font_size_override("font_size", 12)
 	info.add_theme_color_override("font_color", Color(0.65, 0.72, 0.78))
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -6605,9 +6586,6 @@ func _show_menu_med() -> void:
 		if h >= mx:
 			st.text = "%d/%d · боевой" % [h, mx]
 			st.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
-		elif h <= 0:
-			st.text = "Погиб"
-			st.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
 		else:
 			var mins := int(ceil(_med_full_minutes(int(_profile.lvl[i])) * (mx - h) / float(mx)))
 			st.text = "%d/%d · ранен (~%d мин)" % [h, mx, mins]
@@ -6639,23 +6617,6 @@ func _show_menu_med() -> void:
 					_show_menu_med()
 			)
 			row.add_child(bheal)
-		elif h <= 0:
-			var brev := Button.new()
-			brev.text = "Реанимация %d монет" % MED_REVIVE_COST
-			brev.icon = _icon_tex("coin")
-			brev.disabled = int(_profile.get("coins", 0)) < MED_REVIVE_COST
-			brev.tooltip_text = "Вернуть бойца к полному здоровью"
-			var ri: int = i
-			brev.pressed.connect(func():
-				if int(_profile.get("coins", 0)) >= MED_REVIVE_COST:
-					_profile.coins = int(_profile.coins) - MED_REVIVE_COST
-					var ra: Array = _profile.get("hp", [-1, -1, -1, -1])
-					ra[ri] = -1
-					_profile.hp = ra
-					_save_profile()
-					_show_menu_med()
-			)
-			row.add_child(brev)
 	# --- запасные бойцы: ручная ротация ---
 	var rsv: Array = _profile.get("reserve", [])
 	var rl := Label.new()

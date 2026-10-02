@@ -52,6 +52,12 @@ def main() -> int:
         return 1
     open(html_path, "w", encoding="utf-8").write(out)
 
+    # удаляем локальные версионные файлы прошлых сборок — иначе ftp_upload
+    # зальёт их на сервер повторно (мусор + двойной трафик)
+    for name in os.listdir(BUILD):
+        if re.fullmatch(r"index_t\d+\.(pck|wasm)", name) and not name.startswith(tag):
+            os.remove(os.path.join(BUILD, name))
+
     meta = {"tag": tag, "stamp": stamp, "sizes": sizes}
     json.dump(meta, open(os.path.join(BUILD, "build.json"), "w", encoding="utf-8"))
     print(f"OK: {tag} (pck {sizes['pck']} байт, wasm {sizes['wasm']} байт)")
