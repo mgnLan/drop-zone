@@ -447,6 +447,7 @@ const API_URL := "https://podvezu.online/dropzone/api/index.php"
 var _auth_token := ""
 var _auth_email := ""
 var _auth_pending := ""        # какой запрос сейчас в полёте
+var _api_queue: Array = []     # очередь API-запросов (пока один в полёте)
 var _http: HTTPRequest = null
 var _auth_layer: CanvasLayer = null
 var _auth_status: Label = null
@@ -470,9 +471,24 @@ func _auth_cfg_save() -> void:
 func _api_call(action: String, data: Dictionary) -> void:
 	if _http == null:
 		return
+	# очередь запросов: пока один в полёте — копим (не теряем buy/login)
+	if _auth_pending != "":
+		_api_queue.append({"action": action, "data": data.duplicate()})
+		if _api_queue.size() > 24:
+			_api_queue.pop_front()
+		return
 	_auth_pending = action
 	var body := data.duplicate()
 	body["action"] = action
+	_http.request(API_URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
+
+func _api_next() -> void:
+	if _api_queue.is_empty() or _http == null:
+		return
+	var q: Dictionary = _api_queue.pop_front()
+	_auth_pending = str(q["action"])
+	var body: Dictionary = q["data"]
+	body["action"] = str(q["action"])
 	_http.request(API_URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
 
 func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
@@ -480,13 +496,16 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 	_auth_pending = ""
 	if result != HTTPRequest.RESULT_SUCCESS:
 		_auth_fail("Нет соединения с сервером — проверь интернет", act, true)
+		_api_next()
 		return
 	if code != 200:
 		_auth_fail("Сервер недоступен (код %d)" % code, act, true)
+		_api_next()
 		return
 	var js := JSON.new()
 	if js.parse(body.get_string_from_utf8()) != OK or not (js.data is Dictionary):
 		_auth_fail("Сервер ответил что-то непонятное", act, true)
+		_api_next()
 		return
 	var d: Dictionary = js.data
 	if not bool(d.get("ok", false)):
@@ -494,6 +513,7 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_on_buy_result(d)
 		else:
 			_auth_fail(str(d.get("error", "Ошибка")), act)
+		_api_next()
 		return
 	match act:
 		"register", "login", "vklogin":
@@ -516,6 +536,7 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_on_buy_result(d)
 		_:
 			pass
+	_api_next()
 
 func _profile_from_server(sp) -> void:
 	# сервер — источник правды: применяем его профиль поверх локального
