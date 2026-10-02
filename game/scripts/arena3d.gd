@@ -263,19 +263,30 @@ func _on_order_event(args: Array) -> void:
 		return
 	_server_credit_pack(int(d.get("pack", -1)), str(d.get("order_id", "")))
 
-# бесшовный вход через ВК: vk_id -> сервер создаёт/логинит аккаунт молча
+# бесшовный вход через ВК: личность подтверждает подпись launch-параметров (sign),
+# vk_id берём из ПОДПИСАННЫХ параметров URL, а не из клиентских данных
 func _on_vk_ready(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
 		return
 	if _auth_token != "":
 		return   # уже вошли (почта/токен) — не перебиваем
 	var d: Dictionary = args[0]
-	var vk_id := str(int(d.get("id", 0)))
-	if vk_id == "0":
-		return
+	var launch := _vk_launch_params()
+	if launch.is_empty() or str(launch.get("sign", "")) == "":
+		return   # не в iframe ВК (браузер) — остаются почта/гость
 	if _auth_status != null and is_instance_valid(_auth_status):
 		_auth_status.text = "Входим через ВК…"
-	_api_call("vklogin", {"vk_id": vk_id, "name": str(d.get("name", ""))})
+	_api_call("vklogin", {"launch": launch, "name": str(d.get("name", ""))})
+
+# launch-параметры VK Mini Apps из URL iframe (query string целиком — подпись ВК покрывает все)
+func _vk_launch_params() -> Dictionary:
+	if not OS.has_feature("web"):
+		return {}
+	var r = JavaScriptBridge.eval("(function(){ var s = window.location.search || ''; if (!s) return ''; var o = {}; new URLSearchParams(s).forEach(function(v, k){ o[k] = v; }); return JSON.stringify(o); })()", true)
+	if r == null or str(r) == "":
+		return {}
+	var parsed = JSON.parse_string(str(r))
+	return parsed if parsed is Dictionary else {}
 
 func _server_credit_pack(pack_idx: int, order_id: String) -> void:
 	# начисляет монеты ТОЛЬКО сервер (верификация order_id у ВК); клиент — лишь запрос

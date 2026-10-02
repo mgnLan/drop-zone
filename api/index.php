@@ -33,6 +33,41 @@ $in = json_decode(file_get_contents('php://input'), true);
 if (!is_array($in)) out(['ok' => false, 'error' => 'bad request']);
 $action = $in['action'] ?? '';
 
+// --- rate-limit: не более 30 запросов в минуту с одного IP ---
+try {
+    $db->exec("CREATE TABLE IF NOT EXISTS ratelimit (ip TEXT, ts INTEGER)");
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $now = time();
+    $db->prepare("DELETE FROM ratelimit WHERE ts < ?")->execute([$now - 60]);
+    $c = $db->prepare("SELECT COUNT(*) FROM ratelimit WHERE ip = ?");
+    $c->execute([$ip]);
+    if ((int)$c->fetchColumn() >= 30) out(['ok' => false, 'error' => 'Слишком много запросов — подожди минуту']);
+    $db->prepare("INSERT INTO ratelimit (ip, ts) VALUES (?, ?)")->execute([$ip, $now]);
+} catch (Exception $e) { /* лимит не критичен — не ломаем запрос */ }
+
+// --- секреты приложения (config.php не в репо) ---
+$DZ_CFG = [];
+if (file_exists(__DIR__ . '/config.php')) {
+    $tmp = include __DIR__ . '/config.php';
+    if (is_array($tmp)) $DZ_CFG = $tmp;
+}
+
+// проверка подписи launch-параметров VK Mini Apps:
+// sign = base64url(sha256(параметры ksort key=value через '&' + защищённый ключ))
+function vk_launch_valid($launch, $secret) {
+    if (!is_array($launch) || $secret === '' || !isset($launch['sign'], $launch['vk_user_id'], $launch['vk_ts'])) return false;
+    if (abs(time() - (int)$launch['vk_ts']) > 172800) return false; // ссылке не старше 2 суток
+    $sign = (string)$launch['sign'];
+    unset($launch['sign']);
+    ksort($launch);
+    $pairs = [];
+    foreach ($launch as $k => $v) $pairs[] = $k . '=' . $v;
+    $hash = base64_encode(hash('sha256', implode('&', $pairs) . $secret, true));
+    // base64url-safe сравнение
+    $norm = function ($s) { return rtrim(strtr($s, '-_', '+/'), '='); };
+    return hash_equals($norm($hash), $norm($sign));
+}
+
 if ($action === 'register') {
     $email = strtolower(trim($in['email'] ?? ''));
     $pass  = (string)($in['password'] ?? '');
@@ -48,6 +83,7 @@ if ($action === 'register') {
 }
 
 if ($action === 'login') {
+    sleep(1); // анти-bruteforce: подбор пароля не быстрее 1 попытки в секунду
     $email = strtolower(trim($in['email'] ?? ''));
     $pass  = (string)($in['password'] ?? '');
     $st = $db->prepare("SELECT * FROM users WHERE email = ?");
@@ -62,9 +98,14 @@ if ($action === 'login') {
 }
 
 if ($action === 'vklogin') {
-    // бесшовный вход из мини-приложения ВК: vk_id от VKWebAppGetUserInfo.
-    // Аккаунт создаётся молча (служебная почта vk<ID>@dropzone.local), пароль не нужен.
-    $vkId = trim((string)($in['vk_id'] ?? ''));
+    // бесшовный вход из мини-приложения ВК. Личность подтверждается ТОЛЬКО
+    // подписью launch-параметров (sign + защищённый ключ) — vk_id из подписи,
+    // а не из клиентского поля. Аккаунт создаётся молча, пароль не нужен.
+    $launch = $in['launch'] ?? null;
+    $secret = (string)($DZ_CFG['vk_secure_key'] ?? '');
+    if ($secret === '') out(['ok' => false, 'error' => 'secure key not configured']);
+    if (!vk_launch_valid($launch, $secret)) out(['ok' => false, 'error' => 'bad sign']);
+    $vkId = trim((string)$launch['vk_user_id']);
     $name = trim(mb_substr((string)($in['name'] ?? ''), 0, 32));
     if ($vkId === '' || !ctype_digit($vkId)) out(['ok' => false, 'error' => 'bad request']);
     $st = $db->prepare("SELECT * FROM users WHERE vk_id = ?");
@@ -88,6 +129,8 @@ if ($action === 'save') {
     $token = (string)($in['token'] ?? '');
     $profile = $in['profile'] ?? null;
     if ($token === '' || !is_array($profile)) out(['ok' => false, 'error' => 'bad token or profile']);
+    // лимит: 256 КБ на профиль — больше не нужно и безопаснее
+    if (strlen(json_encode($profile)) > 262144) out(['ok' => false, 'error' => 'profile too large']);
     $st = $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE token = ?");
     $st->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $token]);
     if ($st->rowCount() === 0) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
@@ -130,13 +173,8 @@ if ($action === 'buy') {
     $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
     $st->execute([$orderId]);
     if ($st->fetch()) out(['ok' => true, 'duplicate' => true]); // уже начислено
-    // верификация заказа у ВК. Токен приложения — в config.php (не в репо):
-    //   <?php return ['vk_app_token' => '...'];
-    $VK_APP_TOKEN = '';
-    if (file_exists(__DIR__ . '/config.php')) {
-        $cfg = include __DIR__ . '/config.php';
-        if (is_array($cfg) && isset($cfg['vk_app_token'])) $VK_APP_TOKEN = $cfg['vk_app_token'];
-    }
+    // верификация заказа у ВК. Токен приложения — в config.php (не в репо)
+    $VK_APP_TOKEN = (string)($DZ_CFG['vk_app_token'] ?? '');
     if ($VK_APP_TOKEN !== '') {
         $vk = @file_get_contents('https://api.vk.com/method/orders.getById?'
             . http_build_query(['order_id' => $orderId, 'access_token' => $VK_APP_TOKEN, 'v' => '5.199']));
