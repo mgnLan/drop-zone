@@ -520,17 +520,29 @@ func _ready() -> void:
 				_build_auth(false)
 
 func _auth_watchdog() -> void:
-	# через 8 с в автовходе — если экран входа всё ещё висит, показываем ВНУТРЕННЮЮ диагностику:
-	# без этого с удалённой стороны невозможно отличить «нет sign» от «запрос умер»
-	await get_tree().create_timer(8.0).timeout
+	# через 7 с в автовходе — если экран входа всё ещё висит, значит цепочка ВК
+	# не разрешилась вообще (промис ВК может не завершиться никак). Показываем
+	# внутреннюю диагностику и даём форму входа по почте, а не вечный прогресс.
+	await get_tree().create_timer(7.0).timeout
 	if _auth_layer == null or not is_instance_valid(_auth_layer):
 		return   # уже вошли / ушли с экрана
+	if _auth_token != "" or _auth_pending == "vklogin":
+		return   # вход в процессе — не мешаем
 	if _auth_status != null and is_instance_valid(_auth_status):
 		var env := "да" if _vk_env() else "нет"
 		var sg := "есть" if str(_vk_launch_params().get("sign", "")) != "" else "НЕТ"
 		var bridge := _vk_bridge_error if _vk_bridge_error != "" else "ок"
 		_auth_status.text = ("Диагностика: токен=%s · ВК-окружение=%s · sign=%s · мост=%s · в полёте=[%s]" % [
 			"есть" if _auth_token != "" else "нет", env, sg, bridge, _auth_pending]).left(220)
+	# следующим шагом открываем форму входа по почте с внятной причиной
+	await get_tree().create_timer(4.0).timeout
+	if _auth_layer == null or not is_instance_valid(_auth_layer) or _auth_token != "":
+		return
+	_auth_close()
+	_build_auth(false)
+	if _auth_status != null and is_instance_valid(_auth_status):
+		var reason := _vk_bridge_error if _vk_bridge_error != "" else "ВК не ответил"
+		_auth_status.text = "Вход через ВК не удался: %s. Войди по почте." % reason.left(80)
 
 func _auth_watchdog_cancel() -> void:
 	# вход удался — гасим диагностический статус, чтобы не мелькал поверх меню
@@ -575,6 +587,8 @@ func _ensure_http() -> bool:
 	if _http != null and is_instance_valid(_http):
 		return true
 	_http = HTTPRequest.new()
+	_http.timeout = 12.0        # иначе зависший запрос молчит вечно и экран не сдвинется
+	_http.accept_gzip = false   # в вебе fetch распаковывает сам, иначе двойная распаковка = код 8
 	_http.request_completed.connect(_on_api_done)
 	add_child(_http)
 	return true
@@ -687,10 +701,11 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_auth_token = str(d.get("token", ""))
 			_auth_cfg_save()
 			_profile_from_server(d.get("profile", {}))
-			# новый VK-аккаунт: подставляем имя из ВК первому бойцу
-			if act == "vklogin" and int(d.get("new", 0)) == 1 and str(d.get("name", "")) != "":
+			# имя из ВК: для нового аккаунта всегда; для существующего — если имя ещё дефолтное
+			# (сервер дозапрашивает его сам через users.get, если клиент прислал пустое)
+			if act == "vklogin" and str(d.get("name", "")) != "":
 				var vk_name := str(d.name).split(" ")[0]
-				if vk_name != "":
+				if vk_name != "" and (int(d.get("new", 0)) == 1 or str(_profile.names[0]) == "Волк"):
 					_profile.names[0] = vk_name
 					_save_profile()
 			_auth_close()

@@ -55,17 +55,23 @@ if (file_exists(__DIR__ . '/config.php')) {
 // проверка подписи launch-параметров VK Mini Apps:
 // sign = base64url(sha256(параметры ksort key=value через '&' + защищённый ключ))
 function vk_launch_valid($launch, $secret) {
-    if (!is_array($launch) || $secret === '' || !isset($launch['sign'], $launch['vk_user_id'], $launch['vk_ts'])) return false;
-    if (abs(time() - (int)$launch['vk_ts']) > 172800) return false; // ссылке не старше 2 суток
+    if (!is_array($launch) || $secret === '' || !isset($launch['sign'], $launch['vk_user_id'])) return false;
     $sign = (string)$launch['sign'];
-    unset($launch['sign']);
-    ksort($launch);
-    $pairs = [];
-    foreach ($launch as $k => $v) $pairs[] = $k . '=' . $v;
-    $hash = base64_encode(hash('sha256', implode('&', $pairs) . $secret, true));
-    // base64url-safe сравнение
-    $norm = function ($s) { return rtrim(strtr($s, '-_', '+/'), '='); };
-    return hash_equals($norm($hash), $norm($sign));
+    if ($sign === '') return false;
+    // в подпись входят ТОЛЬКО параметры с префиксом vk_ — остальные ВК добавляет
+    // к запуску произвольно (access_token_settings, odr_enabled, api_url и прочие)
+    $params = [];
+    foreach ($launch as $k => $v) {
+        if (strncmp((string)$k, 'vk_', 3) === 0) $params[(string)$k] = (string)$v;
+    }
+    if (!$params) return false;
+    ksort($params);
+    // срок жизни ссылки проверяем, только если ВК передал vk_ts
+    if (isset($params['vk_ts']) && abs(time() - (int)$params['vk_ts']) > 172800) return false;
+    $hash = hash_hmac('sha256', http_build_query($params), $secret, true);
+    // обе стороны приводим к base64url без набивки
+    $norm = function ($s) { return rtrim(strtr($s, '+/', '-_'), '='); };
+    return hash_equals($norm(base64_encode($hash)), $norm($sign));
 }
 
 if ($action === 'register') {
@@ -98,23 +104,17 @@ if ($action === 'login') {
 }
 
 if ($action === 'vklogin') {
-    // бесшовный вход из мини-приложения ВК. Полноценный путь: подпись launch-параметров
-    // (sign + защищённый ключ) подтверждает личность, аккаунт создаётся молча.
-    // Запасной путь: sign не дошёл до клиента (кэш/окружение) — пускаем ТОЛЬКО уже
-    // существующий аккаунт по vk_id от GetUserInfo; новые аккаунты строго по подписи,
-    // иначе аккаунты крадутся по публичному vk_id.
+    // бесшовный вход из мини-приложения ВК. Личность подтверждает ТОЛЬКО подпись
+    // launch-параметров (sign + защищённый ключ). Вход по голому vk_id удалён:
+    // vk_id публичен, любой мог бы зайти в чужой аккаунт. Нет sign — вход по почте.
     $launch = $in['launch'] ?? null;
     $secret = (string)($DZ_CFG['vk_secure_key'] ?? '');
     if ($secret === '') out(['ok' => false, 'error' => 'secure key not configured']);
     $name = trim(mb_substr((string)($in['name'] ?? ''), 0, 32));
-    if (is_array($launch) && vk_launch_valid($launch, $secret)) {
-        $vkId = trim((string)$launch['vk_user_id']);
-    } else {
-        $vkId = trim((string)($in['vk_id'] ?? ''));
-        $chk = $db->prepare("SELECT id FROM users WHERE vk_id = ?");
-        $chk->execute([$vkId]);
-        if ($vkId === '' || !ctype_digit($vkId) || !$chk->fetch()) out(['ok' => false, 'error' => 'bad sign']);
+    if (!is_array($launch) || !vk_launch_valid($launch, $secret)) {
+        out(['ok' => false, 'error' => 'bad sign']);
     }
+    $vkId = trim((string)$launch['vk_user_id']);
     if ($vkId === '' || !ctype_digit($vkId)) out(['ok' => false, 'error' => 'bad request']);
     $st = $db->prepare("SELECT * FROM users WHERE vk_id = ?");
     $st->execute([$vkId]);
