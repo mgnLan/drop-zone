@@ -1,0 +1,31 @@
+<script src="vk-bridge.min.js" onerror="window.dzVKError='vk-bridge.min.js не загрузился'"></script><script>(function(){
+window.dzVKError=window.dzVKError||'';
+function noBridge(){return !window.vkBridge||!window.vkBridge.send;}
+if(noBridge()){window.dzVKError='мост ВК не загрузился (vk-bridge)';}
+else{try{window.vkBridge.send('VKWebAppInit');}catch(e){window.dzVKError='VKWebAppInit: '+e;}}
+window.dzRewarded={show:function(){
+if(noBridge()){window.dzVKError='реклама: мост ВК недоступен';return false;}
+window.vkBridge.send('VKWebAppShowNativeAds',{ad_format:'reward'}).then(function(res){
+if(res&&res.result===true&&window.__dz_ad_reward){window.__dz_ad_reward();}
+}).catch(function(e){window.dzVKError='реклама: '+String(e).slice(0,120);});
+return true;}};
+var DZ_PACKS=[{n:'Разведчик · 210 монет',p:29},{n:'Штурмовик · 825 монет',p:99},{n:'Снайпер · 1950 монет',p:199},{n:'Легенда · 4800 монет',p:399}];
+window.dzOrder=function(pack){
+var P=DZ_PACKS[pack];if(!P){return false;}
+if(noBridge()){window.dzVKError='оплата: мост ВК недоступен';return false;}
+window.vkBridge.send('VKWebAppShowOrderBox',{type:'item',item:P.n,price:P.p}).then(function(res){
+if(res&&res.order_id&&window.__dz_order){window.__dz_order({status:'paid',pack:pack,order_id:String(res.order_id)});}
+}).catch(function(e){window.dzVKError='оплата: '+String(e).slice(0,120);});
+return true;};
+if(noBridge()){
+if(window.__dz_vk_ready){window.__dz_vk_ready({__error:window.dzVKError});}
+}else{
+window.vkBridge.send('VKWebAppGetUserInfo').then(function(r){
+window.dzVK=(r&&r.id)?{id:r.id,name:(r.first_name||'')+' '+(r.last_name||'')}:null;
+if(window.__dz_vk_ready){window.__dz_vk_ready(window.dzVK||{});}
+}).catch(function(e){
+window.dzVKError='GetUserInfo: '+String(e).slice(0,120);
+if(window.__dz_vk_ready){window.__dz_vk_ready({__error:window.dzVKError});}
+});
+}
+})();</script>

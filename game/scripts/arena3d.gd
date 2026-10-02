@@ -254,6 +254,12 @@ func _setup_rewarded_bridge() -> void:
 		var d0 = JSON.parse_string(str(pre))
 		if d0 is Dictionary:
 			_on_vk_ready([d0])
+	# диагностика моста ВК: если обвязка зафиксировала ошибку — покажем её честно
+	var bridge_err = JavaScriptBridge.eval("window.dzVKError||''", true)
+	if bridge_err != null and str(bridge_err) != "":
+		_vk_bridge_error = str(bridge_err)
+		if _auth_status != null and is_instance_valid(_auth_status):
+			_auth_status.text = ("Мост ВК: " + _vk_bridge_error).left(160)
 
 func _on_order_event(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
@@ -271,6 +277,7 @@ var _vk_id := ""
 var _vk_login_tried := false
 var _vk_net_retry := false
 var _vk_js_tried := false
+var _vk_bridge_error := ""
 var _boot_done := false
 
 func _vk_env() -> bool:
@@ -325,8 +332,14 @@ func _on_vk_ready(args: Array) -> void:
 		return
 	if _auth_token != "":
 		return   # уже вошли (почта/токен) — не перебиваем
-	_vk_name = str(args[0].get("name", ""))   # может быть "" — вход всё равно сработает по sign
-	_vk_id = str(args[0].get("id", ""))
+	var d: Dictionary = args[0]
+	if str(d.get("__error", "")) != "":
+		# мост ВК жив, но ругается — фиксируем причину для экрана входа
+		_vk_bridge_error = str(d["__error"])
+		if _auth_status != null and is_instance_valid(_auth_status):
+			_auth_status.text = ("Мост ВК: " + _vk_bridge_error).left(160)
+	_vk_name = str(d.get("name", ""))   # может быть "" — вход всё равно сработает по sign
+	_vk_id = str(d.get("id", ""))
 	if not _boot_done:
 		return   # бут ещё не решил, есть ли сохранённый токен — решаем там
 	_try_vk_login()
@@ -586,7 +599,7 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_auth_close()
 			_build_auth(false)
 			if _auth_status != null and is_instance_valid(_auth_status):
-				_auth_status.text = "Сеть недоступна (код %d) — проверь интернет, VPN, блокировщик" % result
+				_auth_status.text = "Связь с сервером сорвалась (код %d) — пробую обходной путь" % result
 		else:
 			_auth_fail("Нет соединения с сервером — проверь интернет", act, true)
 		_api_next()
