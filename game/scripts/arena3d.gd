@@ -394,6 +394,7 @@ func _show_rewarded_ad(on_reward: Callable = Callable()) -> void:
 	_on_rewarded_done([])
 
 func _on_rewarded_done(_args: Array) -> void:
+	_mq_event("ads", 1)
 	var cb := _ad_reward_cb
 	_ad_reward_cb = Callable()
 	if cb.is_valid():
@@ -976,11 +977,44 @@ const FIGHTER_CLASSES := [
 const RETRAIN_STATS_COST := 300  # монет за переподготовку: сброс очков статов
 const CLASS_NAMES := {"pistols": "Пистолеты", "smg": "ПП", "rifles": "Винтовки",
 	"shotguns": "Дробовики", "sniper": "Снайперское", "heavy": "Тяжёлое", "melee": "Ближний бой"}
-const DAILY_QUESTS := [
-	{"name": "Убей 5 противников", "need": 5, "reward": 6},
-	{"name": "Открой 3 ящика", "need": 3, "reward": 5},
-	{"name": "Выиграй бой", "need": 1, "reward": 10},
+# ---------- миссии сезона: основной источник XP Battle Pass ----------
+# Расчёт (сезон 28 дней = 4 недели): до 50 ур. нужно 22 800 XP.
+# Дневные 5×50=250/день (7 000) + вход +20/день (560) + недельные 12×300=3 600/нед (14 400) = 21 960
+# + бои 3/3/10 (~1 300 у активного) ≈ 23 300 → запас ~3 дня. Пропуск 4+ дней = финал недостижим.
+const MQ_DAY_XP := 50
+const MQ_DAY_COINS := 5
+const MQ_LOGIN_XP := 20
+const MQ_LOGIN_COINS := 5
+const MQ_WEEK_XP := 300
+const MQ_WEEK_COINS := 25
+const SEASON_END_UTC := 1793318400   # 2026-10-30 00:00 UTC — конец сезона 1 (сдвигается константой)
+# дневной пул: 4 миссии ротируются по дате + 5-я — всегда реклама
+const MQ_DAY_POOL := [
+	{"id": "kills", "name": "Убей 5 противников", "target": 5, "icon": "skull"},
+	{"id": "battles", "name": "Проведи 3 боя", "target": 3, "icon": "swords"},
+	{"id": "wins", "name": "Победи 1 раз", "target": 1, "icon": "trophy"},
+	{"id": "crates", "name": "Открой 2 ящика на арене", "target": 2, "icon": "crate"},
+	{"id": "damage", "name": "Нанеси 250 урона", "target": 250, "icon": "bomb"},
+	{"id": "loot", "name": "Забери 5 предметов с поля", "target": 5, "icon": "backpack"},
+	{"id": "heals", "name": "Используй 2 аптечки или батареи", "target": 2, "icon": "medkit"},
+	{"id": "grenades", "name": "Брось 2 гранаты", "target": 2, "icon": "bomb"},
 ]
+const MQ_AD_DAY := {"id": "ads", "name": "Посмотри рекламу", "target": 1, "icon": "ticket"}
+const MQ_WEEK_LIST := [
+	{"id": "ads", "name": "Посмотри 10 реклам", "target": 10, "icon": "ticket"},
+	{"id": "battles", "name": "Проведи 15 боёв", "target": 15, "icon": "swords"},
+	{"id": "kills", "name": "Убей 30 противников", "target": 30, "icon": "skull"},
+	{"id": "wins", "name": "Победи 5 раз", "target": 5, "icon": "trophy"},
+	{"id": "crates", "name": "Открой 10 ящиков на арене", "target": 10, "icon": "crate"},
+	{"id": "damage", "name": "Нанеси 1 500 урона", "target": 1500, "icon": "bomb"},
+	{"id": "loot", "name": "Забери 20 предметов с поля", "target": 20, "icon": "backpack"},
+	{"id": "heals", "name": "Используй 5 аптечек или батарей", "target": 5, "icon": "medkit"},
+	{"id": "grenades", "name": "Брось 5 гранат", "target": 5, "icon": "bomb"},
+	{"id": "luckchest", "name": "Открой 3 сундука удачи", "target": 3, "icon": "chest"},
+	{"id": "lvlups", "name": "Повысь бойцов суммарно на 3 уровня", "target": 3, "icon": "bolt"},
+	{"id": "hire", "name": "Найми бойца (или получи из наград)", "target": 1, "icon": "person"},
+]
+var _mq_acc := {"damage": 0, "loot": 0, "heals": 0, "grenades": 0, "lvlups": 0}   # накапливается в бою, сливается в конце
 var _chests_opened := 0       # ящиков открыто игроком за текущий бой
 # паки монет за реальные деньги; bonus — сверх базового объёма (комиссия площадки ~45% заложена в цену)
 const COIN_PACKS := [
@@ -1047,12 +1081,94 @@ func _shop_buy(si: int) -> void:
 	_shop_equip(kind, idx)
 	_save_profile()
 
-func _daily_check() -> void:
+func _mq_check() -> void:
+	# смена дня: новый список миссий + бонус за вход; смена недели: новые недельные
 	var today := Time.get_date_string_from_system()
-	if str(_profile.get("daily_date", "")) != today:
-		_profile.daily_date = today
-		_profile.daily_prog = [0, 0, 0]
-		_profile.daily_claimed = [0, 0, 0]
+	var d: Dictionary = _profile.get("mq_day", {})
+	if str(d.get("date", "")) != today:
+		_profile.mq_day = {"date": today, "login": 0, "prog": {}, "done": {}}
+		_mq_login_grant()
+	var wk := int(Time.get_unix_time_from_system() / 604800.0)
+	var w: Dictionary = _profile.get("mq_week", {})
+	if int(w.get("week", -1)) != wk:
+		_profile.mq_week = {"week": wk, "prog": {}, "done": {}}
+
+func _mq_login_grant() -> void:
+	var d: Dictionary = _profile.mq_day
+	if int(d.get("login", 0)) == 1:
+		return
+	d["login"] = 1
+	_profile.bp_xp = int(_profile.get("bp_xp", 0)) + MQ_LOGIN_XP
+	_profile.coins = int(_profile.get("coins", 0)) + MQ_LOGIN_COINS
+	_log("Ежедневный вход: +%d XP Battle Pass, +%d монет" % [MQ_LOGIN_XP, MQ_LOGIN_COINS])
+	_save_profile()
+
+func _mq_day_list() -> Array:
+	# 5 миссий дня: 5-я — всегда реклама, первые 4 — детерминированная ротация пула по дате
+	var dn := int(Time.get_unix_time_from_system() / 86400.0)
+	var out := [MQ_AD_DAY]
+	var used := {}
+	for o in [0, 2, 4, 5]:
+		var i2: int = (dn + o) % MQ_DAY_POOL.size()
+		if used.has(i2):
+			continue
+		used[i2] = true
+		out.append(MQ_DAY_POOL[i2])
+		if out.size() >= 5:
+			break
+	return out
+
+# событие миссии: добивает дневные и недельные миссии с этим id, начисляет XP/монеты
+func _mq_event(eid: String, n: int) -> Array:
+	var granted: Array = []
+	if n <= 0:
+		return granted
+	_mq_check()
+	for weekly in [false, true]:
+		var src: Dictionary = _profile.mq_week if weekly else _profile.mq_day
+		var lst: Array = MQ_WEEK_LIST if weekly else _mq_day_list()
+		var prog: Dictionary = src.get("prog", {}).duplicate()
+		var done: Dictionary = src.get("done", {}).duplicate()
+		var changed := false
+		for m in lst:
+			var mid: String = str(m["id"])
+			if mid != eid or int(done.get(mid, 0)) == 1:
+				continue
+			var nv: int = mini(int(prog.get(mid, 0)) + n, int(m["target"]))
+			if nv != int(prog.get(mid, 0)):
+				prog[mid] = nv
+				changed = true
+			if nv >= int(m["target"]):
+				done[mid] = 1
+				var xp: int = MQ_WEEK_XP if weekly else MQ_DAY_XP
+				var cn: int = MQ_WEEK_COINS if weekly else MQ_DAY_COINS
+				_profile.bp_xp = int(_profile.get("bp_xp", 0)) + xp
+				_profile.coins = int(_profile.get("coins", 0)) + cn
+				granted.append("«%s» — +%d XP, +%d монет" % [str(m["name"]), xp, cn])
+		if changed or not done.is_empty():
+			src["prog"] = prog
+			src["done"] = done
+	if not granted.is_empty():
+		_save_profile()
+	return granted
+
+# конец боя: сливаем накопленное в бою в миссии
+func _mq_flush_battle(win: bool, p_kills: int) -> Array:
+	var msgs: Array = []
+	msgs.append_array(_mq_event("damage", int(_mq_acc.get("damage", 0))))
+	msgs.append_array(_mq_event("loot", int(_mq_acc.get("loot", 0))))
+	msgs.append_array(_mq_event("heals", int(_mq_acc.get("heals", 0))))
+	msgs.append_array(_mq_event("grenades", int(_mq_acc.get("grenades", 0))))
+	msgs.append_array(_mq_event("lvlups", int(_mq_acc.get("lvlups", 0))))
+	msgs.append_array(_mq_event("crates", _chests_opened))
+	msgs.append_array(_mq_event("kills", p_kills))
+	msgs.append_array(_mq_event("battles", 1))
+	if win:
+		msgs.append_array(_mq_event("wins", 1))
+	return msgs
+
+func _mq_season_days_left() -> int:
+	return maxi(0, int((SEASON_END_UTC - Time.get_unix_time_from_system()) / 86400.0))
 
 const STAMINA_MAX := 100.0
 const STAMINA_COST := 15.0
@@ -1072,49 +1188,6 @@ func _stamina_can_fight() -> bool:
 	# тренировки против ботов — бесплатно: энергия зарезервирована под будущий онлайн-режим
 	return true
 
-func _daily_add(qi: int, n: int) -> Array:
-	var msgs := []
-	if n <= 0:
-		return msgs
-	_daily_check()
-	if int(_profile.daily_claimed[qi]) == 1:
-		return msgs
-	var need: int = int(DAILY_QUESTS[qi]["need"])
-	_profile.daily_prog[qi] = mini(int(_profile.daily_prog[qi]) + n, need)
-	if int(_profile.daily_prog[qi]) >= need:
-		_profile.daily_claimed[qi] = 1
-		_profile.coins = int(_profile.get("coins", 0)) + int(DAILY_QUESTS[qi]["reward"])
-		msgs.append("Задание дня «%s» — +%d монет" % [str(DAILY_QUESTS[qi]["name"]), int(DAILY_QUESTS[qi]["reward"])])
-	return msgs
-
-# ---------- задания недели (задел: XP Battle Pass, сброс раз в 7 дней) ----------
-const WEEKLY_TASKS := [
-	{"name": "Проведи 5 боёв", "target": 5, "xp": 150},
-	{"name": "Убей 10 врагов на арене", "target": 10, "xp": 150},
-	{"name": "Победи 2 раза", "target": 2, "xp": 200},
-	{"name": "Открой 3 ящика на арене", "target": 3, "xp": 100},
-]
-
-func _weekly_check() -> void:
-	var wk := int(Time.get_unix_time_from_system() / 604800.0)
-	var w: Dictionary = _profile.get("weekly", {})
-	if int(w.get("week", -1)) != wk:
-		_profile.weekly = {"week": wk, "prog": [0, 0, 0, 0], "claimed": [0, 0, 0, 0]}
-
-func _weekly_add(qi: int, n: int) -> Array:
-	var msgs := []
-	if n <= 0 or qi < 0 or qi >= WEEKLY_TASKS.size():
-		return msgs
-	_weekly_check()
-	var w: Dictionary = _profile.weekly
-	var prog: Array = w.prog
-	var claimed: Array = w.claimed
-	prog[qi] = mini(int(prog[qi]) + n, int(WEEKLY_TASKS[qi]["target"]))
-	if int(prog[qi]) >= int(WEEKLY_TASKS[qi]["target"]) and int(claimed[qi]) == 0:
-		claimed[qi] = 1
-		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + int(WEEKLY_TASKS[qi]["xp"])
-		msgs.append("Задание недели «%s» — +%d XP Battle Pass" % [str(WEEKLY_TASKS[qi]["name"]), int(WEEKLY_TASKS[qi]["xp"])])
-	return msgs
 var _battle_reward := {}      # итоги последнего боя для экрана победы
 
 func _default_fighter_stats() -> Dictionary:
@@ -1141,10 +1214,8 @@ func _load_profile() -> void:
 		"wins": 0,                # побед всего
 		"total_kills": 0,         # убийств всего
 		"total_battles": 0,       # боёв всего
-		"weekly": {},             # задания недели (задел под BP XP)
-		"daily_date": "",           # дата текущих ежедневных заданий
-		"daily_prog": [0, 0, 0],    # прогресс по 3 заданиям
-		"daily_claimed": [0, 0, 0], # награды получены
+		"mq_day": {"date": "", "login": 0, "prog": {}, "done": {}},   # миссии дня
+		"mq_week": {"week": -1, "prog": {}, "done": {}},              # миссии недели
 		"owned_frames": [1, 0, 0],    # купленные рамки (0 стандарт — всегда есть)
 		"owned_colors": [1, 0, 0],    # купленные цвета ника
 		"owned_taunts": [1, 0, 0],    # паки насмешек (0 стандартный)
@@ -1203,9 +1274,8 @@ func _load_profile() -> void:
 	_profile.stamina_ts = float(cfg.get_value("player", "stamina_ts", 0.0))
 	_profile.wins = int(cfg.get_value("player", "wins", 0))
 	_profile.total_kills = int(cfg.get_value("player", "total_kills", 0))
-	_profile.daily_date = str(cfg.get_value("player", "daily_date", ""))
-	_profile.daily_prog = cfg.get_value("player", "daily_prog", [0, 0, 0])
-	_profile.daily_claimed = cfg.get_value("player", "daily_claimed", [0, 0, 0])
+	_profile.mq_day = cfg.get_value("player", "mq_day", {"date": "", "login": 0, "prog": {}, "done": {}})
+	_profile.mq_week = cfg.get_value("player", "mq_week", {"week": -1, "prog": {}, "done": {}})
 	_profile.teleport = str(cfg.get_value("player", "teleport", "beam"))
 	_profile.owned_frames = cfg.get_value("player", "owned_frames", [1, 0, 0])
 	_profile.owned_colors = cfg.get_value("player", "owned_colors", [1, 0, 0])
@@ -1224,8 +1294,7 @@ func _load_profile() -> void:
 	_profile.vip = int(cfg.get_value("player", "vip", 0))
 	_profile.reserve = cfg.get_value("player", "reserve", [])
 	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
-	_profile.weekly = cfg.get_value("player", "weekly", {})
-	_daily_check()
+	_mq_check()
 
 func _save_profile() -> void:
 	var cfg := ConfigFile.new()
@@ -1257,9 +1326,8 @@ func _save_profile() -> void:
 	cfg.set_value("player", "stamina_ts", float(_profile.get("stamina_ts", 0.0)))
 	cfg.set_value("player", "wins", int(_profile.get("wins", 0)))
 	cfg.set_value("player", "total_kills", int(_profile.get("total_kills", 0)))
-	cfg.set_value("player", "daily_date", str(_profile.get("daily_date", "")))
-	cfg.set_value("player", "daily_prog", _profile.get("daily_prog", [0, 0, 0]))
-	cfg.set_value("player", "daily_claimed", _profile.get("daily_claimed", [0, 0, 0]))
+	cfg.set_value("player", "mq_day", _profile.get("mq_day", {"date": "", "login": 0, "prog": {}, "done": {}}))
+	cfg.set_value("player", "mq_week", _profile.get("mq_week", {"week": -1, "prog": {}, "done": {}}))
 	cfg.set_value("player", "teleport", str(_profile.get("teleport", "beam")))
 	cfg.set_value("player", "owned_frames", _profile.get("owned_frames", [1, 0, 0]))
 	cfg.set_value("player", "owned_colors", _profile.get("owned_colors", [1, 0, 0]))
@@ -1278,7 +1346,6 @@ func _save_profile() -> void:
 	cfg.set_value("player", "vip", int(_profile.get("vip", 0)))
 	cfg.set_value("player", "reserve", _profile.get("reserve", []))
 	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
-	cfg.set_value("player", "weekly", _profile.get("weekly", {}))
 	cfg.save("user://profile.cfg")
 	if _sync_push and _auth_token != "" and _http != null:
 		_api_call("save", {"token": _auth_token, "profile": _profile})
@@ -1866,6 +1933,8 @@ func _shoot_cover(att: int, cell: Vector2i) -> void:
 	_face_cell(a, cell)
 	_sfx_play("shot")
 	if aoe2 > 0:
+		if a.team == 0:
+			_mq_acc["grenades"] = int(_mq_acc.get("grenades", 0)) + 1
 		_explode_at(cell, aoe2)
 		if w.get("burn", false):
 			_ignite(cell, aoe2)
@@ -3275,6 +3344,8 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1) -> in
 	d.hp = maxi(0, d.hp - real)
 	if src_idx >= 0 and src_idx < _fighters.size():
 		_fighters[src_idx].dmg = int(_fighters[src_idx].get("dmg", 0)) + real
+		if _fighters[src_idx].team == 0:
+			_mq_acc["damage"] = int(_mq_acc.get("damage", 0)) + real
 	_sfx_play("hit")
 	var arm_txt := ""
 	if dmg > real:
@@ -3331,6 +3402,8 @@ func _shoot(att: int, def: int) -> void:
 	_sfx_play("shot")
 	var aoe: int = w.get("aoe", 0)
 	if aoe > 0:
+		if a.team == 0:
+			_mq_acc["grenades"] = int(_mq_acc.get("grenades", 0)) + 1
 		# площадной урон: все бойцы в радиусе aoe от клетки взрыва (дружественный огонь!)
 		# бросок может отклониться: 25% — смещение на соседнюю клетку
 		var boom: Vector2i = d.cell
@@ -3504,6 +3577,7 @@ func _gain_xp(i: int, amount: int) -> void:
 		f.pts = int(f.pts) + (5 if int(f.lvl) <= 5 else 3)
 		if int(f.lvl) % 3 == 0:
 			f.tpts = int(f.get("tpts", 0)) + 1
+		_mq_acc["lvlups"] = int(_mq_acc.get("lvlups", 0)) + 1
 		leveled = true
 	if leveled:
 		_tier_rewards_check(old_lvl, int(f.lvl))
@@ -3804,9 +3878,11 @@ func _take_all(k: String) -> void:
 			_chest_pads[k].material_override = _mat(Color.BLACK, 0.0, 1.0, Color(0.3, 0.3, 0.3), 0.8)
 		_ui.chest_panel.visible = false
 		_log("%s забрал всё из ящика (+%d предм.)" % [f.name, taken])
+		_mq_acc["loot"] = int(_mq_acc.get("loot", 0)) + taken
 	else:
 		_chests[k] = left
 		_log("%s взял %d предм., %d не влезло (вес)" % [f.name, taken, left.size()])
+		_mq_acc["loot"] = int(_mq_acc.get("loot", 0)) + taken
 		_show_chest_panel(k)
 	_refresh_fighter_panel()
 
@@ -3854,10 +3930,12 @@ func _use_backpack(idx: int) -> void:
 				f.hp = mini(int(f.max_hp), int(f.hp) + heal_am)
 				f.backpack.remove_at(idx)
 				_log("%s: +%d HP (итого %d)" % [f.name, heal_am, f.hp])
+				_mq_acc["heals"] = int(_mq_acc.get("heals", 0)) + 1
 			else:
 				f.ap += it.get("ap_restore", 0)
 				f.backpack.remove_at(idx)
 				_log("%s: +%d AP (спонсор шоу!)" % [f.name, it.get("ap_restore", 0)])
+				_mq_acc["heals"] = int(_mq_acc.get("heals", 0)) + 1
 	_after_action()
 
 # ---------- ввод ----------
@@ -4163,13 +4241,13 @@ func _check_end() -> void:
 			# здоровье бойцов сохраняется: живые — с текущим HP, погибшие — 0 (медцентр)
 			_profile.hp[pi] = int(pf.hp) if pf.alive else 0
 		_profile.hp_ts = Time.get_unix_time_from_system()
-		# --- награды за бой: монеты, победы, открытие слотов ---
+		# --- награды за бой: монеты, XP Battle Pass, миссии ---
 		var win := blue == 0
 		var p_kills := 0
 		for fk in _fighters:
 			if fk.team == 0:
 				p_kills += int(fk.kills)
-		var bp_gain := 5 + 5 * p_kills + (20 if win else 0)
+		var bp_gain := 3 + 3 * p_kills + (10 if win else 0)
 		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + bp_gain
 		var reward := 2 + 1 * p_kills  # +2 за бой, +1 за убийство
 		_profile.coins = int(_profile.get("coins", 0)) + reward
@@ -4177,17 +4255,11 @@ func _check_end() -> void:
 		if win:
 			_profile.wins = int(_profile.get("wins", 0)) + 1
 		var unlock_msg := _slot_unlock_check()
-		var daily_msgs: Array = _daily_add(0, p_kills)
-		daily_msgs.append_array(_daily_add(1, _chests_opened))
-		if win:
-			daily_msgs.append_array(_daily_add(2, 1))
+		var daily_msgs: Array = _mq_flush_battle(win, p_kills)
+		for mmsg in daily_msgs:
+			_log("Миссия: " + mmsg)
 		# задания недели — прогресс к XP Battle Pass
 		_profile.total_battles = int(_profile.get("total_battles", 0)) + 1
-		daily_msgs.append_array(_weekly_add(0, 1))
-		daily_msgs.append_array(_weekly_add(1, p_kills))
-		daily_msgs.append_array(_weekly_add(3, _chests_opened))
-		if win:
-			daily_msgs.append_array(_weekly_add(2, 1))
 		_battle_reward = {"coins": reward, "kills": p_kills, "win": win, "unlock": unlock_msg, "daily": daily_msgs}
 		_save_profile()
 		var msg := "ПОБЕДА! Арена ваша!" if blue == 0 else "Поражение. Шоу окончено."
@@ -5907,26 +5979,51 @@ func _toggle_menu_chat() -> void:
 	_render_menu_chat()
 
 func _daily_box() -> PanelContainer:
-	_daily_check()
+	_mq_check()
 	var pc := PanelContainer.new()
 	var sb := _card_style()
 	sb.bg_color = Color(0.05, 0.08, 0.13, 0.60)
 	pc.add_theme_stylebox_override("panel", sb)
 	var dvb := VBoxContainer.new()
-	dvb.add_theme_constant_override("separation", 8)
+	dvb.add_theme_constant_override("separation", 6)
 	pc.add_child(dvb)
-	var q_icons := ["skull", "crate", "trophy"]
-	for qi in DAILY_QUESTS.size():
-		var q: Dictionary = DAILY_QUESTS[qi]
-		var done := int(_profile.daily_claimed[qi]) == 1
+	# бонус за вход
+	var dd: Dictionary = _profile.get("mq_day", {})
+	var login_done := int(dd.get("login", 0)) == 1
+	var lrow := HBoxContainer.new()
+	lrow.add_theme_constant_override("separation", 12)
+	dvb.add_child(lrow)
+	var lchip := _icon_chip("ticket", 26)
+	lchip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lrow.add_child(lchip)
+	var ll := Label.new()
+	ll.text = "Ежедневный вход"
+	ll.add_theme_font_size_override("font_size", 13)
+	ll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ll.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if login_done:
+		ll.modulate = Color(0.6, 1.0, 0.6)
+	lrow.add_child(ll)
+	var lrw := Label.new()
+	lrw.text = "Готово" if login_done else "+%d XP · +%d монет" % [MQ_LOGIN_XP, MQ_LOGIN_COINS]
+	lrw.add_theme_font_size_override("font_size", 13)
+	lrw.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
+	lrw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lrow.add_child(lrw)
+	# 5 миссий дня
+	var prog: Dictionary = dd.get("prog", {})
+	var done_d: Dictionary = dd.get("done", {})
+	for m in _mq_day_list():
+		var mid: String = str(m["id"])
+		var done := int(done_d.get(mid, 0)) == 1
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 12)
 		dvb.add_child(row)
-		var chip := _icon_chip(q_icons[qi] if qi < q_icons.size() else "trophy", 26)
+		var chip := _icon_chip(str(m.get("icon", "trophy")), 26)
 		chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(chip)
 		var l := Label.new()
-		l.text = "%s — %d/%d" % [str(q["name"]), int(_profile.daily_prog[qi]), int(q["need"])]
+		l.text = "%s — %d/%d" % [str(m["name"]), int(prog.get(mid, 0)), int(m["target"])]
 		l.add_theme_font_size_override("font_size", 13)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -5934,7 +6031,7 @@ func _daily_box() -> PanelContainer:
 			l.modulate = Color(0.6, 1.0, 0.6)
 		row.add_child(l)
 		var rw := Label.new()
-		rw.text = "Готово" if done else "+%d монет" % int(q["reward"])
+		rw.text = "Готово" if done else "+%d XP" % MQ_DAY_XP
 		rw.add_theme_font_size_override("font_size", 13)
 		rw.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
 		rw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -6060,7 +6157,7 @@ func _show_menu_main() -> void:
 		vb.add_child(grid)
 		for cb in ctrls:
 			grid.add_child(cb)
-	vb.add_child(_section_title("ЗАДАНИЯ ДНЯ"))
+	vb.add_child(_section_title("МИССИИ ДНЯ"))
 	vb.add_child(_daily_box())
 
 # ---------- полный экран: браузер (вкл/выкл), в ВК ещё и расширение окна ----------
@@ -6738,6 +6835,7 @@ func _bp_claim(lv: int, prem: bool) -> void:
 				rf["expires"] = Time.get_unix_time_from_system() + days * 86400
 				rsv2.append(rf)
 				_profile.reserve = rsv2
+				_mq_event("hire", 1)
 			else:
 				# запас полон — компенсация монетами (полная стоимость найма)
 				_profile.coins = int(_profile.get("coins", 0)) + MED_HIRE_COST
@@ -6750,6 +6848,7 @@ func _bp_claim(lv: int, prem: bool) -> void:
 				lf["expires"] = 0.0   # навсегда
 				rsv3.append(lf)
 				_profile.reserve = rsv3
+				_mq_event("hire", 1)
 			else:
 				_profile.coins = int(_profile.get("coins", 0)) + 500
 	arr[lv] = 1
@@ -6879,6 +6978,8 @@ func _show_menu_med() -> void:
 			if int(_profile.get("coins", 0)) >= MED_HIRE_COST:
 				_profile.coins = int(_profile.coins) - MED_HIRE_COST
 				_profile.reserve.append(_new_reserve_fighter())
+				for mmsg2 in _mq_event("hire", 1):
+					_log("Миссия: " + mmsg2)
 				_save_profile()
 				_show_menu_med()
 		)
@@ -7036,12 +7137,21 @@ func _show_menu_bp() -> void:
 	var lvl := _bp_level()
 	var cur_xp := int(_profile.get("bp_xp", 0))
 	# на мобильном явный перенос: PanelContainer не сжимает Label до ширины экрана
-	var bp_head := "Уровень %d/%d · сезонный опыт %d (+%d за бой, +5 за убийство, +20 за победу)" % [
-		lvl, BP_LEVELS, cur_xp, 5]
+	var bp_head := "Уровень %d/%d · сезонный опыт %d (бои: +3 за бой, +3 за убийство, +10 за победу)" % [
+		lvl, BP_LEVELS, cur_xp]
 	if _mob():
-		bp_head = "Уровень %d/%d · сезонный опыт %d\n(+%d за бой, +5 за убийство, +20 за победу)" % [
-			lvl, BP_LEVELS, cur_xp, 5]
+		bp_head = "Уровень %d/%d · сезонный опыт %d\n(бои: +3 за бой, +3 за убийство, +10 за победу)" % [
+			lvl, BP_LEVELS, cur_xp]
 	vb.add_child(_framed_label(bp_head, 13))
+	# таймер до конца сезона
+	var days_left := _mq_season_days_left()
+	var tcol := Color(0.35, 0.95, 0.45) if days_left > 7 else (Color(1.0, 0.8, 0.25) if days_left > 3 else Color(1.0, 0.45, 0.35))
+	var tl := Label.new()
+	tl.text = "До конца сезона: %d дн. — уровни дают миссии дня (в лобби), вход и бои" % days_left
+	tl.add_theme_font_size_override("font_size", 13)
+	tl.add_theme_color_override("font_color", tcol)
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(tl)
 	var bar := ProgressBar.new()
 	var prog := _bp_level_progress()
 	bar.max_value = prog[1]
@@ -7049,19 +7159,19 @@ func _show_menu_bp() -> void:
 	bar.custom_minimum_size = Vector2(0, 14)
 	bar.show_percentage = false
 	vb.add_child(bar)
-	# задания недели — прогресс к XP Battle Pass
-	_weekly_check()
-	var wdata: Dictionary = _profile.weekly
-	for qi in WEEKLY_TASKS.size():
-		var prog2 := 0
-		if qi < wdata.prog.size():
-			prog2 = int(wdata.prog[qi])
-		var done: bool = qi < wdata.claimed.size() and int(wdata.claimed[qi]) == 1
+	# миссии недели — основной источник XP Battle Pass
+	_mq_check()
+	var wdata: Dictionary = _profile.get("mq_week", {})
+	var wprog: Dictionary = wdata.get("prog", {})
+	var wdone: Dictionary = wdata.get("done", {})
+	for m in MQ_WEEK_LIST:
+		var mid: String = str(m["id"])
+		var done2 := int(wdone.get(mid, 0)) == 1
 		var wl := Label.new()
 		wl.add_theme_font_size_override("font_size", 12)
-		wl.text = ("Готово: " if done else "") + "%s — %d/%d (+%d XP)" % [
-			str(WEEKLY_TASKS[qi]["name"]), prog2, int(WEEKLY_TASKS[qi]["target"]), int(WEEKLY_TASKS[qi]["xp"])]
-		if done:
+		wl.text = ("Готово: " if done2 else "") + "%s — %d/%d (+%d XP)" % [
+			str(m["name"]), int(wprog.get(mid, 0)), int(m["target"]), MQ_WEEK_XP]
+		if done2:
 			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
 		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
@@ -7199,6 +7309,7 @@ func _open_show_chest() -> void:
 	if int(_profile.get("coins", 0)) < CHEST_PRICE:
 		return
 	_profile.coins = int(_profile.coins) - CHEST_PRICE
+	_mq_event("luckchest", 1)
 	_chest_roll()
 
 # один бросок сундука: рулетка, гранты, pity; используется покупкой и наградами BP
