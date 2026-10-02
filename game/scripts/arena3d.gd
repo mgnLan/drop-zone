@@ -2997,6 +2997,7 @@ func _slot_unlock_check() -> String:
 
 # ---------- медцентр ----------
 const MED_HEAL_COST := 15      # лечение раненого до полного
+const MED_REVIVE_COST := 25    # реанимация: мгновенный полный HP для пришедшего в себя (1 HP)
 const MED_HIRE_COST := 200     # найм запасного бойца
 const RESERVE_MAX := 2         # запасных бойцов максимум
 # «Доктор за ролик»: 25% max HP на уровнях 1–10, далее −5 п.п. за каждые 10 уровней
@@ -6558,7 +6559,7 @@ func _show_menu_med() -> void:
 	vb.add_child(_screen_title("shield", "Медцентр"))
 	var info := Label.new()
 	var vip_txt := " · ВИП: реген ×2" if int(_profile.get("vip", 0)) == 1 else ""
-	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший приходит в себя здесь с 1 HP и дальше регенерирует." % vip_txt
+	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший приходит в себя здесь с 1 HP и регенерирует; реанимация — %d монет, сразу полный HP." % [vip_txt, MED_REVIVE_COST]
 	info.add_theme_font_size_override("font_size", 12)
 	info.add_theme_color_override("font_color", Color(0.65, 0.72, 0.78))
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -6602,14 +6603,17 @@ func _show_menu_med() -> void:
 			)
 			row.add_child(bdoc)
 			var bheal := Button.new()
-			bheal.text = "%d" % MED_HEAL_COST
+			# только что пришедший в себя (1 HP) — премиум-реанимация 25, иначе обычное лечение 15
+			var heal_cost: int = MED_REVIVE_COST if h <= 1 else MED_HEAL_COST
+			bheal.text = "Реанимация %d" % heal_cost if h <= 1 else "%d" % heal_cost
 			bheal.icon = _icon_tex("coin")
-			bheal.disabled = int(_profile.get("coins", 0)) < MED_HEAL_COST
-			bheal.tooltip_text = "Лечение до полного"
+			bheal.disabled = int(_profile.get("coins", 0)) < heal_cost
+			bheal.tooltip_text = "Мгновенное полное восстановление после смерти" if h <= 1 else "Лечение до полного"
 			var hi: int = i
+			var hc: int = heal_cost
 			bheal.pressed.connect(func():
-				if int(_profile.get("coins", 0)) >= MED_HEAL_COST:
-					_profile.coins = int(_profile.coins) - MED_HEAL_COST
+				if int(_profile.get("coins", 0)) >= hc:
+					_profile.coins = int(_profile.coins) - hc
 					var ha: Array = _profile.get("hp", [-1, -1, -1, -1])
 					ha[hi] = -1
 					_profile.hp = ha
