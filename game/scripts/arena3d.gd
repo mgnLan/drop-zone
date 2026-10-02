@@ -528,16 +528,34 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 	var act := _auth_pending
 	_auth_pending = ""
 	if result != HTTPRequest.RESULT_SUCCESS:
-		_auth_fail("Нет соединения с сервером — проверь интернет", act, true)
+		if act == "vklogin":
+			_auth_close()
+			_build_auth(false)
+			if _auth_status != null and is_instance_valid(_auth_status):
+				_auth_status.text = "Нет соединения с сервером — проверь интернет"
+		else:
+			_auth_fail("Нет соединения с сервером — проверь интернет", act, true)
 		_api_next()
 		return
 	if code != 200:
-		_auth_fail("Сервер недоступен (код %d)" % code, act, true)
+		if act == "vklogin":
+			_auth_close()
+			_build_auth(false)
+			if _auth_status != null and is_instance_valid(_auth_status):
+				_auth_status.text = "Сервер недоступен (код %d) — попробуй позже" % code
+		else:
+			_auth_fail("Сервер недоступен (код %d)" % code, act, true)
 		_api_next()
 		return
 	var js := JSON.new()
 	if js.parse(body.get_string_from_utf8()) != OK or not (js.data is Dictionary):
-		_auth_fail("Сервер ответил что-то непонятное", act, true)
+		if act == "vklogin":
+			_auth_close()
+			_build_auth(false)
+			if _auth_status != null and is_instance_valid(_auth_status):
+				_auth_status.text = "Сервер ответил с ошибкой — попробуй ещё раз"
+		else:
+			_auth_fail("Сервер ответил что-то непонятное", act, true)
 		_api_next()
 		return
 	var d: Dictionary = js.data

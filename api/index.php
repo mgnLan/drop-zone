@@ -115,7 +115,7 @@ if ($action === 'vklogin') {
         $email = 'vk' . $vkId . '@dropzone.local';
         $token = bin2hex(random_bytes(24));
         $db->prepare("INSERT INTO users (email, pass_hash, token, vk_id, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))")
-           ->execute([email, password_hash($token, PASSWORD_DEFAULT), $token, $vkId]);
+           ->execute([$email, password_hash($token, PASSWORD_DEFAULT), $token, $vkId]);
         out(['ok' => true, 'token' => $token, 'profile' => new stdClass(), 'new' => 1, 'name' => $name]);
     }
     $token = bin2hex(random_bytes(24));
