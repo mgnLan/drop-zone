@@ -41,6 +41,19 @@ def main() -> int:
         ftp.cwd(part)
     print("Папка:", ftp.pwd())
 
+    # убираем прошлые версии тяжёлых ассетов — иначе кэш/диск разрастаются
+    try:
+        for name in ftp.nlst():
+            base = name.split("/")[-1]
+            if re := __import__("re").match(r"^index(?:_t\d+)?\.(pck|wasm)$", base):
+                try:
+                    ftp.delete(base)
+                    print(f"  DEL старая версия: {base}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     files = [f for f in os.listdir(BUILD) if os.path.isfile(os.path.join(BUILD, f))]
     ok, fail = 0, 0
     for name in sorted(files):

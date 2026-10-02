@@ -17,7 +17,11 @@ AddType application/wasm .wasm
   <FilesMatch "\.html$">
     Header set Cache-Control "no-cache, must-revalidate"
   </FilesMatch>
-  <FilesMatch "\.(wasm|pck|js)$">
+  <FilesMatch "\.(wasm|pck)$">
+    # имена версионированы (index_t<время>) — кэш навсегда, при деплое имя меняется
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.js$">
     Header set Cache-Control "public, max-age=86400"
   </FilesMatch>
 </IfModule>

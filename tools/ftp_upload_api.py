@@ -28,7 +28,7 @@ def main() -> int:
     ok, fail = 0, 0
     for name in sorted(os.listdir(API)):
         src = os.path.join(API, name)
-        if not os.path.isfile(src) or name == "data.sqlite":
+        if not os.path.isfile(src) or name in ("data.sqlite", "config.php"):
             continue
         try:
             with open(src, "rb") as fh:

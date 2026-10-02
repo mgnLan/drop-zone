@@ -358,7 +358,7 @@ func _on_buy_result(d: Dictionary) -> void:
 		_save_profile()
 		_sync_push = true
 	_sfx_play("levelup")
-	_log("Пак монет начислен сервером: +%d 💰" % int(d.get("credited", 0)))
+	_log("Пак монет начислен сервером: +%d монет" % int(d.get("credited", 0)))
 	if _menu_open:
 		_show_menu_shop()
 
@@ -394,13 +394,13 @@ func _grant_sponsor_drop() -> void:
 	_sponsor_used = true
 	if _ui.has("sponsor_btn") and _ui.sponsor_btn:
 		_ui.sponsor_btn.disabled = true
-		_ui.sponsor_btn.text = "🎁 Дроп получен"
+		_ui.sponsor_btn.text = "Дроп получен"
 	if _selected >= 0 and _selected < _fighters.size() and _fighters[_selected].alive:
 		var f = _fighters[_selected]
 		f.ap = mini(int(f.ap) + 3, int(f.max_ap))
-		_log("🎁 Спонсорский дроп: +3 AP — %s благодарит спонсора!" % f.name)
+		_log("Спонсорский дроп: +3 AP — %s благодарит спонсора!" % f.name)
 	else:
-		_log("🎁 Спонсорский дроп от спонсора шоу!")
+		_log("Спонсорский дроп от спонсора шоу!")
 	_profile.coins = int(_profile.get("coins", 0)) + 25
 	_save_profile()
 	_sfx_play("levelup")
@@ -491,7 +491,7 @@ func _ready() -> void:
 			_apply_graphics(_settings.graphics)
 			_update_fog()
 			_log("Тренировка %d×%d — ваш ход! ЛКМ — бойцы, ПКМ-тянуть — обзор." % [_mode, _mode])
-			_log("Биом: %s" % ("🏭 Индустриальная зона" if _biome == 1 else "🏙 Бетонная арена"))
+			_log("Биом: %s" % ("Индустриальная зона" if _biome == 1 else "Бетонная арена"))
 			_onboard_start()
 		else:
 			_auth_cfg_load()
@@ -783,12 +783,12 @@ func _build_auth(auto: bool) -> void:
 		sep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vb.add_child(sep)
 	var em := LineEdit.new()
-	em.placeholder_text = "✉ Почта"
+	em.placeholder_text = "Почта"
 	em.text = _auth_email
 	em.custom_minimum_size = Vector2(0, 52)
 	vb.add_child(em)
 	var pw := LineEdit.new()
-	pw.placeholder_text = "🔒 Пароль (минимум 6 символов)"
+	pw.placeholder_text = "Пароль (минимум 6 символов)"
 	pw.secret = true
 	pw.custom_minimum_size = Vector2(0, 52)
 	vb.add_child(pw)
@@ -885,14 +885,14 @@ const SLOT3_LVL := 35    # слот 3 — запасной, за 35 уровен
 # слот 4 — ТОЛЬКО по подписке ВИП и после открытия слота 3 (на механику не влияем, открываем возможности)
 # таланты: ранг N стоит N очков (1/2/3); очко талантов — каждые 3 уровня бойца
 const TALENTS := [
-	{"id": "reload1", "icon": "⚡", "name": "Быстрая перезарядка", "max": 1, "desc": "Перезарядка стоит 1 ОД"},
-	{"id": "sapper", "icon": "💣", "name": "Сапёр", "max": 1, "desc": "Бочки взводятся с 1 попадания, взрыв +25%"},
-	{"id": "steady", "icon": "🛡", "name": "Устойчивость", "max": 1, "desc": "Тяжёлое оружие (6+ ОД / str_req) — на 1 ОД дешевле"},
-	{"id": "marathon", "icon": "🏃", "name": "Марафон", "max": 1, "desc": "+1 ОД максимум"},
-	{"id": "medic", "icon": "💊", "name": "Полевой врач", "max": 3, "desc": "+25% к лечению аптечкой за ранг"},
-	{"id": "scout", "icon": "👁", "name": "Разведчик", "max": 3, "desc": "+1 обзор за ранг"},
-	{"id": "mule", "icon": "🎒", "name": "Тягловый", "max": 3, "desc": "+2 кг носимого веса за ранг"},
-	{"id": "lucky", "icon": "🍀", "name": "Фартовый", "max": 3, "desc": "+2% к шансу крита за ранг"},
+	{"id": "reload1", "icon": "bolt", "name": "Быстрая перезарядка", "max": 1, "desc": "Перезарядка стоит 1 ОД"},
+	{"id": "sapper", "icon": "bomb", "name": "Сапёр", "max": 1, "desc": "Бочки взводятся с 1 попадания, взрыв +25%"},
+	{"id": "steady", "icon": "shield", "name": "Устойчивость", "max": 1, "desc": "Тяжёлое оружие (6+ ОД / str_req) — на 1 ОД дешевле"},
+	{"id": "marathon", "icon": "boot", "name": "Марафон", "max": 1, "desc": "+1 ОД максимум"},
+	{"id": "medic", "icon": "medkit", "name": "Полевой врач", "max": 3, "desc": "+25% к лечению аптечкой за ранг"},
+	{"id": "scout", "icon": "eye", "name": "Разведчик", "max": 3, "desc": "+1 обзор за ранг"},
+	{"id": "mule", "icon": "backpack", "name": "Тягловый", "max": 3, "desc": "+2 кг носимого веса за ранг"},
+	{"id": "lucky", "icon": "clover", "name": "Фартовый", "max": 3, "desc": "+2% к шансу крита за ранг"},
 ]
 const TALENT_RESET_COST := 600  # монет за сброс талантов (слив экономики)
 # владение оружием: опыт класса = нанесённый урон; пороги уровней 100/250/500
@@ -1025,7 +1025,7 @@ func _daily_add(qi: int, n: int) -> Array:
 	if int(_profile.daily_prog[qi]) >= need:
 		_profile.daily_claimed[qi] = 1
 		_profile.coins = int(_profile.get("coins", 0)) + int(DAILY_QUESTS[qi]["reward"])
-		msgs.append("📅 Задание дня «%s» — +%d 💰" % [str(DAILY_QUESTS[qi]["name"]), int(DAILY_QUESTS[qi]["reward"])])
+		msgs.append("Задание дня «%s» — +%d монет" % [str(DAILY_QUESTS[qi]["name"]), int(DAILY_QUESTS[qi]["reward"])])
 	return msgs
 
 # ---------- задания недели (задел: XP Battle Pass, сброс раз в 7 дней) ----------
@@ -1054,7 +1054,7 @@ func _weekly_add(qi: int, n: int) -> Array:
 	if int(prog[qi]) >= int(WEEKLY_TASKS[qi]["target"]) and int(claimed[qi]) == 0:
 		claimed[qi] = 1
 		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + int(WEEKLY_TASKS[qi]["xp"])
-		msgs.append("🎯 Задание недели «%s» — +%d XP Battle Pass" % [str(WEEKLY_TASKS[qi]["name"]), int(WEEKLY_TASKS[qi]["xp"])])
+		msgs.append("Задание недели «%s» — +%d XP Battle Pass" % [str(WEEKLY_TASKS[qi]["name"]), int(WEEKLY_TASKS[qi]["xp"])])
 	return msgs
 var _battle_reward := {}      # итоги последнего боя для экрана победы
 
@@ -2301,7 +2301,7 @@ func _spawn_grave(f: Dictionary) -> void:
 		hbar.position.y = 0.66
 		g.add_child(hbar)
 	var tag := Label3D.new()
-	tag.text = "%s ☠" % f.name
+	tag.text = "† %s" % f.name
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	tag.font_size = 42
 	tag.modulate = Color(0.85, 0.87, 0.9)
@@ -2325,7 +2325,7 @@ func _taunt_selected() -> void:
 	_sfx_play("swap")
 	_log("%s кричит: «%s»" % [f.name, line])
 	var lbl := Label3D.new()
-	lbl.text = "💬 " + line
+	lbl.text = line
 	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	lbl.font_size = 34
 	lbl.modulate = Color(1.0, 0.9, 0.4)
@@ -2392,7 +2392,7 @@ func _graffiti_selected() -> void:
 		sp.material_override = _mat(col, 0.0, 1.0, col, 1.2)
 		sp.position = Vector3(s[0], 0, s[1])
 		g.add_child(sp)
-	_log("%s оставляет граффити 🎨" % f.name)
+	_log("%s оставляет граффити" % f.name)
 	_refresh_card()
 
 func _teleport_in(node: Node3D, cell: Vector2i, show_fx := true) -> void:
@@ -2986,13 +2986,13 @@ func _slot_unlock_check() -> String:
 	var msg := ""
 	if _profile.unlocked_slots < 2 and int(_profile.get("wins", 0)) >= SLOT2_WINS:
 		_profile.unlocked_slots = 2
-		msg = "🔓 Открыт слот бойца №2 — режим 2×2!"
+		msg = "Открыт слот бойца №2 — режим 2×2!"
 	if _profile.unlocked_slots < 3 and _max_squad_lvl() >= SLOT3_LVL:
 		_profile.unlocked_slots = 3
-		msg = "🔓 Открыт слот бойца №3 (запасной)!"
+		msg = "Открыт слот бойца №3 (запасной)!"
 	if _profile.unlocked_slots == 3 and int(_profile.get("vip", 0)) == 1:
 		_profile.unlocked_slots = 4
-		msg = "🔓 Открыт слот бойца №4 — ВИП!"
+		msg = "Открыт слот бойца №4 — ВИП!"
 	return msg
 
 # ---------- медцентр ----------
@@ -3056,7 +3056,7 @@ func _med_doctor(i: int) -> void:
 	ha[i] = -1 if nh >= mx else nh
 	_profile.hp = ha
 	_save_profile()
-	_log("📺 Доктор вылечил %s: +%d HP (%d/%d)" % [_profile.names[i], nh - h, nh, mx])
+	_log("Доктор вылечил %s: +%d HP (%d/%d)" % [_profile.names[i], nh - h, nh, mx])
 	if _menu_open:
 		_show_menu_med()
 
@@ -3403,7 +3403,7 @@ func _recalc_derived(f: Dictionary, heal := false) -> void:
 	f.max_hp = _stat_hp(f.stats) + 3 * (int(f.lvl) - 1)
 	f.max_ap = _stat_ap(f.stats) + mini(3, int(f.lvl) / 3) - _armor_ap_penalty(f) + _tal(f, "marathon")
 	f.carry_base = _stat_carry(f.stats) + 0.5 * (int(f.lvl) - 1) + 2.0 * _tal(f, "mule")
-	f.vision = _stat_vision(f.stats) + _tal(f, "scout")
+	f.vision = _stat_vision(f.stats) + _tal(f, "scout") + (2 if int(f.get("cls", -1)) == 2 else 0)   # разведчик-класс: +2 обзор
 	if heal:
 		f.hp = f.max_hp
 		f.ap = f.max_ap
@@ -3451,13 +3451,13 @@ func _tier_rewards_check(old_lvl: int, new_lvl: int) -> void:
 		if old_lvl < tmin and new_lvl >= tmin:
 			if XP_TIERS[ti].has("title"):
 				_profile.title = str(XP_TIERS[ti]["title"])
-				_log("🏅 Новый титул: %s!" % _profile.title)
+				_log("Новый титул: %s!" % _profile.title)
 			if XP_TIERS[ti].has("frame"):
 				if not _owned_grant("frame", int(XP_TIERS[ti]["frame"])):
-					_log("🎁 Награда тира: рамка «%s»!" % FRAME_NAMES[int(XP_TIERS[ti]["frame"])])
+					_log("Награда тира: рамка «%s»!" % FRAME_NAMES[int(XP_TIERS[ti]["frame"])])
 			if XP_TIERS[ti].has("outfit"):
 				if not _owned_grant("outfit", int(XP_TIERS[ti]["outfit"])):
-					_log("🎁 Награда тира: камуфляж «%s»!" % OUTFIT_SKINS[int(XP_TIERS[ti]["outfit"])]["name"])
+					_log("Награда тира: камуфляж «%s»!" % OUTFIT_SKINS[int(XP_TIERS[ti]["outfit"])]["name"])
 			_save_profile()
 
 func _lvl_add(f: Dictionary, k: String, d: int, val: Label, pts: Label) -> void:
@@ -3543,9 +3543,16 @@ func _show_levelup(i: int) -> void:
 		var cur := _tal(f, tal["id"])
 		var trow := HBoxContainer.new()
 		vb.add_child(trow)
+		var tico := TextureRect.new()
+		tico.texture = _icon_tex(str(tal["icon"]))
+		tico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tico.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tico.custom_minimum_size = Vector2(22, 22)
+		tico.tooltip_text = str(tal["desc"])
+		trow.add_child(tico)
 		var tnl := Label.new()
-		tnl.text = "%s %s — %d/%d" % [tal["icon"], tal["name"], cur, int(tal["max"])]
-		tnl.custom_minimum_size = Vector2(180 if _mob() else 240, 0)
+		tnl.text = "%s — %d/%d" % [tal["name"], cur, int(tal["max"])]
+		tnl.custom_minimum_size = Vector2(150 if _mob() else 210, 0)
 		tnl.add_theme_font_size_override("font_size", 13)
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
@@ -3556,7 +3563,7 @@ func _show_levelup(i: int) -> void:
 			tb.text = "МАКС"
 			tb.disabled = true
 		else:
-			tb.text = "+%d 🎯" % cost
+			tb.text = "+%d" % cost
 			tb.disabled = int(f.get("tpts", 0)) < cost
 			tb.tooltip_text = "%s\nЦена ранга: %d очк." % [str(tal["desc"]), cost]
 			var tid: String = tal["id"]
@@ -4128,7 +4135,7 @@ func _check_end() -> void:
 			vb.add_child(sub)
 			if not _battle_reward.is_empty():
 				var rw := Label.new()
-				rw.text = "Награда: +%d монет (бой 2 + убийства %d×1) · Всего: %d 💰" % [
+				rw.text = "Награда: +%d монет (бой 2 + убийства %d×1) · Всего: %d монет" % [
 					int(_battle_reward.coins),
 					int(_battle_reward.kills),
 					int(_profile.get("coins", 0))]
@@ -4140,19 +4147,19 @@ func _check_end() -> void:
 				vb.add_child(rw)
 				# удвоение награды за просмотр ролика
 				var bdouble := Button.new()
-				bdouble.text = "📺 Удвоить награду ×2"
+				bdouble.text = "Удвоить награду ×2 (ролик)"
 				bdouble.custom_minimum_size = Vector2(280, 42)
 				bdouble.add_theme_font_size_override("font_size", 16)
 				var rw_coins: int = int(_battle_reward.coins)
 				bdouble.pressed.connect(func():
 					bdouble.disabled = true
-					bdouble.text = "📺 Показ ролика..."
+					bdouble.text = "Показ ролика..."
 					_show_rewarded_ad(func():
 						_profile.coins = int(_profile.get("coins", 0)) + rw_coins
 						_battle_reward["coins"] = rw_coins * 2
 						_save_profile()
 						if is_instance_valid(rw):
-							rw.text = "Награда: +%d монет (удвоено за ролик) · Всего: %d 💰" % [rw_coins * 2, int(_profile.get("coins", 0))]
+							rw.text = "Награда: +%d монет (удвоено за ролик) · Всего: %d монет" % [rw_coins * 2, int(_profile.get("coins", 0))]
 						bdouble.text = "✓ Награда удвоена"
 					)
 				)
@@ -4289,7 +4296,7 @@ func _build_ui() -> void:
 	layer.add_child(lobby)
 	# --- спонсорский дроп: rewarded-реклама → +3 AP выбранному бойцу и 25 монет ---
 	var sponsor := Button.new()
-	sponsor.text = "🎁 Дроп"
+	sponsor.text = "Дроп"
 	sponsor.anchor_left = 1.0
 	sponsor.anchor_right = 1.0
 	sponsor.offset_left = -150.0 if _mob() else -212.0
@@ -4355,7 +4362,7 @@ func _build_ui() -> void:
 	cvb2.add_child(ap_bar)
 	# иконка рюкзака прямо под портретом/анимацией бойца
 	var bag := Button.new()
-	bag.text = "🎒 Рюкзак [I]"
+	bag.text = "Рюкзак [I]"
 	bag.custom_minimum_size = Vector2(0, 40)
 	bag.pressed.connect(_toggle_inventory)
 	card_v.add_child(bag)
@@ -4479,7 +4486,7 @@ func _build_ui() -> void:
 	if minf(_vw(), _vh()) < 700.0:
 		chat.visible = false
 		var ct := Button.new()
-		ct.text = "📜 Лог"
+		ct.text = "Лог"
 		ct.anchor_top = 1.0
 		ct.anchor_bottom = 1.0
 		ct.offset_left = 12.0
@@ -4686,7 +4693,7 @@ func _refresh_fighter_panel() -> void:
 	rl.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(rl)
 	var tt := Button.new()
-	tt.text = "😈 Насмешка [T]"
+	tt.text = "Насмешка [T]"
 	tt.tooltip_text = "Насмешка (1 ОД): боты в радиусе 8 клеток 2 хода атакуют этого бойца"
 	tt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tt.add_theme_font_size_override("font_size", 12)
@@ -4694,7 +4701,7 @@ func _refresh_fighter_panel() -> void:
 	tt.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(tt)
 	var gf := Button.new()
-	gf.text = "🎨 Граффити [G]"
+	gf.text = "Граффити [G]"
 	gf.tooltip_text = "Граффити (1 ОД): оставить яркую метку на клетке"
 	gf.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	gf.add_theme_font_size_override("font_size", 12)
@@ -4794,7 +4801,7 @@ func _run_testmenu(mobile := false) -> void:
 	var sfx := "_mob" if mobile else ""
 	await get_tree().process_frame
 	# дым-тест чата: локальное эхо с эмодзи + открытая панель эмодзи
-	_menu_chat_local[0].append("Вы: проверка эмодзи 😀🔥👍")
+	_menu_chat_local[0].append("Вы: проверка чата")
 	_render_menu_chat()
 	if _ui.has("menu_chat_input"):
 		_toggle_emoji_panel(_ui.menu_chat_input, _ui.menu_chat_panel)
@@ -5558,11 +5565,29 @@ func _start_mode(m: int) -> void:
 		var mx := _fighter_hp_max(i)
 		var h: int = mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
 		if h <= 0:
-			var dd := AcceptDialog.new()
+			var dd := ConfirmationDialog.new()
 			dd.title = "Боец погиб"
-			dd.dialog_text = "«%s» погиб в прошлом бою и ждёт реанимации.\n\nОтряд → Медцентр → Реанимация (%d монет).\nПока не реанимируешь — в бой он не выйдет." % [str(_profile.names[i]), MED_REVIVE_COST]
+			dd.dialog_text = "«%s» погиб в прошлом бою и ждёт реанимации.\n\nРеанимация стоит %d монет. Или выйди в бой с 1 HP — рискованно, но бесплатно." % [str(_profile.names[i]), MED_REVIVE_COST]
+			dd.ok_button_text = "Реанимировать (%d)" % MED_REVIVE_COST
+			dd.cancel_button_text = "В бой с 1 HP"
 			_ui.menu_layer.add_child(dd)
 			dd.popup_centered()
+			dd.confirmed.connect(func():
+				if int(_profile.get("coins", 0)) < MED_REVIVE_COST:
+					var dn := AcceptDialog.new()
+					dn.title = "Не хватает монет"
+					dn.dialog_text = "Реанимация стоит %d монет, у тебя %d.\n\nЗаработай монеты в бою (или войди с 1 HP — рискованно)." % [MED_REVIVE_COST, int(_profile.get("coins", 0))]
+					_ui.menu_layer.add_child(dn)
+					dn.popup_centered()
+					return
+				_profile["coins"] = int(_profile.get("coins", 0)) - MED_REVIVE_COST
+				var hparr: Array = _profile.get("hp", [-1, -1, -1, -1])
+				hparr[i] = -1
+				_profile["hp"] = hparr
+				_save_profile()
+				_log("Реанимирован «%s» за %d монет" % [str(_profile.names[i]), MED_REVIVE_COST])
+				_start_mode_go(m)
+			)
 			return
 		if h * 100 < mx * 50:
 			low.append("«%s» ранен: %d/%d HP" % [str(_profile.names[i]), h, mx])
@@ -5583,7 +5608,7 @@ func _start_mode_go(m: int) -> void:
 		d.title = "Выносливость"
 		d.dialog_text = "Недостаточно выносливости (бой стоит 15).
 Восстанавливается равномерно: 100 за сутки.
-Сейчас: %d/100 ⚡" % int(float(_profile.get("stamina", 0.0)))
+Сейчас: %d/100" % int(float(_profile.get("stamina", 0.0)))
 		_ui.menu_layer.add_child(d)
 		d.popup_centered()
 		return
@@ -5827,7 +5852,7 @@ func _daily_box() -> PanelContainer:
 			l.modulate = Color(0.6, 1.0, 0.6)
 		row.add_child(l)
 		var rw := Label.new()
-		rw.text = "✅" if done else "+%d 💰" % int(q["reward"])
+		rw.text = "Готово" if done else "+%d монет" % int(q["reward"])
 		rw.add_theme_font_size_override("font_size", 13)
 		rw.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
 		rw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -5861,14 +5886,14 @@ func _show_menu_main() -> void:
 		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
 		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
 		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0))), "Энергия — под будущие онлайн-бои. Тренировки бесплатны"))
-		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — открывают слоты бойцов: 2-й на 3 победах, далее 10 и 25"))
+		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — открывают слоты: 2-й боец на 15 победах, 3-й на 35 ур., 4-й — только ВИП"))
 		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0)), "Всего противников уничтожено"))
 	# --- секция БОЙ: три карточки режимов (иконки-пиктограммы) ---
 	var wins: int = int(_profile.get("wins", 0))
 	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
 	m1.pressed.connect(func(): _start_mode(1))
 	var lock2: bool = _profile.unlocked_slots < 2
-	var m2 := _fight_card("fighter2", "2×2 · Пара", "Побед %d/%d до слота №2" % [wins, SLOT2_WINS], Color(1.0, 0.78, 0.28), lock2)
+	var m2 := _fight_card("fighter2", "2×2 · Пара", "Слот №2 — за %d побед (%d/%d)" % [SLOT2_WINS, wins, SLOT2_WINS], Color(1.0, 0.78, 0.28), lock2)
 	if not lock2:
 		m2.pressed.connect(func(): _start_mode(2))
 	var lock4: bool = _profile.unlocked_slots < 4
@@ -5974,7 +5999,7 @@ func _show_menu_settings() -> void:
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	vb.add_child(_screen_title("gear", "Настройки"))
 	var fsb := Button.new()
-	fsb.text = "⛶  Полный экран"
+	fsb.text = "Полный экран"
 	fsb.pressed.connect(_request_fullscreen)
 	vb.add_child(fsb)
 	var gl := Label.new()
@@ -6009,7 +6034,7 @@ func _show_menu_settings() -> void:
 	var tpl := Label.new()
 	tpl.text = "Телепорт: "
 	tprow.add_child(tpl)
-	for tp in [["beam", "☄ Луч"], ["hole", "🕳 Дыра"], ["storm", "⚡ Шторм"]]:
+	for tp in [["beam", "Луч"], ["hole", "Дыра"], ["storm", "Шторм"]]:
 		var tb2 := Button.new()
 		var tid: String = tp[0]
 		var ots: Array = _profile.get("owned_teleports", [1, 1, 0])
@@ -6065,9 +6090,9 @@ const RARITY_SHARD_DUP := [5, 15, 40, 100, 300, 1000]     # осколки за 
 const RARITY_EXCHANGE := [80, 200, 500, 1200, 3000, 0]     # цена обмена осколков (сиреневый — только удача)
 # шансы: сиреневый 0.1% / мифик 1.9% / лега 5% / эпик 13% / редкий 25% / остальное обычный
 const CHEST_POOL := {
-	0: [{"kind": "shards", "n": 8, "name": "Осколки ×8"}, {"kind": "coins", "n": 60, "name": "60 💰"},
+	0: [{"kind": "shards", "n": 8, "name": "Осколки ×8"}, {"kind": "coins", "n": 60, "name": "60 монет"},
 		{"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"}, {"kind": "nick", "idx": 3, "name": "Ник «Изумруд»"}],
-	1: [{"kind": "shards", "n": 20, "name": "Осколки ×20"}, {"kind": "coins", "n": 120, "name": "120 💰"},
+	1: [{"kind": "shards", "n": 20, "name": "Осколки ×20"}, {"kind": "coins", "n": 120, "name": "120 монет"},
 		{"kind": "frame", "idx": 4, "name": "Рамка «Пустыня»"}, {"kind": "nick", "idx": 4, "name": "Ник «Ледяной»"},
 		{"kind": "taunt", "idx": 1, "name": "Пак насмешек «Дерзкие»"}],
 	2: [{"kind": "shards", "n": 50, "name": "Осколки ×50"}, {"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
@@ -6099,7 +6124,7 @@ func _show_menu_squad() -> void:
 		if i < _profile.unlocked_slots:
 			b.text = _profile.names[i] + (" ✓" if i == _squad_edit else "")
 		else:
-			b.text = "🔒 %d" % (i + 1) if _mob() else "🔒 Слот %d" % (i + 1)
+			b.text = "Слот %d" % (i + 1)
 		b.custom_minimum_size = Vector2(slot_w, 34)
 		b.add_theme_font_size_override("font_size", 12 if _mob() else 14)
 		var fi: int = i
@@ -6240,7 +6265,7 @@ func _show_menu_squad() -> void:
 			var ob := Button.new()
 			ob.custom_minimum_size = Vector2(34, 30)
 			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
-			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "🔒"
+			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "Закрыто"
 			var os: StyleBoxFlat = StyleBoxFlat.new()
 			os.bg_color = OUTFIT_SKINS[oi]["col"] if OUTFIT_SKINS[oi]["col"] != null else Color(0.25, 0.35, 0.25)
 			os.set_corner_radius_all(6)
@@ -6367,7 +6392,7 @@ func _show_menu_squad() -> void:
 		invested += int(st.get(k2, 0))
 	if invested > 0:
 		var rstat := Button.new()
-		rstat.text = "Переподготовка (сброс статов) — %d 🪙" % RETRAIN_STATS_COST
+		rstat.text = "Переподготовка (сброс статов) — %d монет" % RETRAIN_STATS_COST
 		rstat.icon = _icon_tex("coin")
 		rstat.add_theme_color_override("icon_normal_color", COIN_COLOR)
 		rstat.add_theme_color_override("icon_hover_color", COIN_COLOR)
@@ -6393,9 +6418,16 @@ func _show_menu_squad() -> void:
 		var cur := int(tprof.get(tal["id"], 0))
 		var trow := HBoxContainer.new()
 		vb.add_child(trow)
+		var tico := TextureRect.new()
+		tico.texture = _icon_tex(str(tal["icon"]))
+		tico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tico.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tico.custom_minimum_size = Vector2(22, 22)
+		tico.tooltip_text = str(tal["desc"])
+		trow.add_child(tico)
 		var tnl := Label.new()
-		tnl.text = "%s %s — %d/%d" % [tal["icon"], tal["name"], cur, int(tal["max"])]
-		tnl.custom_minimum_size = Vector2(180 if _mob() else 240, 0)
+		tnl.text = "%s — %d/%d" % [tal["name"], cur, int(tal["max"])]
+		tnl.custom_minimum_size = Vector2(150 if _mob() else 210, 0)
 		tnl.add_theme_font_size_override("font_size", 13)
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
@@ -6406,7 +6438,7 @@ func _show_menu_squad() -> void:
 			tb.text = "МАКС"
 			tb.disabled = true
 		else:
-			tb.text = "+%d 🎯" % cost
+			tb.text = "+%d" % cost
 			tb.disabled = int(_profile.tpts[_squad_edit]) < cost
 			tb.tooltip_text = "%s\nЦена ранга: %d очк." % [str(tal["desc"]), cost]
 			var tid2: String = tal["id"]
@@ -6465,28 +6497,28 @@ const BP_LEVELS := 30
 const BP_XP_PER := 120          # сезонного опыта на уровень
 # сезон 1 «Первый сброс»: награды каждые 3 уровня; free-лента — каждому, premium — видимые награды
 const BP_TABLE_FREE := {
-	3: {"kind": "coins", "n": 60, "name": "60 💰"},
-	6: {"kind": "shards", "n": 40, "name": "40 💠"},
-	9: {"kind": "coins", "n": 90, "name": "90 💰"},
+	3: {"kind": "coins", "n": 60, "name": "60 монет"},
+	6: {"kind": "shards", "n": 40, "name": "Осколки ×40"},
+	9: {"kind": "coins", "n": 90, "name": "90 монет"},
 	12: {"kind": "nick", "idx": 1, "name": "Ник «Красный»"},
-	15: {"kind": "coins", "n": 120, "name": "120 💰"},
-	18: {"kind": "shards", "n": 60, "name": "60 💠"},
-	21: {"kind": "coins", "n": 150, "name": "150 💰"},
+	15: {"kind": "coins", "n": 120, "name": "120 монет"},
+	18: {"kind": "shards", "n": 60, "name": "Осколки ×60"},
+	21: {"kind": "coins", "n": 150, "name": "150 монет"},
 	24: {"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"},
-	27: {"kind": "coins", "n": 200, "name": "200 💰"},
+	27: {"kind": "coins", "n": 200, "name": "200 монет"},
 	30: {"kind": "frame", "idx": 6, "name": "Рамка «Пламя»"},
 }
 const BP_TABLE_PREM := {
-	3: {"kind": "shards", "n": 90, "name": "90 💠"},
-	6: {"kind": "coins", "n": 180, "name": "180 💰"},
+	3: {"kind": "shards", "n": 90, "name": "Осколки ×90"},
+	6: {"kind": "coins", "n": 180, "name": "180 монет"},
 	9: {"kind": "nick", "idx": 6, "name": "Ник «Закат»"},
-	12: {"kind": "shards", "n": 120, "name": "120 💠"},
+	12: {"kind": "shards", "n": 120, "name": "Осколки ×120"},
 	15: {"kind": "taunt", "idx": 1, "name": "Насмешки «Дерзкие»"},
 	18: {"kind": "outfit", "idx": 3, "name": "Камуфляж «Тень» (экскл.)"},
 	21: {"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
-	24: {"kind": "shards", "n": 240, "name": "240 💠"},
-	27: {"kind": "coins", "n": 450, "name": "450 💰"},
-	30: {"kind": "teleport", "name": "⚡ Телепорт «Шторм»"},
+	24: {"kind": "shards", "n": 240, "name": "Осколки ×240"},
+	27: {"kind": "coins", "n": 450, "name": "450 монет"},
+	30: {"kind": "teleport", "name": "Телепорт «Шторм»"},
 }
 
 func _bp_level() -> int:
@@ -6574,7 +6606,7 @@ func _show_menu_med() -> void:
 			st.text = "%d/%d · боевой" % [h, mx]
 			st.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
 		elif h <= 0:
-			st.text = "☠ погиб"
+			st.text = "Погиб"
 			st.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
 		else:
 			var mins := int(ceil(_med_full_minutes(int(_profile.lvl[i])) * (mx - h) / float(mx)))
@@ -6584,7 +6616,7 @@ func _show_menu_med() -> void:
 		# кнопки лечения
 		if h < mx and h > 0:
 			var bdoc := Button.new()
-			bdoc.text = "Доктор +%d%% 📺" % int(_doc_heal_pct(int(_profile.lvl[i])) * 100)
+			bdoc.text = "Доктор +%d%% (ролик)" % int(_doc_heal_pct(int(_profile.lvl[i])) * 100)
 			bdoc.tooltip_text = "Посмотри ролик — врач подлечит бойца"
 			var di: int = i
 			bdoc.pressed.connect(func():
@@ -6592,7 +6624,7 @@ func _show_menu_med() -> void:
 			)
 			row.add_child(bdoc)
 			var bheal := Button.new()
-			bheal.text = "%d 🪙" % MED_HEAL_COST
+			bheal.text = "%d" % MED_HEAL_COST
 			bheal.icon = _icon_tex("coin")
 			bheal.disabled = int(_profile.get("coins", 0)) < MED_HEAL_COST
 			bheal.tooltip_text = "Лечение до полного"
@@ -6609,7 +6641,7 @@ func _show_menu_med() -> void:
 			row.add_child(bheal)
 		elif h <= 0:
 			var brev := Button.new()
-			brev.text = "Реанимация %d 🪙" % MED_REVIVE_COST
+			brev.text = "Реанимация %d монет" % MED_REVIVE_COST
 			brev.icon = _icon_tex("coin")
 			brev.disabled = int(_profile.get("coins", 0)) < MED_REVIVE_COST
 			brev.tooltip_text = "Вернуть бойца к полному здоровью"
@@ -6660,7 +6692,7 @@ func _show_menu_med() -> void:
 			rrow.add_child(sb)
 	if rsv.size() < RESERVE_MAX:
 		var bhire := Button.new()
-		bhire.text = "Нанять бойца — %d 🪙" % MED_HIRE_COST
+		bhire.text = "Нанять бойца — %d монет" % MED_HIRE_COST
 		bhire.icon = _icon_tex("coin")
 		bhire.add_theme_color_override("icon_normal_color", COIN_COLOR)
 		bhire.add_theme_color_override("icon_hover_color", COIN_COLOR)
@@ -6775,7 +6807,7 @@ func _show_menu_progress() -> void:
 				rwd += " + рамка «%s»" % FRAME_NAMES[int(t["frame"])]
 			if t.has("outfit"):
 				rwd += " + камуфляж «%s»" % OUTFIT_SKINS[int(t["outfit"])]["name"]
-			rw.text = "🏆 " + rwd
+			rw.text = rwd
 			rw.add_theme_font_size_override("font_size", 13)
 			rw.add_theme_color_override("font_color", Color(1.0, 0.75, 0.35))
 			list.add_child(rw)
@@ -6840,18 +6872,18 @@ func _show_menu_bp() -> void:
 		var done: bool = qi < wdata.claimed.size() and int(wdata.claimed[qi]) == 1
 		var wl := Label.new()
 		wl.add_theme_font_size_override("font_size", 12)
-		wl.text = ("✅ " if done else "🎯 ") + "%s — %d/%d (+%d XP)" % [
+		wl.text = ("Готово: " if done else "") + "%s — %d/%d (+%d XP)" % [
 			str(WEEKLY_TASKS[qi]["name"]), prog2, int(WEEKLY_TASKS[qi]["target"]), int(WEEKLY_TASKS[qi]["xp"])]
 		if done:
 			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
 		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
-		var buy := _menu_button("👑 Premium — 399 ₽ (платежи после запуска онлайна)")
+		var buy := _menu_button("Premium — 399 ₽ (платежи после запуска онлайна)")
 		buy.disabled = true
 		buy.tooltip_text = "Premium-лента сезона: 630 монет, 450 осколков, ник «Закат», насмешки, камуфляж «Тень» (эксклюзив), рамка «Крипто», телепорт «Шторм»"
 		vb.add_child(buy)
 	else:
-		vb.add_child(_framed_label("👑 Premium активен", 14))
+		vb.add_child(_framed_label("Premium активен", 14))
 	var grid := GridContainer.new()
 	grid.columns = 6
 	grid.add_theme_constant_override("h_separation", 8)
@@ -6883,7 +6915,9 @@ func _show_menu_bp() -> void:
 			var rb := Button.new()
 			rb.add_theme_font_size_override("font_size", 11)
 			rb.custom_minimum_size = Vector2(96, 26)
-			rb.text = ("👑 " if prem else "") + str(rw.get("name", ""))
+			rb.text = str(rw.get("name", ""))
+			if prem:
+				rb.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 			if got:
 				rb.text = "✓"
 				rb.disabled = true
@@ -7003,7 +7037,7 @@ func _open_show_chest() -> void:
 	# гарант сиреневого: гарантированно на 200-м открытии без него
 	_profile.pity_siren = 0 if rarity == 5 else int(_profile.get("pity_siren", 0)) + 1
 	_profile.chests_total = int(_profile.get("chests_total", 0)) + 1
-	_chest_last = str(it["name"]) + ("  (дубликат → +%d 💠)" % dup_shards if dup_shards > 0 else "")
+	_chest_last = str(it["name"]) + ("  (дубликат → +%d осколков)" % dup_shards if dup_shards > 0 else "")
 	_chest_last_rarity = rarity
 	_save_profile()
 
@@ -7235,7 +7269,7 @@ func _show_menu_shop() -> void:
 		row2.add_theme_constant_override("separation", 10)
 		card2.add_child(row2)
 		var pl := Label.new()
-		pl.text = "%d 💰" % int(pk["coins"])
+		pl.text = "%d монет" % int(pk["coins"])
 		pl.add_theme_font_size_override("font_size", 16)
 		pl.custom_minimum_size = Vector2(90, 40)
 		pl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -7412,7 +7446,7 @@ func _refresh_card() -> void:
 	_ui.card_ap.value = f.ap
 	_ui.card_ap_l.text = "ОД %d/%d" % [f.ap, f.max_ap]
 	if int(f.get("guard", 0)) > 0:
-		_ui.card_ap_l.text += "  +%d🛡" % int(f.guard)
+		_ui.card_ap_l.text += "  +%d брони" % int(f.guard)
 	# аватар игрока вместо 3D-портрета (только для своего отряда)
 	var ava_tex: Texture2D = _avatar_texture() if f.team == 0 else null
 	if ava_tex != null:
