@@ -270,6 +270,7 @@ var _vk_name := ""
 var _vk_id := ""
 var _vk_login_tried := false
 var _vk_net_retry := false
+var _vk_js_tried := false
 var _boot_done := false
 
 func _vk_env() -> bool:
@@ -289,6 +290,35 @@ func _try_vk_login() -> void:
 		# существующий аккаунт по vk_id от GetUserInfo, новый создастся только по подписи
 		body["vk_id"] = _vk_id
 	_api_call("vklogin", body)
+
+func _vk_login_js() -> void:
+	# обходной путь: нативный fetch браузера вместо HTTPRequest (Godot) —
+	# работает там, где Godot-стек сбоит, и показывает ТОЧНУЮ причину сбоя
+	var body := {"action": "vklogin", "launch": _vk_launch_params(), "name": _vk_name}
+	if str(body["launch"].get("sign", "")) == "" and _vk_id != "":
+		body["vk_id"] = _vk_id
+	if _auth_status != null and is_instance_valid(_auth_status):
+		_auth_status.text = "Пробую обходной вход…"
+	var jscb := JavaScriptBridge.create_callback(_on_vk_login_js_done)
+	JavaScriptBridge.get_interface("window").set("__dz_jsapi_cb", jscb)
+	var payload: String = JSON.stringify(JSON.stringify(body))
+	var js := "fetch('" + API_URL + "', {method:'POST', headers:{'Content-Type':'application/json'}, body: " + payload + "}).then(function(r){return r.text();}).then(function(t){ if(window.__dz_jsapi_cb) window.__dz_jsapi_cb(t); }).catch(function(e){ var m=String((e&&e.message)||e).slice(0,120); if(window.__dz_jsapi_cb) window.__dz_jsapi_cb(JSON.stringify({__net_error:m})); }); 'ok'"
+	JavaScriptBridge.eval(js, true)
+
+func _on_vk_login_js_done(args: Array) -> void:
+	var s := str(args[0]) if args.size() > 0 else ""
+	var d: Variant = JSON.parse_string(s)
+	if not (d is Dictionary) or str(d.get("__net_error", "")) != "":
+		# даже нативный fetch браузера не смог — показываем ТОЧНУЮ причину
+		_auth_close()
+		_build_auth(false)
+		if _auth_status != null and is_instance_valid(_auth_status):
+			var why := str(d.get("__net_error", "")) if d is Dictionary else s
+			_auth_status.text = ("Сеть режет запрос к серверу: " + why).left(160)
+		return
+	# ответ сервера получен — разбираем тем же кодом, что обычный vklogin
+	_auth_pending = "vklogin"
+	_on_api_done(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), s.to_utf8_buffer())
 
 func _on_vk_ready(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
@@ -547,6 +577,12 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 				if _vk_login_tried:
 					_api_next()
 					return
+			if not _vk_js_tried and OS.has_feature("web"):
+				# HTTPRequest дважды не смог — пробуем нативный fetch браузера
+				_vk_js_tried = true
+				_vk_login_js()
+				_api_next()
+				return
 			_auth_close()
 			_build_auth(false)
 			if _auth_status != null and is_instance_valid(_auth_status):
@@ -5515,6 +5551,33 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	_ui[key] = p
 
 func _start_mode(m: int) -> void:
+	# погибший боец в бой не идёт (реанимация — в Медцентре); раненых — предупреждаем
+	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
+	var low: Array[String] = []
+	for i in mini(m, 4):
+		var mx := _fighter_hp_max(i)
+		var h: int = mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
+		if h <= 0:
+			var dd := AcceptDialog.new()
+			dd.title = "Боец погиб"
+			dd.dialog_text = "«%s» погиб в прошлом бою и ждёт реанимации.\n\nОтряд → Медцентр → Реанимация (%d монет).\nПока не реанимируешь — в бой он не выйдет." % [str(_profile.names[i]), MED_REVIVE_COST]
+			_ui.menu_layer.add_child(dd)
+			dd.popup_centered()
+			return
+		if h * 100 < mx * 50:
+			low.append("«%s» ранен: %d/%d HP" % [str(_profile.names[i]), h, mx])
+	if low.size() > 0:
+		var dc := ConfirmationDialog.new()
+		dc.title = "Раненые бойцы"
+		dc.dialog_text = "В бой идут раненые:\n" + "\n".join(low) + "\n\nТаких легко убить с одного-двух попаданий. Подлечись в Медцентре (Отряд) или рискни."
+		dc.ok_button_text = "Всё равно в бой"
+		_ui.menu_layer.add_child(dc)
+		dc.popup_centered()
+		dc.confirmed.connect(func(): _start_mode_go(m))
+		return
+	_start_mode_go(m)
+
+func _start_mode_go(m: int) -> void:
 	if not _stamina_can_fight():
 		var d := AcceptDialog.new()
 		d.title = "Выносливость"
