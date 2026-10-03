@@ -6439,6 +6439,8 @@ func _show_menu_squad() -> void:
 		var wd: Dictionary = _weapon_by_id(SIDEARMS[wi])
 		var wb := Button.new()
 		wb.text = str(wd.get("name", SIDEARMS[wi])) + (" ✓" if int(_profile.sidearm[_squad_edit]) == wi else "")
+		if not _mob():
+			wb.add_theme_font_size_override("font_size", 12)
 		wb.tooltip_text = "Урон %d · %d ОД · обойма %d · дальность %d" % [
 			int(wd.get("damage", 0)), int(wd.get("ap_cost", 0)), int(wd.get("ammo", 0)), int(wd.get("range", 0))]
 		var wv: int = wi
@@ -6465,6 +6467,8 @@ func _show_menu_squad() -> void:
 	for ci in FIGHTER_CLASSES.size():
 		var cb := Button.new()
 		cb.text = FIGHTER_CLASSES[ci]["name"] + (" ✓" if int(_profile.cls[_squad_edit]) == ci else "")
+		if not _mob():
+			cb.add_theme_font_size_override("font_size", 12)
 		cb.tooltip_text = str(FIGHTER_CLASSES[ci]["desc"])
 		var cv: int = ci
 		cb.pressed.connect(func():
@@ -6483,6 +6487,8 @@ func _show_menu_squad() -> void:
 		for g in [["m", "Мужчина"], ["f", "Женщина"]]:
 			var gb := Button.new()
 			gb.text = g[1] + (" ✓" if _profile.gender == g[0] else "")
+			if not _mob():
+				gb.add_theme_font_size_override("font_size", 12)
 			var gv: String = g[0]
 			gb.pressed.connect(func():
 				_profile.gender = gv
@@ -6607,10 +6613,10 @@ func _show_menu_squad() -> void:
 					_show_menu_squad()
 			)
 			crow.add_child(cb)
-		# рамка аватара (монетизация) — 9 пресетов сеткой
-		vb.add_child(_mk_label("Рамка:", 14))
+		# рамка аватара (монетизация) — 9 пресетов сеткой; на десктопе компактнее (6 колонок, 2 ряда)
+		vb.add_child(_mk_label("Рамка: · аватар — в «Личные настройки»" if not _mob() else "Рамка:", 14))
 		var fgrid := GridContainer.new()
-		fgrid.columns = 5
+		fgrid.columns = 5 if _mob() else 6
 		fgrid.add_theme_constant_override("h_separation", 4)
 		fgrid.add_theme_constant_override("v_separation", 4)
 		vb.add_child(fgrid)
@@ -6619,7 +6625,7 @@ func _show_menu_squad() -> void:
 			var frame_locked := fi2 > 0 and not _shop_owned("frame", fi2)
 			fb.text = ("🔒 " if frame_locked else "") + FRAME_NAMES[fi2] + (" ✓" if _profile.frame == fi2 else "")
 			fb.add_theme_font_size_override("font_size", 11)
-			fb.custom_minimum_size = Vector2(84, 30)
+			fb.custom_minimum_size = Vector2(84, 30) if _mob() else Vector2(70, 28)
 			if frame_locked:
 				fb.tooltip_text = "Открывается в магазине или из сундуков"
 				fb.add_theme_color_override("font_color", Color(0.5, 0.55, 0.62))
@@ -6631,27 +6637,58 @@ func _show_menu_squad() -> void:
 					_show_menu_squad()
 			)
 			fgrid.add_child(fb)
-		var avn := Label.new()
-		avn.text = "Аватар: на экране «Личные настройки» (своё фото или 1 из 6 пресетов)"
-		avn.add_theme_font_size_override("font_size", 12)
-		vb.add_child(avn)
+		if _mob():
+			var avn := Label.new()
+			avn.text = "Аватар: на экране «Личные настройки» (своё фото или 1 из 6 пресетов)"
+			avn.add_theme_font_size_override("font_size", 12)
+			vb.add_child(avn)
 	# --- очки навыков ---
+	# десктоп: две колонки — внешность слева, статы/таланты справа; мобильный: всё в одну колонку как раньше
+	var vs: Container = vb
+	if not _mob():
+		vb.custom_minimum_size = Vector2(minf(1000.0, _vw() * 0.94), 0)
+		var sep: int = clampi(int(vb.get_theme_constant("separation")) - 4, 4, 10)
+		var body := HBoxContainer.new()
+		body.add_theme_constant_override("separation", 24)
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vb.add_child(body)
+		var col_l := VBoxContainer.new()
+		col_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_l.add_theme_constant_override("separation", sep)
+		body.add_child(col_l)
+		var col_r := VBoxContainer.new()
+		col_r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_r.add_theme_constant_override("separation", sep)
+		body.add_child(col_r)
+		# переносим внешность (всё после заголовка и вкладок) в левую колонку
+		var move_kids: Array = []
+		for ci2 in vb.get_child_count():
+			var c2: Control = vb.get_child(ci2)
+			if c2 != body and ci2 >= 2:
+				move_kids.append(c2)
+		for c3 in move_kids:
+			vb.remove_child(c3)
+			col_l.add_child(c3)
+		vs = col_r
 	var st: Dictionary = _profile.stats[_squad_edit]
 	var left := _stat_points_left(st, _profile.lvl[_squad_edit])
 	var pl := Label.new()
 	pl.text = "Уровень %d (опыт %d/%d) · Свободно очков: %d" % [_profile.lvl[_squad_edit], _profile.xp[_squad_edit], _xp_need(_profile.lvl[_squad_edit]), left]
-	pl.add_theme_font_size_override("font_size", 17)
-	vb.add_child(pl)
+	pl.add_theme_font_size_override("font_size", 17 if _mob() else 15)
+	vs.add_child(pl)
 	for k in STAT_KEYS:
 		var row := HBoxContainer.new()
-		vb.add_child(row)
+		vs.add_child(row)
 		var lb := Label.new()
 		lb.text = "%s: %d" % [STAT_NAMES[k], st[k]]
-		lb.custom_minimum_size = Vector2(100, 0) if _mob() else Vector2(160, 0)
+		lb.custom_minimum_size = Vector2(100, 0) if _mob() else Vector2(150, 0)
+		lb.add_theme_font_size_override("font_size", 14 if not _mob() else 16)
 		row.add_child(lb)
 		var minus := Button.new()
 		minus.text = "−"
 		minus.disabled = st[k] <= 0
+		if not _mob():
+			minus.add_theme_font_size_override("font_size", 13)
 		var kk: String = k
 		minus.pressed.connect(func():
 			_profile.stats[_squad_edit][kk] -= 1
@@ -6662,6 +6699,8 @@ func _show_menu_squad() -> void:
 		var plus := Button.new()
 		plus.text = "+"
 		plus.disabled = left <= 0
+		if not _mob():
+			plus.add_theme_font_size_override("font_size", 13)
 		plus.pressed.connect(func():
 			_profile.stats[_squad_edit][kk] += 1
 			_save_profile()
@@ -6693,17 +6732,17 @@ func _show_menu_squad() -> void:
 				_save_profile()
 				_show_menu_squad()
 		)
-		vb.add_child(rstat)
+		vs.add_child(rstat)
 	var tl2 := Label.new()
 	tl2.text = "Таланты — очков: %d (+1 каждые 3 уровня)" % int(_profile.tpts[_squad_edit])
 	tl2.add_theme_font_size_override("font_size", 15)
 	tl2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.45))
-	vb.add_child(tl2)
+	vs.add_child(tl2)
 	var tprof: Dictionary = _profile.talents[_squad_edit]
 	for tal in TALENTS:
 		var cur := int(tprof.get(tal["id"], 0))
 		var trow := HBoxContainer.new()
-		vb.add_child(trow)
+		vs.add_child(trow)
 		var tico := TextureRect.new()
 		tico.texture = _icon_tex(str(tal["icon"]))
 		tico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -6714,11 +6753,13 @@ func _show_menu_squad() -> void:
 		var tnl := Label.new()
 		tnl.text = "%s — %d/%d" % [tal["name"], cur, int(tal["max"])]
 		tnl.custom_minimum_size = Vector2(150 if _mob() else 210, 0)
-		tnl.add_theme_font_size_override("font_size", 13)
+		tnl.add_theme_font_size_override("font_size", 13 if _mob() else 12)
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
 		var tb := Button.new()
+		if not _mob():
+			tb.add_theme_font_size_override("font_size", 12)
 		var cost := cur + 1
 		if cur >= int(tal["max"]):
 			tb.text = "МАКС"
@@ -6766,12 +6807,12 @@ func _show_menu_squad() -> void:
 				_save_profile()
 				_show_menu_squad()
 		)
-		vb.add_child(rst)
+		vs.add_child(rst)
 	var sum := Label.new()
 	sum.text = "Итог: HP %d · ОД %d · вес %.0f кг · обзор %d" % [
 		_stat_hp(st), _stat_ap(st), _stat_carry(st), _stat_vision(st)]
 	sum.add_theme_font_size_override("font_size", 15)
-	vb.add_child(sum)
+	vs.add_child(sum)
 	var back := Button.new()
 	back.text = "← Назад"
 	back.pressed.connect(_show_menu_main)
