@@ -773,6 +773,26 @@ func _profile_normalize() -> void:
 				mq["prog"] = {}
 			if not (mq.get("done", {}) is Dictionary):
 				mq["done"] = {}
+	# герои: пустые объекты после PHP приходят как [] — приводим к рабочим типам
+	var ho = _profile.get("hero_owned", null)
+	if not (ho is Array):
+		ho = []
+	while (ho as Array).size() < HEROES.size():
+		(ho as Array).append(0)
+	_profile.hero_owned = ho
+	for hk in ["hero_rentals", "hero_frags"]:
+		var hd = _profile.get(hk, {})
+		if not (hd is Dictionary):
+			hd = {}
+		_profile[hk] = hd
+	var sqh = _profile.get("squad_heroes", null)
+	if not (sqh is Array):
+		sqh = [-1, -1, -1, -1]
+	while (sqh as Array).size() < 4:
+		(sqh as Array).append(-1)
+	_profile.squad_heroes = (sqh as Array).slice(0, 4)
+	if not (_profile.get("craft_dups", 0) is int or _profile.get("craft_dups", 0) is float):
+		_profile.craft_dups = 0
 
 func _auth_fail(msg: String, act: String, net := false) -> void:
 	if act == "load":
@@ -1289,6 +1309,11 @@ func _load_profile() -> void:
 		"hp_ts": 0.0,                 # unixtime последнего сохранения HP (реген)
 		"vip": 0,                     # 1 = подписка: слот 4, реген ×2, награды (скоро)
 		"reserve": [],                # запасные бойцы (словари; ротация вручную)
+		"hero_owned": [],             # герои навсегда (индекс HEROES: 1/0)
+		"hero_rentals": {},           # аренда героев: id -> unixtime конца
+		"hero_frags": {},             # фрагменты героев: id -> количество (45 = сборка)
+		"squad_heroes": [-1, -1, -1, -1],  # герой на слот отряда (-1 = базовый боец)
+		"craft_dups": 0,              # дублей косметики подряд (3 = крафт редкостью выше)
 	}
 	var cfg := ConfigFile.new()
 	if cfg.load("user://profile.cfg") != OK:
@@ -1342,6 +1367,11 @@ func _load_profile() -> void:
 	_profile.hp_ts = float(cfg.get_value("player", "hp_ts", 0.0))
 	_profile.vip = int(cfg.get_value("player", "vip", 0))
 	_profile.reserve = cfg.get_value("player", "reserve", [])
+	_profile.hero_owned = cfg.get_value("player", "hero_owned", [])
+	_profile.hero_rentals = cfg.get_value("player", "hero_rentals", {})
+	_profile.hero_frags = cfg.get_value("player", "hero_frags", {})
+	_profile.squad_heroes = cfg.get_value("player", "squad_heroes", [-1, -1, -1, -1])
+	_profile.craft_dups = int(cfg.get_value("player", "craft_dups", 0))
 	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
 	_profile_normalize()
 	_mq_check()
@@ -1395,6 +1425,11 @@ func _save_profile() -> void:
 	cfg.set_value("player", "hp_ts", float(_profile.get("hp_ts", 0.0)))
 	cfg.set_value("player", "vip", int(_profile.get("vip", 0)))
 	cfg.set_value("player", "reserve", _profile.get("reserve", []))
+	cfg.set_value("player", "hero_owned", _profile.get("hero_owned", []))
+	cfg.set_value("player", "hero_rentals", _profile.get("hero_rentals", {}))
+	cfg.set_value("player", "hero_frags", _profile.get("hero_frags", {}))
+	cfg.set_value("player", "squad_heroes", _profile.get("squad_heroes", [-1, -1, -1, -1]))
+	cfg.set_value("player", "craft_dups", int(_profile.get("craft_dups", 0)))
 	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
 	cfg.save("user://profile.cfg")
 	if _sync_push and _auth_token != "" and _http != null:
@@ -2300,9 +2335,22 @@ func _spawn_teams() -> void:
 		# класс задаёт модель и перк (перк — стиль, а не сила)
 		var cls_i := clampi(int(_profile.cls[i]), 0, FIGHTER_CLASSES.size() - 1)
 		var model_c: String = FIGHTER_CLASSES[cls_i]["model"]
+		var st_f: Dictionary = _profile.stats[i]
+		# герой слота: модель/оружие/класс/статы (дефолт + моды) вместо базового бойца
+		var sh_sq: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+		var hid := int(sh_sq[i]) if i < sh_sq.size() else -1
+		if hid >= 0 and hid < HEROES.size() and _hero_available(hid):
+			var hd: Dictionary = HEROES[hid]
+			model_c = str(hd["model"])
+			sidearm = str(hd["weapon"])
+			cls_i = clampi(int(hd["cls"]), 0, FIGHTER_CLASSES.size() - 1)
+			st_f = _default_fighter_stats()
+			for mk in STAT_KEYS:
+				st_f[mk] = int(st_f.get(mk, 0)) + int((hd.get("mods", {}) as Dictionary).get(mk, 0))
+			_log("СПАВН герой[%d]: %s (%s), модель=%s, оружие=%s" % [i, str(_profile.names[i]), hd["name"], model_c, sidearm])
 		_log("СПАВН красный[%d]: %s, модель=%s, пистолет=%s" % [i, str(_profile.names[i]), model_c, sidearm])
 		_spawn_human(model_c, cell.x, cell.y, _rng.randf_range(-30, 90),
-			sidearm, Color("#ff4757"), 0, _profile.names[i], _profile.stats[i], _profile.lvl[i], _profile.xp[i],
+			sidearm, Color("#ff4757"), 0, _profile.names[i], st_f.duplicate(), _profile.lvl[i], _profile.xp[i],
 			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i], cls_i, i)
 		_log("СПАВН красный[%d] на арене, всего бойцов=%d" % [i, _fighters.size()])
 	for i in _mode:
@@ -5024,6 +5072,41 @@ func _run_testplay() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_play.png")
+	# --- HERO_TEST: сборка из 45 фрагментов, продление аренды от max(сейчас, остаток), спавн-статы ---
+	print("HERO_TEST: старт")
+	_profile.hero_frags = {"3": 42, "4": 42, "5": 42}
+	_profile.hero_owned = []
+	var g1: Dictionary = _hero_grant(1, false, 3)   # любой герой р1: 42+3=45 → автосборка
+	var ho_t: Array = _profile.get("hero_owned", [])
+	var owned_cnt := 0
+	for v in ho_t:
+		owned_cnt += int(v)
+	var fr_t: Dictionary = _profile.get("hero_frags", {})
+	print("HERO_TEST автосборка 45 фрагментов: собрано=", owned_cnt, " (ожидается 1), осталось записей фрагментов=", fr_t.size(), " (инфо, собранный стёрт)")
+	_profile.hero_rentals = {}
+	_profile.hero_frags = {}
+	_profile.hero_owned = []
+	seed(777)
+	_hero_grant(0, true, 3)
+	seed(777)   # тот же бросок → тот же герой: проверяем продление от max(сейчас, остаток)
+	_hero_grant(0, true, 5)
+	var rr: Dictionary = _profile.get("hero_rentals", {})
+	var r2 := 0.0
+	for rk in rr.keys():
+		r2 = maxf(r2, float(rr[rk]))
+	var now_t := Time.get_unix_time_from_system()
+	print("HERO_TEST аренда продлевается от max(сейчас, остаток): остаток=", int(r2 - now_t), " сек (ожидается 691200±5)")
+	var st_hero := _default_fighter_stats()
+	for mk in STAT_KEYS:
+		st_hero[mk] = int(st_hero.get(mk, 0)) + int((HEROES[5].get("mods", {}) as Dictionary).get(mk, 0))
+	print("HERO_TEST моды статов героя «Следопыт»: per=", st_hero["per"], " lck=", st_hero["lck"], " str=", st_hero["str"], " (ожидается 3/1/-2)")
+	# --- COSMETIC_TEST: крафт после 3 дублей, ротация обмена недели ---
+	print("COSMETIC_TEST: старт")
+	_profile.craft_dups = 2
+	var cr := _craft_roll(0)
+	print("COSMETIC_TEST крафт 3 дублей (редкость 0→1): ", cr)
+	print("COSMETIC_TEST ротация обмена недели (р2, 2 позиции): ", _week_exchange(2))
+	_profile.craft_dups = 0
 	print("TESTPLAY_SAVED")
 	get_tree().quit()
 
@@ -5079,6 +5162,10 @@ func _run_testmenu(mobile := false) -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_chests%s.png" % sfx)
+	_show_menu_heroes()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_heroes%s.png" % sfx)
 	_show_menu_profile()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -6204,6 +6291,8 @@ func _show_menu_main() -> void:
 	# --- секция УПРАВЛЕНИЕ: горизонтальный ряд иконок ---
 	var squad := _ctrl_button("squad", "Отряд")
 	squad.pressed.connect(_show_menu_squad)
+	var heroes := _ctrl_button("swords", "Герои")
+	heroes.pressed.connect(_show_menu_heroes)
 	var shop := _ctrl_button("shop", "Магазин")
 	shop.pressed.connect(_show_menu_shop)
 	var chests := _ctrl_button("chest", "Сундуки")
@@ -6218,7 +6307,7 @@ func _show_menu_main() -> void:
 	prof.pressed.connect(_show_menu_profile)
 	var sett := _ctrl_button("gear", "Настройки")
 	sett.pressed.connect(_show_menu_settings)
-	var ctrls: Array = [squad, shop, chests, bp, prog, med, prof, sett]
+	var ctrls: Array = [squad, heroes, shop, chests, bp, prog, med, prof, sett]
 	var vw4: float = _vw()
 	vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92) if vw4 >= 980.0 else minf(560.0, vw4 * 0.92), 0)
 	vb.add_child(_section_title("БОЙ"))
@@ -6375,9 +6464,19 @@ const OUTFIT_SKINS := [
 	{"name": "Кровь", "col": Color(1.0, 0.42, 0.38)},
 	{"name": "Элита", "col": Color(0.85, 0.85, 0.3)},   # 5 — награда за вход в тир «Элита»
 ]
-const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", "Камуфляж", "Пустыня", "Крипто", "Пламя", "Призрак", "Сиреневая", "Ветеран", "Элита", "Легенда"]
-const NICK_COLORS := [Color(1, 1, 1), Color(1, 0.35, 0.45), Color(1, 0.85, 0.3), Color(0.2, 0.9, 0.45), Color(0.5, 0.8, 1.0), Color(0.7, 0.4, 1.0), Color(1.0, 0.55, 0.2), Color(0.85, 0.12, 0.18), Color(1.0, 0.5, 1.0)]
-const NICK_COLOR_NAMES := ["Белый", "Красный", "Золотой", "Изумруд", "Ледяной", "Фиолет", "Закат", "Кровавый", "Сиреневый"]
+const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", "Камуфляж", "Пустыня", "Крипто", "Пламя", "Призрак", "Сиреневая", "Ветеран", "Элита", "Легенда",
+	"Хром", "Янтарь", "Кислота", "Мороз", "Буря", "Пепел", "Рубин", "Оникс", "Азур", "Коралл", "Мята",
+	"Ирис", "Медь", "Сталь", "Вольфрам", "Звезда", "Комета", "Галактика"]
+const NICK_COLORS := [Color(1, 1, 1), Color(1, 0.35, 0.45), Color(1, 0.85, 0.3), Color(0.2, 0.9, 0.45), Color(0.5, 0.8, 1.0), Color(0.7, 0.4, 1.0), Color(1.0, 0.55, 0.2), Color(0.85, 0.12, 0.18), Color(1.0, 0.5, 1.0),
+	Color(0.55, 0.62, 0.25), Color(0.2, 0.85, 0.75), Color(0.25, 0.55, 0.85), Color(0.65, 1.0, 0.3), Color(1.0, 0.72, 0.55), Color(0.45, 0.47, 0.52),
+	Color(0.93, 0.93, 0.9), Color(0.75, 0.5, 0.3), Color(0.8, 0.82, 0.88), Color(0.62, 0.68, 0.78), Color(0.75, 0.45, 0.95), Color(0.95, 0.65, 0.35),
+	Color(0.75, 0.15, 0.3), Color(0.2, 0.75, 0.45), Color(0.2, 0.4, 0.9), Color(0.85, 0.9, 0.95), Color(1.0, 0.5, 0.4), Color(1.0, 0.25, 0.7),
+	Color(0.8, 0.65, 1.0), Color(0.6, 1.0, 0.85), Color(0.98, 0.92, 0.75), Color(0.5, 0.35, 0.25), Color(0.25, 0.28, 0.45), Color(1.0, 0.6, 0.75),
+	Color(0.85, 0.95, 1.0), Color(1.0, 0.35, 0.15), Color(0.75, 1.0, 0.2), Color(1.0, 0.45, 0.85), Color(0.25, 0.85, 0.55), Color(0.55, 0.95, 1.0), Color(0.9, 0.9, 1.0)]
+const NICK_COLOR_NAMES := ["Белый", "Красный", "Золотой", "Изумруд", "Ледяной", "Фиолет", "Закат", "Кровавый", "Сиреневый",
+	"Оливковый", "Бирюза", "Морская", "Лайм", "Персик", "Графит", "Жемчуг", "Бронза", "Серебро", "Платина", "Аметист", "Топаз",
+	"Гранат", "Нефрит", "Сапфир", "Опал", "Коралл", "Фуксия", "Лаванда", "Мята", "Крем", "Кофе", "Ночь", "Рассвет",
+	"Полярный", "Магма", "Кислотный", "Неон-роза", "Бензин", "Кибер", "Призрачный"]
 
 # ---- сундуки шоу: редкости, гаранты (pity), осколки ----
 const CHEST_PRICE := 150
@@ -6386,24 +6485,126 @@ const RARITY_COLORS := [Color(0.72, 0.72, 0.78), Color(0.3, 0.55, 1.0), Color(0.
 const RARITY_SHARD_DUP := [5, 15, 40, 100, 300, 1000]     # осколки за дубликат
 const RARITY_EXCHANGE := [80, 200, 500, 1200, 3000, 0]     # цена обмена осколков (сиреневый — только удача)
 # шансы: сиреневый 0.1% / мифик 1.9% / лега 5% / эпик 13% / редкий 25% / остальное обычный
+# редкость 5 (сиреневый) пула не имеет — в _chest_roll обрабатывается отдельно (случайная неполученная сиреневая позиция)
 const CHEST_POOL := {
 	0: [{"kind": "shards", "n": 8, "name": "Осколки ×8"}, {"kind": "coins", "n": 60, "name": "60 монет"},
-		{"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"}, {"kind": "nick", "idx": 3, "name": "Ник «Изумруд»"}],
+		{"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"}, {"kind": "frame", "idx": 4, "name": "Рамка «Пустыня»"},
+		{"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
+		{"kind": "nick", "idx": 3, "name": "Ник «Изумруд»"}, {"kind": "nick", "idx": 4, "name": "Ник «Ледяной»"},
+		{"kind": "nick", "idx": 5, "name": "Ник «Фиолет»"}],
 	1: [{"kind": "shards", "n": 20, "name": "Осколки ×20"}, {"kind": "coins", "n": 120, "name": "120 монет"},
-		{"kind": "frame", "idx": 4, "name": "Рамка «Пустыня»"}, {"kind": "nick", "idx": 4, "name": "Ник «Ледяной»"},
-		{"kind": "taunt", "idx": 1, "name": "Пак насмешек «Дерзкие»"}],
-	2: [{"kind": "shards", "n": 50, "name": "Осколки ×50"}, {"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
-		{"kind": "nick", "idx": 5, "name": "Ник «Фиолет»"}, {"kind": "taunt", "idx": 2, "name": "Пак «Философы пустоши»"}],
-	3: [{"kind": "shards", "n": 150, "name": "Осколки ×150"}, {"kind": "frame", "idx": 6, "name": "Рамка «Пламя»"},
-		{"kind": "nick", "idx": 6, "name": "Ник «Закат»"}],
-	4: [{"kind": "shards", "n": 400, "name": "Осколки ×400"}, {"kind": "frame", "idx": 7, "name": "Рамка «Призрак»"},
-		{"kind": "nick", "idx": 7, "name": "Ник «Кровавый»"}],
-	5: [{"kind": "siren", "idx": 8, "name": "СИРЕНЕВЫЙ НАБОР: рамка + ник"}],
+		{"kind": "frame", "idx": 6, "name": "Рамка «Пламя»"}, {"kind": "frame", "idx": 7, "name": "Рамка «Призрак»"},
+		{"kind": "frame", "idx": 8, "name": "Рамка «Сиреневая»"},
+		{"kind": "nick", "idx": 6, "name": "Ник «Закат»"}, {"kind": "nick", "idx": 7, "name": "Ник «Кровавый»"},
+		{"kind": "nick", "idx": 8, "name": "Ник «Сиреневый»"}, {"kind": "nick", "idx": 9, "name": "Ник «Оливковый»"},
+		{"kind": "taunt", "idx": 1, "name": "Пак насмешек «Дерзкие»"}, {"kind": "taunt", "idx": 2, "name": "Пак «Философы пустоши»"},
+		{"kind": "taunt", "idx": 3, "name": "Пак «Сержант»"}, {"kind": "taunt", "idx": 4, "name": "Пак «Учёный»"}],
+	2: [{"kind": "shards", "n": 50, "name": "Осколки ×50"},
+		{"kind": "frame", "idx": 9, "name": "Рамка «Ветеран»"}, {"kind": "frame", "idx": 10, "name": "Рамка «Элита»"},
+		{"kind": "frame", "idx": 11, "name": "Рамка «Легенда»"},
+		{"kind": "nick", "idx": 10, "name": "Ник «Бирюза»"}, {"kind": "nick", "idx": 11, "name": "Ник «Морская»"},
+		{"kind": "nick", "idx": 12, "name": "Ник «Лайм»"}, {"kind": "nick", "idx": 13, "name": "Ник «Персик»"},
+		{"kind": "nick", "idx": 14, "name": "Ник «Графит»"},
+		{"kind": "taunt", "idx": 5, "name": "Пак «Бард»"}, {"kind": "taunt", "idx": 6, "name": "Пак «Каннибал»"},
+		{"kind": "taunt", "idx": 7, "name": "Пак «Священник»"},
+		{"kind": "hero_rent", "r": 2, "days": 3, "name": "Аренда героя (3 дн.)"},
+		{"kind": "hero_frag", "r": 2, "n": 3, "name": "Фрагменты героя ×3"}],
+	3: [{"kind": "shards", "n": 150, "name": "Осколки ×150"},
+		{"kind": "frame", "idx": 12, "name": "Рамка «Хром»"}, {"kind": "frame", "idx": 13, "name": "Рамка «Янтарь»"},
+		{"kind": "frame", "idx": 14, "name": "Рамка «Кислота»"}, {"kind": "frame", "idx": 15, "name": "Рамка «Мороз»"},
+		{"kind": "frame", "idx": 16, "name": "Рамка «Буря»"},
+		{"kind": "nick", "idx": 15, "name": "Ник «Жемчуг»"}, {"kind": "nick", "idx": 16, "name": "Ник «Бронза»"},
+		{"kind": "nick", "idx": 17, "name": "Ник «Серебро»"}, {"kind": "nick", "idx": 18, "name": "Ник «Платина»"},
+		{"kind": "nick", "idx": 19, "name": "Ник «Аметист»"}, {"kind": "nick", "idx": 20, "name": "Ник «Топаз»"},
+		{"kind": "taunt", "idx": 8, "name": "Пак «Милитари»"}, {"kind": "taunt", "idx": 9, "name": "Пак «Джекпот»"},
+		{"kind": "taunt", "idx": 10, "name": "Пак «Моряк»"},
+		{"kind": "hero_rent", "r": 3, "days": 5, "name": "Аренда героя (5 дн.)"},
+		{"kind": "hero_frag", "r": 3, "n": 5, "name": "Фрагменты героя ×5"}],
+	4: [{"kind": "shards", "n": 400, "name": "Осколки ×400"},
+		{"kind": "frame", "idx": 17, "name": "Рамка «Пепел»"}, {"kind": "frame", "idx": 18, "name": "Рамка «Рубин»"},
+		{"kind": "frame", "idx": 19, "name": "Рамка «Оникс»"}, {"kind": "frame", "idx": 20, "name": "Рамка «Азур»"},
+		{"kind": "frame", "idx": 21, "name": "Рамка «Коралл»"}, {"kind": "frame", "idx": 22, "name": "Рамка «Мята»"},
+		{"kind": "nick", "idx": 21, "name": "Ник «Гранат»"}, {"kind": "nick", "idx": 22, "name": "Ник «Нефрит»"},
+		{"kind": "nick", "idx": 23, "name": "Ник «Сапфир»"}, {"kind": "nick", "idx": 24, "name": "Ник «Опал»"},
+		{"kind": "nick", "idx": 25, "name": "Ник «Коралл»"}, {"kind": "nick", "idx": 26, "name": "Ник «Фуксия»"},
+		{"kind": "nick", "idx": 27, "name": "Ник «Лаванда»"},
+		{"kind": "taunt", "idx": 11, "name": "Пак «Циркач»"}, {"kind": "taunt", "idx": 12, "name": "Пак «Зима»"},
+		{"kind": "taunt", "idx": 13, "name": "Пак «Звёзды»"},
+		{"kind": "hero_rent", "r": 4, "days": 7, "name": "Аренда героя (7 дн.)"},
+		{"kind": "hero_frag", "r": 4, "n": 10, "name": "Фрагменты героя ×10"}],
 }
 const TAUNT_PACK_LINES := {
 	1: ["Ты стреляешь как тостер!", "Мой бот стреляет точнее тебя!", "Беги, пока я добрый!", "Это был твой лучший выстрел? Ха!"],
 	2: ["Пустошь всё равно заберёт тебя.", "Мы все — лишь шум в эфире.", "Пули — это почтальоны судьбы.", "Твой страх я слышу отсюда."],
+	3: ["Смирно! Ты уже труп, солдат.", "Отставить дыхание, рядовой!", "Так держать — прямо в гроб!", "Убойная дисциплина, даже не начинал."],
+	4: ["Статистически ты уже мёртв.", "Гипотеза: ты бездарен. Доказано.", "Энтропия победит тебя раньше меня.", "Ошибка в расчётах? Нет, это ты."],
+	5: ["♪ Ты упал, упал, как осенний лист… ♪", "♪ Пуля тебя нашла, фальшивый артист… ♪", "Запомню этот момент. В песне.", "Твой прощальный вальс уже сочинен."],
+	6: ["Свежее мясо прибыло!", "Я ем бойцов на завтрак.", "Твои кости — моя коллекция.", "Хрустно. Очень хрустно."],
+	7: ["Господь простит. Я — нет.", "Молись быстрее, время вышло.", "Твоя вера не остановила пулю.", "Я — оружие судьбы, смирись."],
+	8: ["Цель поражена. Следующая.", "Веду огонь по площадям — твоя очередь.", "Командование довольно. А ты?", "Контрольный выстрел — по уставу."],
+	9: ["Джекпот! Ты выиграл пулю!", "Ставки сделаны — ты проиграл.", "Фортуна улыбнулась. Мне.", "Крупный выигрыш: твой рюкзак."],
+	10: ["На дно! Точнее — ты уже там.", "Море волнуется раз — и ты утонул.", "Кракен тебя не ждёт. Я жду.", "Штормовое предупреждение: я рядом."],
+	11: ["Леди и господа! Финальный фокус — ты исчезаешь!", "Аплодисменты! Живо не осталось.", "Браво! Падение — на высшем уровне.", "Цирк уехал, а ты остался. Навсегда."],
+	12: ["Замёрз? Давай, грейся у меня.", "Холоднее, чем твои шансы.", "Мороз по коже? Это я.", "Зимой в пустоши все выстрелы слышнее."],
+	13: ["Ты — пыль под звёздами. Я — комета.", "Гравитация тебя не удержит. Я — тем более.", "Твой свет погас. Мой ещё горит.", "Звёзды смотрят, как ты падаешь."],
+	14: ["СИРЕНЕВЫЙ ПРИГОВОР: тебе конец.", "Этот цвет носят только победители.", "Ты видел сиреневое? Последнее, что видел.", "Привилегия номер один: быть мной."],
+	15: ["Ха-ха-ха! Ха. Ха… стой, ты серьёзно стрелял?", "Я говорю с бочками. Они умнее тебя.", "Пустошь шепчет мне имена. Твоё — следующее.", "Улыбайся! Это последнее, что осталось."],
 }
+const TAUNT_PACK_NAMES := {1: "Дерзкие", 2: "Философы пустоши", 3: "Сержант", 4: "Учёный", 5: "Бард", 6: "Каннибал",
+	7: "Священник", 8: "Милитари", 9: "Джекпот", 10: "Моряк", 11: "Циркач", 12: "Зима", 13: "Звёзды",
+	14: "Королевские", 15: "Безумие"}
+# мастер-таблица косметики по редкостям: обмен недели (ротация по номеру недели) и крафт (3 дубля → позиция выше)
+const EXCHANGE_WEEK_POOLS := {
+	0: [{"k": "frame", "i": 3}, {"k": "frame", "i": 4}, {"k": "frame", "i": 5},
+		{"k": "nick", "i": 3}, {"k": "nick", "i": 4}, {"k": "nick", "i": 5}],
+	1: [{"k": "frame", "i": 6}, {"k": "frame", "i": 7}, {"k": "frame", "i": 8},
+		{"k": "nick", "i": 6}, {"k": "nick", "i": 7}, {"k": "nick", "i": 8}, {"k": "nick", "i": 9},
+		{"k": "taunt", "i": 1}, {"k": "taunt", "i": 2}, {"k": "taunt", "i": 3}, {"k": "taunt", "i": 4}],
+	2: [{"k": "frame", "i": 9}, {"k": "frame", "i": 10}, {"k": "frame", "i": 11},
+		{"k": "nick", "i": 10}, {"k": "nick", "i": 11}, {"k": "nick", "i": 12}, {"k": "nick", "i": 13}, {"k": "nick", "i": 14},
+		{"k": "taunt", "i": 5}, {"k": "taunt", "i": 6}, {"k": "taunt", "i": 7}],
+	3: [{"k": "frame", "i": 12}, {"k": "frame", "i": 13}, {"k": "frame", "i": 14}, {"k": "frame", "i": 15}, {"k": "frame", "i": 16},
+		{"k": "nick", "i": 15}, {"k": "nick", "i": 16}, {"k": "nick", "i": 17}, {"k": "nick", "i": 18}, {"k": "nick", "i": 19}, {"k": "nick", "i": 20},
+		{"k": "taunt", "i": 8}, {"k": "taunt", "i": 9}, {"k": "taunt", "i": 10}],
+	4: [{"k": "frame", "i": 17}, {"k": "frame", "i": 18}, {"k": "frame", "i": 19}, {"k": "frame", "i": 20}, {"k": "frame", "i": 21}, {"k": "frame", "i": 22},
+		{"k": "nick", "i": 21}, {"k": "nick", "i": 22}, {"k": "nick", "i": 23}, {"k": "nick", "i": 24}, {"k": "nick", "i": 25}, {"k": "nick", "i": 26}, {"k": "nick", "i": 27},
+		{"k": "taunt", "i": 11}, {"k": "taunt", "i": 12}, {"k": "taunt", "i": 13}],
+	5: [{"k": "frame", "i": 23}, {"k": "frame", "i": 24}, {"k": "frame", "i": 25}, {"k": "frame", "i": 26}, {"k": "frame", "i": 27}, {"k": "frame", "i": 28}, {"k": "frame", "i": 29},
+		{"k": "nick", "i": 28}, {"k": "nick", "i": 29}, {"k": "nick", "i": 30}, {"k": "nick", "i": 31}, {"k": "nick", "i": 32},
+		{"k": "nick", "i": 33}, {"k": "nick", "i": 34}, {"k": "nick", "i": 35},
+		{"k": "taunt", "i": 14}, {"k": "taunt", "i": 15}],
+}
+# ---------- герои: наём (аренда) и сборка из фрагментов ----------
+# герой = модель + стартовое оружие + класс (перк из класса) + моды статов поверх дефолтных
+const HERO_RENT_DAYS := [3, 5, 7]
+const HERO_FRAG_PACKS := [3, 5, 10]
+const HERO_FRAGS_NEED := 45
+const HEROES := [
+	{"name": "Крот", "rarity": 0, "model": "Character_Hazmat", "weapon": "Revolver_Small", "cls": 2,
+		"mods": {"end": 1, "str": 1}, "perk": "Живучий землекоп: +Вынос. и +Сила"},
+	{"name": "Штырь", "rarity": 0, "model": "Character_Soldier", "weapon": "Pistol", "cls": 0,
+		"mods": {"str": 2, "agi": -1}, "perk": "Простой и надёжный ударный вариант"},
+	{"name": "Тихоня", "rarity": 0, "model": "Character_Enemy", "weapon": "Revolver_Small", "cls": 1,
+		"mods": {"per": 2, "end": -1}, "perk": "Молчаливая точность издалека"},
+	{"name": "Громила", "rarity": 1, "model": "Character_Soldier", "weapon": "Shotgun", "cls": 0,
+		"mods": {"str": 3, "agi": -2}, "perk": "Любит короткие дистанции и грубую силу"},
+	{"name": "Химик", "rarity": 1, "model": "Character_Hazmat", "weapon": "SMG", "cls": 2,
+		"mods": {"agi": 1, "end": 2, "lck": -1}, "perk": "Стойкий и подвижный в заражённой зоне"},
+	{"name": "Следопыт", "rarity": 1, "model": "Character_Enemy", "weapon": "Sniper_2", "cls": 1,
+		"mods": {"per": 3, "lck": 1, "str": -2}, "perk": "Видит цель раньше, чем цель его"},
+	{"name": "Молот", "rarity": 2, "model": "Character_Soldier", "weapon": "AK", "cls": 3,
+		"mods": {"str": 2, "end": 2, "agi": -1}, "perk": "Оружейник с автоматом — патронов всегда хватает"},
+	{"name": "Вдова", "rarity": 2, "model": "Character_Enemy", "weapon": "Sniper", "cls": 1,
+		"mods": {"per": 2, "agi": 2, "end": -1}, "perk": "Быстрая, точная и очень терпеливая"},
+	{"name": "Пёс", "rarity": 3, "model": "Character_Soldier", "weapon": "SMG", "cls": 0,
+		"mods": {"agi": 3, "end": 1, "lck": -1}, "perk": "Адреналиновый штурм в упор"},
+	{"name": "Профессор", "rarity": 3, "model": "Character_Hazmat", "weapon": "GrenadeLauncher", "cls": 3,
+		"mods": {"int": 3, "str": 1, "agi": -2}, "perk": "Тяжёлая наука: гранатомёт и хладнокровие"},
+	{"name": "Жнец", "rarity": 4, "model": "Character_Enemy", "weapon": "ShortCannon", "cls": 3,
+		"mods": {"str": 4, "end": 2, "agi": -3, "per": -1}, "perk": "Мифическая грубая сила короткого ствола"},
+	{"name": "Призрак", "rarity": 4, "model": "Character_Soldier", "weapon": "Sniper", "cls": 1,
+		"mods": {"agi": 4, "per": 2, "str": -3, "end": -1}, "perk": "Легенды говорят: он стреляет первым"},
+]
 
 func _show_menu_squad() -> void:
 	var vb: VBoxContainer = _ui.menu_box
@@ -6524,6 +6725,58 @@ func _show_menu_squad() -> void:
 			_show_menu_squad()
 		)
 		crow3.add_child(cb)
+	# --- герой слота: цикл «— базовый боец —» → доступные герои → снова базовый ---
+	# герой в бою задаёт модель, оружие, класс и статы (дефолт + моды) вместо базового бойца
+	var sh_arr: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+	var hid0 := -1
+	if _squad_edit < sh_arr.size():
+		hid0 = int(sh_arr[_squad_edit])
+	if hid0 >= HEROES.size() or not _hero_available(hid0):
+		if hid0 != -1:
+			hid0 = -1
+			sh_arr[_squad_edit] = -1
+			_profile.squad_heroes = sh_arr
+	var hrow := HBoxContainer.new()
+	vb.add_child(hrow)
+	var hl := Label.new()
+	hl.text = "Герой:"
+	hrow.add_child(hl)
+	var hb := Button.new()
+	var hmods: Dictionary = {}
+	if hid0 >= 0:
+		hmods = HEROES[hid0].get("mods", {})
+	var mod_parts := PackedStringArray()
+	for mk in STAT_KEYS:
+		var md := int(hmods.get(mk, 0))
+		if md != 0:
+			mod_parts.append("%s %+d" % [STAT_NAMES[mk], md])
+	hb.text = ("— базовый боец —" if hid0 < 0 else str(HEROES[hid0]["name"])) + (" ✓" if hid0 >= 0 else "")
+	hb.tooltip_text = ("В бою выходит базовый боец слота (класс, оружие и статы из этого экрана)." if hid0 < 0
+		else "%s\n%s\nМоды: %s\nВ бою заменяет класс, оружие и статы слота." % [
+			HEROES[hid0]["perk"], FIGHTER_CLASSES[int(HEROES[hid0]["cls"])]["desc"],
+			(", ".join(mod_parts) if mod_parts.size() > 0 else "нет")])
+	hb.pressed.connect(func():
+		var opts := [-1]
+		for hi2 in HEROES.size():
+			if _hero_available(hi2):
+				opts.append(hi2)
+		var cur := opts.find(hid0)
+		var nxt: int = -1 if cur < 0 else int(opts[(cur + 1) % opts.size()])
+		var sh2: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+		sh2[_squad_edit] = nxt
+		_profile.squad_heroes = sh2
+		_save_profile()
+		_show_menu_squad()
+	)
+	hrow.add_child(hb)
+	var hfr: Dictionary = _profile.get("hero_frags", {})
+	var hid0_fr := int(hfr.get(str(maxi(hid0, 0)), 0)) if hid0 >= 0 else 0
+	if hid0 >= 0:
+		var hfl := Label.new()
+		hfl.text = " фрагменты %d/45" % hid0_fr
+		hfl.add_theme_font_size_override("font_size", 11)
+		hfl.add_theme_color_override("font_color", Color(0.65, 0.7, 0.8))
+		hrow.add_child(hfl)
 	# --- пол и внешность (только для основного бойца, слот 0) ---
 	if _squad_edit == 0:
 		var grow2 := HBoxContainer.new()
@@ -7521,26 +7774,173 @@ func _open_show_chest() -> void:
 	_mq_event("luckchest", 1)
 	_chest_roll()
 
+# ---------- герои, крафт и обмен: общие хелперы ----------
+func _cosm_name(k: String, idx: int) -> String:
+	if k == "frame" and idx < FRAME_NAMES.size():
+		return "Рамка «%s»" % FRAME_NAMES[idx]
+	if k == "nick" and idx < NICK_COLOR_NAMES.size():
+		return "Ник «%s»" % NICK_COLOR_NAMES[idx]
+	if k == "taunt":
+		return "Пак насмешек «%s»" % TAUNT_PACK_NAMES.get(idx, "Набор %d" % idx)
+	return "Косметика %s:%d" % [k, idx]
+
+func _cosm_owned(k: String, idx: int) -> bool:
+	if k == "frame":
+		return _shop_owned("frame", idx)
+	if k == "nick":
+		return _shop_owned("nick_color", idx)
+	var ot: Array = _profile.get("owned_taunts", [])
+	return idx < ot.size() and int(ot[idx]) == 1
+
+func _unowned_cosmetics(r: int) -> Array:
+	var res := []
+	for e in EXCHANGE_WEEK_POOLS.get(r, []):
+		if not _cosm_owned(str(e["k"]), int(e["i"])):
+			res.append(e)
+	return res
+
+func _craft_roll(rarity: int) -> String:
+	# крафт: 3 дубля косметики подряд → случайная неполученная позиция редкостью выше
+	var up: int = mini(rarity + 1, 5)
+	var un := _unowned_cosmetics(up)
+	if un.is_empty():
+		var sh: int = RARITY_SHARD_DUP[up]
+		_profile.shards = int(_profile.get("shards", 0)) + sh
+		return "всё редкостью выше собрано → +%d осколков" % sh
+	var pick: Dictionary = un[randi() % un.size()]
+	_owned_grant(str(pick["k"]), int(pick["i"]))
+	return _cosm_name(str(pick["k"]), int(pick["i"]))
+
+func _hero_available(hid: int) -> bool:
+	if hid < 0 or hid >= HEROES.size():
+		return false
+	var ho: Array = _profile.get("hero_owned", [])
+	if hid < ho.size() and int(ho[hid]) == 1:
+		return true
+	var rentals: Dictionary = _profile.get("hero_rentals", {})
+	return float(rentals.get(str(hid), 0)) > Time.get_unix_time_from_system()
+
+func _hero_status(hid: int) -> String:
+	# строка статуса для экрана «Герои»
+	var ho: Array = _profile.get("hero_owned", [])
+	if hid < ho.size() and int(ho[hid]) == 1:
+		return "Навсегда ✓"
+	var rentals: Dictionary = _profile.get("hero_rentals", {})
+	var until := float(rentals.get(str(hid), 0))
+	var left := int((until - Time.get_unix_time_from_system()) / 86400.0) + 1
+	var frags: Dictionary = _profile.get("hero_frags", {})
+	var fn := int(frags.get(str(hid), 0))
+	if until > Time.get_unix_time_from_system():
+		return "Аренда: ещё %d дн. · фрагменты %d/%d" % [left, fn, HERO_FRAGS_NEED]
+	return "Фрагменты %d/%d" % [fn, HERO_FRAGS_NEED]
+
+func _hero_grant(rarity: int, is_rent: bool, amount: int) -> Dictionary:
+	# выдать карту героя: аренда (продление от max(сейчас, остаток)) или фрагменты (45 = навсегда)
+	var cand := []
+	for hi in HEROES.size():
+		if int(HEROES[hi]["rarity"]) == rarity:
+			cand.append(hi)
+	if cand.is_empty():
+		var sh0: int = RARITY_SHARD_DUP[clampi(rarity, 0, 5)]
+		_profile.shards = int(_profile.get("shards", 0)) + sh0
+		return {"text": "нет героев редкости %d → +%d осколков" % [rarity, sh0], "shards": sh0}
+	var hid: int = cand[randi() % cand.size()]
+	var h: Dictionary = HEROES[hid]
+	var sh: int = RARITY_SHARD_DUP[clampi(rarity, 0, 5)]
+	var ho: Array = _profile.get("hero_owned", [])
+	if hid < ho.size() and int(ho[hid]) == 1:
+		_profile.shards = int(_profile.get("shards", 0)) + sh
+		return {"text": "%s уже в отряде навсегда → +%d осколков" % [h["name"], sh], "shards": sh}
+	if is_rent:
+		var rentals: Dictionary = _profile.get("hero_rentals", {})
+		var cur := float(rentals.get(str(hid), 0))
+		rentals[str(hid)] = maxf(Time.get_unix_time_from_system(), cur) + amount * 86400
+		_profile.hero_rentals = rentals
+		return {"text": "Аренда: %s (+%d дн.)" % [h["name"], amount], "shards": 0}
+	var frags: Dictionary = _profile.get("hero_frags", {})
+	frags[str(hid)] = int(frags.get(str(hid), 0)) + amount
+	var total := int(frags[str(hid)])
+	if total >= HERO_FRAGS_NEED:
+		while ho.size() <= hid:
+			ho.append(0)
+		ho[hid] = 1
+		_profile.hero_owned = ho
+		frags.erase(str(hid))
+		_profile.hero_frags = frags
+		return {"text": "★ %s СОБРАН НАВСЕГДА (%d/45) ★" % [h["name"], total], "shards": 0}
+	_profile.hero_frags = frags
+	return {"text": "Фрагменты: %s +%d (всего %d/45)" % [h["name"], amount, total], "shards": 0}
+
+func _week_no() -> int:
+	return int(Time.get_unix_time_from_system() / 604800)
+
+func _week_exchange(r: int) -> Array:
+	# недельная ротация обмена: 2 позиции редкости r, выбор детерминирован номером недели
+	var pool: Array = EXCHANGE_WEEK_POOLS.get(r, [])
+	if pool.size() <= 2:
+		return pool
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(_week_no() * 7919 + r * 131 + 17)
+	var a: int = rng.randi() % pool.size()
+	var b: int = (a + 1 + rng.randi() % (pool.size() - 1)) % pool.size()
+	return [pool[a], pool[b]]
+
 # один бросок сундука: рулетка, гранты, pity; используется покупкой и наградами BP
 func _chest_roll() -> void:
 	var rarity := _roll_rarity()
-	var pool: Array = CHEST_POOL[rarity]
-	var it: Dictionary = pool[randi() % pool.size()]
-	var kind := str(it["kind"])
+	var it: Dictionary
+	var extra := ""
 	var dup_shards := 0
-	match kind:
-		"shards":
-			_profile.shards = int(_profile.get("shards", 0)) + int(it["n"])
-		"coins":
-			_profile.coins = int(_profile.coins) + int(it["n"])
-		"siren":
-			var d1 := _owned_grant("frame", 8)
-			var d2 := _owned_grant("nick", 8)
-			if d1 and d2:
-				dup_shards = RARITY_SHARD_DUP[5]
-		_:
-			if _owned_grant(kind, int(it["idx"])):
-				dup_shards = RARITY_SHARD_DUP[rarity]
+	if rarity == 5:
+		# сиреневый: случайная неполученная сиреневая позиция; всё собрано → осколки
+		var un5 := _unowned_cosmetics(5)
+		if un5.is_empty():
+			dup_shards = RARITY_SHARD_DUP[5]
+			it = {"name": "Сиреневая коллекция полна"}
+		else:
+			var p5: Dictionary = un5[randi() % un5.size()]
+			_owned_grant(str(p5["k"]), int(p5["i"]))
+			it = {"name": _cosm_name(str(p5["k"]), int(p5["i"]))}
+	elif rarity >= 2 and randf() < 0.2:
+		# эпик и выше: 20% на карту героя (аренда или фрагменты) редкости броска
+		var hr: int = mini(rarity, 4)
+		var g: Dictionary
+		if randi() % 2 == 0:
+			g = _hero_grant(hr, true, HERO_RENT_DAYS[randi() % HERO_RENT_DAYS.size()])
+		else:
+			g = _hero_grant(hr, false, HERO_FRAG_PACKS[randi() % HERO_FRAG_PACKS.size()])
+		it = {"name": str(g["text"])}
+		dup_shards = int(g["shards"])
+	else:
+		var pool: Array = CHEST_POOL[rarity]
+		it = (pool[randi() % pool.size()] as Dictionary).duplicate()
+		var kind := str(it["kind"])
+		match kind:
+			"shards":
+				_profile.shards = int(_profile.get("shards", 0)) + int(it["n"])
+			"coins":
+				_profile.coins = int(_profile.coins) + int(it["n"])
+			"hero_rent":
+				var g1: Dictionary = _hero_grant(int(it["r"]), true, int(it["days"]))
+				it["name"] = str(g1["text"])
+				dup_shards = int(g1["shards"])
+			"hero_frag":
+				var g2: Dictionary = _hero_grant(int(it["r"]), false, int(it["n"]))
+				it["name"] = str(g2["text"])
+				dup_shards = int(g2["shards"])
+			_:
+				var was_dup: bool = _owned_grant(kind, int(it["idx"]))
+				if was_dup:
+					dup_shards = RARITY_SHARD_DUP[rarity]
+				# крафт: 3 дубля косметики подряд → случайная неполученная позиция редкостью выше
+				if rarity < 5:
+					if was_dup:
+						_profile.craft_dups = int(_profile.get("craft_dups", 0)) + 1
+						if int(_profile.craft_dups) >= 3:
+							extra = "  ★ КРАФТ (3 дубля): " + _craft_roll(rarity)
+							_profile.craft_dups = 0
+					else:
+						_profile.craft_dups = 0
 	if dup_shards > 0:
 		_profile.shards = int(_profile.get("shards", 0)) + dup_shards
 	# pity-счётчики
@@ -7557,7 +7957,7 @@ func _chest_roll() -> void:
 	# гарант сиреневого: гарантированно на 200-м открытии без него
 	_profile.pity_siren = 0 if rarity == 5 else int(_profile.get("pity_siren", 0)) + 1
 	_profile.chests_total = int(_profile.get("chests_total", 0)) + 1
-	_chest_last = str(it["name"]) + ("  (дубликат → +%d осколков)" % dup_shards if dup_shards > 0 else "")
+	_chest_last = str(it.get("name", "?")) + extra + ("  (дубликат → +%d осколков)" % dup_shards if dup_shards > 0 else "")
 	_chest_last_rarity = rarity
 	_save_profile()
 
@@ -7644,26 +8044,30 @@ func _show_menu_chests() -> void:
 	leg.add_theme_font_size_override("font_size", 12)
 	leg.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	vb.add_child(leg)
-	# обмен осколков: любая косметика из пула (кроме сиреневой)
-	vb.add_child(_framed_label("Обмен осколков — точно то, что нужно", 15))
+	# обмен осколков: недельная ротация — 2 позиции каждой редкости (кроме сиреневой)
+	var wleft := int(604800 - (int(Time.get_unix_time_from_system()) % 604800))
+	vb.add_child(_framed_label("Обмен недели — ротация каждый понедельник", 15))
+	var rot := Label.new()
+	rot.text = "Новые позиции через %d дн. %d ч." % [wleft / 86400, (wleft % 86400) / 3600]
+	rot.add_theme_font_size_override("font_size", 12)
+	rot.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	vb.add_child(rot)
 	for r in 5:
-		for it in CHEST_POOL[r]:
-			var kind := str(it["kind"])
-			if kind == "shards" or kind == "coins":
-				continue
-			var idx := int(it["idx"])
+		for e in _week_exchange(r):
+			var k2 := str(e["k"])
+			var i2 := int(e["i"])
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
 			vb.add_child(row)
 			var nl := Label.new()
-			nl.text = str(it["name"])
+			nl.text = _cosm_name(k2, i2)
 			nl.add_theme_font_size_override("font_size", 14)
 			nl.add_theme_color_override("font_color", RARITY_COLORS[r])
 			nl.custom_minimum_size = Vector2(230, 0)
 			row.add_child(nl)
 			var eb := Button.new()
 			eb.custom_minimum_size = Vector2(140, 34)
-			if (kind == "frame" and _shop_owned("frame", idx)) or (kind == "nick" and _shop_owned("nick_color", idx)) or (kind == "taunt" and idx < _profile.get("owned_taunts", []).size() and int(_profile.owned_taunts[idx]) == 1):
+			if _cosm_owned(k2, i2):
 				eb.text = "✓ Есть"
 				eb.disabled = true
 			else:
@@ -7674,14 +8078,109 @@ func _show_menu_chests() -> void:
 				eb.add_theme_color_override("icon_pressed_color", SHARD_COLOR)
 				eb.add_theme_color_override("icon_disabled_color", Color(0.4, 0.45, 0.55))
 				eb.disabled = int(_profile.get("shards", 0)) < RARITY_EXCHANGE[r]
-				var k2 := kind
-				var i2 := idx
 				var p2: int = RARITY_EXCHANGE[r]
 				eb.pressed.connect(func():
 					_chest_exchange(k2, i2, p2)
 					_show_menu_chests()
 				)
 			row.add_child(eb)
+	var back := _menu_button("← Назад")
+	back.pressed.connect(_show_menu_main)
+	vb.add_child(back)
+
+# ---------- герои: коллекция, наём, сборка ----------
+func _show_menu_heroes() -> void:
+	var vb: VBoxContainer = _ui.menu_box
+	for c in vb.get_children():
+		c.queue_free()
+	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.94), 0)
+	vb.add_child(_screen_title("swords", "Герои — наём и сборка"))
+	var bal := HBoxContainer.new()
+	bal.add_theme_constant_override("separation", 8)
+	bal.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
+	bal.add_child(_currency_chip("shard", SHARD_COLOR, str(int(_profile.get("shards", 0)))))
+	vb.add_child(bal)
+	var note := Label.new()
+	note.text = "Герои выпадают из сундуков эпик и выше (20% на карту): аренда на 3/5/7 дней или фрагменты ×3/×5/×10. 45 фрагментов = герой навсегда. Герой задаёт модель, оружие, класс и статы (дефолт + моды) в бою."
+	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note)
+	var grid := GridContainer.new()
+	grid.columns = 2 if _mob() else 3
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	vb.add_child(grid)
+	var now := Time.get_unix_time_from_system()
+	for hid in HEROES.size():
+		var h: Dictionary = HEROES[hid]
+		var rarity := int(h["rarity"])
+		var card := PanelContainer.new()
+		var cs := StyleBoxFlat.new()
+		cs.bg_color = Color(0.09, 0.10, 0.13, 0.92)
+		cs.border_color = RARITY_COLORS[rarity]
+		cs.set_border_width_all(1)
+		cs.set_corner_radius_all(10)
+		cs.content_margin_left = 8
+		cs.content_margin_right = 8
+		cs.content_margin_top = 6
+		cs.content_margin_bottom = 6
+		card.add_theme_stylebox_override("panel", cs)
+		grid.add_child(card)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 2)
+		card.add_child(cv)
+		var nl := Label.new()
+		nl.text = "%s · %s" % [h["name"], RARITY_NAMES[rarity]]
+		nl.add_theme_font_size_override("font_size", 14 if _mob() else 15)
+		nl.add_theme_color_override("font_color", RARITY_COLORS[rarity])
+		cv.add_child(nl)
+		var dl := Label.new()
+		dl.text = str(h["weapon"]) + " · " + str(FIGHTER_CLASSES[clampi(int(h["cls"]), 0, FIGHTER_CLASSES.size() - 1)]["name"])
+		dl.add_theme_font_size_override("font_size", 11)
+		dl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+		cv.add_child(dl)
+		var pl := Label.new()
+		pl.text = str(h["perk"])
+		pl.add_theme_font_size_override("font_size", 11)
+		pl.add_theme_color_override("font_color", Color(0.62, 0.67, 0.75))
+		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pl.custom_minimum_size = Vector2(minf(300.0, _vw() * 0.4), 0)
+		cv.add_child(pl)
+		var sl := Label.new()
+		sl.text = _hero_status(hid)
+		sl.add_theme_font_size_override("font_size", 11)
+		var rentals: Dictionary = _profile.get("hero_rentals", {})
+		if hid < (_profile.get("hero_owned", []) as Array).size() and int((_profile.get("hero_owned", []) as Array)[hid]) == 1:
+			sl.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
+		elif float(rentals.get(str(hid), 0)) > now:
+			sl.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0))
+		else:
+			sl.add_theme_color_override("font_color", Color(0.75, 0.78, 0.85))
+		cv.add_child(sl)
+		# сборка из фрагментов (ручная кнопка; автосборка уже срабатывает при начислении)
+		var frags: Dictionary = _profile.get("hero_frags", {})
+		var fn := int(frags.get(str(hid), 0))
+		var owned_arr: Array = _profile.get("hero_owned", [])
+		if fn >= HERO_FRAGS_NEED and not (hid < owned_arr.size() and int(owned_arr[hid]) == 1):
+			var bb := Button.new()
+			bb.text = "Собрать (%d/45)" % fn
+			bb.custom_minimum_size = Vector2(0, 30)
+			var hv: int = hid
+			bb.pressed.connect(func():
+				var ho2: Array = _profile.get("hero_owned", [])
+				while ho2.size() <= hv:
+					ho2.append(0)
+				ho2[hv] = 1
+				_profile.hero_owned = ho2
+				var fr2: Dictionary = _profile.get("hero_frags", {})
+				fr2.erase(str(hv))
+				_profile.hero_frags = fr2
+				_save_profile()
+				_sfx_play("levelup")
+				_show_menu_heroes()
+			)
+			cv.add_child(bb)
 	var back := _menu_button("← Назад")
 	back.pressed.connect(_show_menu_main)
 	vb.add_child(back)
