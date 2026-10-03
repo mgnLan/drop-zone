@@ -6223,7 +6223,6 @@ func _daily_box() -> PanelContainer:
 	var login_done := int(dd.get("login", 0)) == 1
 	var lrow := HBoxContainer.new()
 	lrow.add_theme_constant_override("separation", 12)
-	dvb.add_child(lrow)
 	var lchip := _icon_chip("ticket", 26)
 	lchip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	lrow.add_child(lchip)
@@ -6241,15 +6240,15 @@ func _daily_box() -> PanelContainer:
 	lrw.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
 	lrw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	lrow.add_child(lrw)
-	# 5 миссий дня
+	# 5 миссий дня — собираем строки, затем раскладываем: на широком окне — две колонки
 	var prog: Dictionary = dd.get("prog", {})
 	var done_d: Dictionary = dd.get("done", {})
+	var rows: Array = [lrow]
 	for m in _mq_day_list():
 		var mid: String = str(m["id"])
 		var done := int(done_d.get(mid, 0)) == 1
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 12)
-		dvb.add_child(row)
 		var chip := _icon_chip(str(m.get("icon", "trophy")), 26)
 		chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(chip)
@@ -6257,6 +6256,7 @@ func _daily_box() -> PanelContainer:
 		l.text = "%s — %d/%d" % [str(m["name"]), int(prog.get(mid, 0)), int(m["target"])]
 		l.add_theme_font_size_override("font_size", 13)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.custom_minimum_size = Vector2(240, 0)
 		l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if done:
 			l.modulate = Color(0.6, 1.0, 0.6)
@@ -6267,6 +6267,27 @@ func _daily_box() -> PanelContainer:
 		rw.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
 		rw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(rw)
+		rows.append(row)
+	if _vw() >= 760.0:
+		# широкое окно: две колонки, чтобы не скроллить вниз
+		dvb.add_child(rows[0])
+		var cols := HBoxContainer.new()
+		cols.add_theme_constant_override("separation", 26)
+		dvb.add_child(cols)
+		var col_l := VBoxContainer.new()
+		col_l.add_theme_constant_override("separation", 6)
+		cols.add_child(col_l)
+		var col_r := VBoxContainer.new()
+		col_r.add_theme_constant_override("separation", 6)
+		cols.add_child(col_r)
+		for i in range(1, rows.size()):
+			if i % 2 == 1:
+				col_l.add_child(rows[i])
+			else:
+				col_r.add_child(rows[i])
+	else:
+		for r in rows:
+			dvb.add_child(r)
 	return pc
 
 func _style_locked_button(b: Button) -> void:
