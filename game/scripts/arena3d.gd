@@ -6079,8 +6079,8 @@ func _build_menu() -> void:
 		chat.anchor_right = 1.0
 		chat.offset_right = -16.0
 	else:
-		chat.offset_right = 316.0
-	chat.offset_top = -232.0
+		chat.offset_right = 246.0
+	chat.offset_top = -180.0
 	chat.offset_bottom = -16.0
 	layer.add_child(chat)
 	_ui.menu_chat_panel = chat
@@ -6126,7 +6126,7 @@ func _build_menu() -> void:
 	# область сообщений — прокручиваемая, фиксированной высоты: рамка не растёт,
 	# старые сообщения уходят вверх, новые появляются снизу (как в боевом чате)
 	var lines_scroll := ScrollContainer.new()
-	lines_scroll.custom_minimum_size = Vector2(0, 58)
+	lines_scroll.custom_minimum_size = Vector2(0, 40)
 	lines_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	lines_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	content.add_child(lines_scroll)
@@ -6207,7 +6207,7 @@ func _toggle_menu_chat() -> void:
 	# свёрнутый: заголовок 26 + конверты 44 + отступы рамки ~20 = ~90px — минус запас,
 	# иначе панель вылезает за нижний край экрана. Развёрнутый выше: область сообщений —
 	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
-	p.offset_top = -104.0 if _menu_chat_collapsed else -232.0
+	p.offset_top = -84.0 if _menu_chat_collapsed else -180.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
