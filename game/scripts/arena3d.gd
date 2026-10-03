@@ -6061,7 +6061,9 @@ func _toggle_menu_chat() -> void:
 		for ek in _ui.keys():
 			if str(ek).begins_with("emoji_panel_"):
 				_ui[ek].visible = false
-	p.offset_top = -72.0 if _menu_chat_collapsed else -180.0
+	# свёрнутый: заголовок 26 + конверты 44 + отступы рамки ~20 = ~90px — минус запас,
+	# иначе панель вылезает за нижний край экрана
+	p.offset_top = -104.0 if _menu_chat_collapsed else -180.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
