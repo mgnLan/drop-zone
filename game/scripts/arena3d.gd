@@ -6008,10 +6008,11 @@ func _build_menu() -> void:
 	if ResourceLoader.exists("res://assets/ui/menu_bg.jpg"):
 		bg.texture = load("res://assets/ui/menu_bg.jpg")
 	layer.add_child(bg)
-	# тёмный градиент поверх арта: тёмно-синий сверху → почти чёрный снизу (стиль PUBG Mobile)
+	# тёмный градиент поверх арта: тёмно-синий сверху → снизу чуть темнее, но прозрачный,
+	# арена просвечивает по всей высоте (без «чёрной полосы» снизу)
 	var grad := Gradient.new()
-	grad.set_color(0, Color(0.04, 0.07, 0.14, 0.90))
-	grad.set_color(1, Color(0.005, 0.008, 0.02, 0.97))
+	grad.set_color(0, Color(0.04, 0.07, 0.14, 0.88))
+	grad.set_color(1, Color(0.03, 0.05, 0.10, 0.82))
 	var gtex := GradientTexture2D.new()
 	gtex.gradient = grad
 	gtex.fill_from = Vector2(0.5, 0.0)
