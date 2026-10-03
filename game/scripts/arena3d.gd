@@ -5115,6 +5115,28 @@ func _run_testplay() -> void:
 	print("COSMETIC_TEST крафт 3 дублей (редкость 0→1): ", cr)
 	print("COSMETIC_TEST ротация обмена недели (р2, 2 позиции): ", _week_exchange(2))
 	_profile.craft_dups = 0
+	# --- BP_HERO_TEST: героические призы Battle Pass (free и premium ленты) ---
+	print("BP_HERO_TEST: старт")
+	_profile.bp_xp = 22800   # 50-й уровень
+	_profile.bp_owned = 1
+	_profile.bp_claimed_free = []
+	_profile.bp_claimed_prem = []
+	_profile.hero_rentals = {}
+	_profile.hero_frags = {}
+	_profile.hero_owned = []
+	_bp_claim(9, false)    # free: аренда «Крот» 3 дн
+	_bp_claim(15, false)   # free: фрагменты «Вдова» ×5
+	_bp_claim(30, false)   # free: «Вдова» ×10 (итого 15)
+	_bp_claim(45, false)   # free: «Вдова» ×15 (итого 30)
+	_bp_claim(50, false)   # free: «Призрак» навсегда
+	_bp_claim(9, true)     # prem: аренда «Следопыт» 7 дн
+	_bp_claim(30, true)    # prem: аренда «Жнец» 7 дн
+	var bp_own: Array = _profile.get("hero_owned", [])
+	var bp_fr: Dictionary = _profile.get("hero_frags", {})
+	var bp_rent: Dictionary = _profile.get("hero_rentals", {})
+	print("BP_HERO_TEST free-50: «Призрак» owned=", int(bp_own[11]) if bp_own.size() > 11 else 0, " (ожидается 1)")
+	print("BP_HERO_TEST «Вдова» фрагменты=", int(bp_fr.get("7", 0)), "/45 (ожидается 30)")
+	print("BP_HERO_TEST аренды: Крот=", bp_rent.has("0"), " Следопыт=", bp_rent.has("5"), " Жнец=", bp_rent.has("10"), " (все true)")
 	print("TESTPLAY_SAVED")
 	get_tree().quit()
 
@@ -7161,41 +7183,42 @@ const BP_LEVELS := 50
 # регрессия PUBG: уровни дорожают к концу сезона; суммарно 22 800 XP
 const BP_XP_STEP := [200, 300, 400, 600, 780]   # стоимость уровня по декадам (1-10, 11-20, ...)
 # сезон 1 «Первый сброс»: награды каждые 3 уровня + финал на 50-м; free — каждому, premium — сверху
+# герои по BP_GEROI.md: первый герой на 9-м (free), редкость растёт к финалу, мифик-финал во free
 const BP_TABLE_FREE := {
 	3: {"kind": "coins", "n": 60, "name": "60 монет"},
 	6: {"kind": "shards", "n": 30, "name": "Осколки ×30"},
-	9: {"kind": "hire", "days": 7, "name": "Наёмник на 7 дней"},
+	9: {"kind": "hero_rent", "hid": 0, "days": 3, "name": "Аренда «Крот» 3 дн"},
 	12: {"kind": "nick", "idx": 1, "name": "Ник «Красный»"},
-	15: {"kind": "coins", "n": 100, "name": "100 монет"},
+	15: {"kind": "hero_frag", "hid": 7, "n": 5, "name": "Фрагменты «Вдова» ×5"},
 	18: {"kind": "chest", "name": "Сундук удачи"},
 	21: {"kind": "coins", "n": 130, "name": "130 монет"},
 	24: {"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"},
 	27: {"kind": "shards", "n": 40, "name": "Осколки ×40"},
-	30: {"kind": "frame", "idx": 6, "name": "Рамка «Пламя»"},
-	33: {"kind": "coins", "n": 170, "name": "170 монет"},
+	30: {"kind": "hero_frag", "hid": 7, "n": 10, "name": "Фрагменты «Вдова» ×10"},
+	33: {"kind": "hero_rent", "hid": 8, "days": 5, "name": "Аренда «Пёс» 5 дн"},
 	36: {"kind": "chest", "name": "Сундук удачи"},
 	39: {"kind": "shards", "n": 50, "name": "Осколки ×50"},
 	42: {"kind": "outfit", "idx": 1, "name": "Камуфляж «Город»"},
-	45: {"kind": "coins", "n": 230, "name": "230 монет"},
+	45: {"kind": "hero_frag", "hid": 7, "n": 15, "name": "Фрагменты «Вдова» ×15 (30/45)"},
 	48: {"kind": "chest", "name": "Сундук удачи"},
-	50: {"kind": "fighter", "name": "Легендарный боец «Призрак»"},
+	50: {"kind": "hero_own", "hid": 11, "name": "Герой «Призрак» НАВСЕГДА"},
 }
 const BP_TABLE_PREM := {
 	3: {"kind": "coins", "n": 90, "name": "90 монет"},
 	6: {"kind": "shards", "n": 40, "name": "Осколки ×40"},
-	9: {"kind": "nick", "idx": 6, "name": "Ник «Закат»"},
+	9: {"kind": "hero_rent", "hid": 5, "days": 7, "name": "Аренда «Следопыт» 7 дн"},
 	12: {"kind": "chest", "n": 2, "name": "Сундуки ×2"},
 	15: {"kind": "taunt", "idx": 1, "name": "Насмешки «Дерзкие»"},
 	18: {"kind": "outfit", "idx": 3, "name": "Камуфляж «Тень» (экскл.)"},
-	21: {"kind": "frame", "idx": 5, "name": "Рамка «Крипто»"},
+	21: {"kind": "hero_rent", "hid": 6, "days": 7, "name": "Аренда «Молот» 7 дн"},
 	24: {"kind": "coins", "n": 140, "name": "140 монет"},
 	27: {"kind": "shards", "n": 50, "name": "Осколки ×50"},
-	30: {"kind": "hire", "days": 30, "name": "Наёмник на 30 дней"},
+	30: {"kind": "hero_rent", "hid": 10, "days": 7, "name": "Аренда «Жнец» 7 дн"},
 	33: {"kind": "taunt", "idx": 2, "name": "Насмешки «Военные»"},
 	36: {"kind": "frame", "idx": 2, "name": "Рамка «Золото»"},
 	39: {"kind": "coins", "n": 220, "name": "220 монет"},
 	42: {"kind": "shards", "n": 60, "name": "Осколки ×60"},
-	45: {"kind": "outfit", "idx": 2, "name": "Камуфляж «Саванна»"},
+	45: {"kind": "hero_frag", "hid": 10, "n": 15, "name": "Фрагменты «Жнец» ×15"},
 	48: {"kind": "chest", "n": 3, "name": "Сундуки ×3"},
 	50: {"kind": "teleport", "name": "Телепорт «Шторм» + Рамка «Легенда»"},
 }
@@ -7280,18 +7303,42 @@ func _bp_claim(lv: int, prem: bool) -> void:
 			else:
 				# запас полон — компенсация монетами (полная стоимость найма)
 				_profile.coins = int(_profile.get("coins", 0)) + MED_HIRE_COST
-		"fighter":
-			# легендарный боец: постоянный резерв без срока аренды
-			if _profile.get("reserve", []).size() < RESERVE_MAX:
-				var rsv3: Array = _profile.get("reserve", [])
-				var lf := _new_reserve_fighter()
-				lf["name"] = "Призрак"
-				lf["expires"] = 0.0   # навсегда
-				rsv3.append(lf)
-				_profile.reserve = rsv3
-				_mq_event("hire", 1)
-			else:
-				_profile.coins = int(_profile.get("coins", 0)) + 500
+		"hero_rent":
+			# аренда героя: продление от max(сейчас, остаток)
+			var hr_hid := int(rw.get("hid", -1))
+			if hr_hid >= 0 and hr_hid < HEROES.size():
+				var hr_days := int(rw.get("days", 3))
+				var hr_rentals: Dictionary = _profile.get("hero_rentals", {})
+				var hr_cur := float(hr_rentals.get(str(hr_hid), 0))
+				hr_rentals[str(hr_hid)] = maxf(Time.get_unix_time_from_system(), hr_cur) + hr_days * 86400
+				_profile.hero_rentals = hr_rentals
+		"hero_frag":
+			# фрагменты героя: 45 = сборка навсегда (автосборка как в гаче)
+			var hf_hid := int(rw.get("hid", -1))
+			var hf_n := int(rw.get("n", 3))
+			if hf_hid >= 0 and hf_hid < HEROES.size():
+				var hf_frags: Dictionary = _profile.get("hero_frags", {})
+				hf_frags[str(hf_hid)] = int(hf_frags.get(str(hf_hid), 0)) + hf_n
+				if int(hf_frags[str(hf_hid)]) >= HERO_FRAGS_NEED:
+					var hf_own: Array = _profile.get("hero_owned", [])
+					while hf_own.size() <= hf_hid:
+						hf_own.append(0)
+					hf_own[hf_hid] = 1
+					_profile.hero_owned = hf_own
+					hf_frags.erase(str(hf_hid))
+				_profile.hero_frags = hf_frags
+		"hero_own":
+			# герой навсегда
+			var ho_hid := int(rw.get("hid", -1))
+			if ho_hid >= 0 and ho_hid < HEROES.size():
+				var ho_own: Array = _profile.get("hero_owned", [])
+				while ho_own.size() <= ho_hid:
+					ho_own.append(0)
+				ho_own[ho_hid] = 1
+				_profile.hero_owned = ho_own
+				var ho_frags: Dictionary = _profile.get("hero_frags", {})
+				ho_frags.erase(str(ho_hid))
+				_profile.hero_frags = ho_frags
 	arr[lv] = 1
 	_profile[key] = arr
 	_save_profile()
