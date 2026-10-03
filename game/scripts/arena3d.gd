@@ -5886,6 +5886,8 @@ func _render_menu_chat() -> void:
 		l2.add_theme_font_size_override("font_size", 12)
 		l2.modulate = Color(0.85, 0.95, 1.0)
 		_ui.menu_chat_lines.add_child(l2)
+	if _ui.has("menu_chat_scroll"):
+		_ui.menu_chat_scroll.scroll_vertical = 100000   # прилипаем к последним сообщениям
 	for ti in _ui.menu_chat_btns.size():
 		_ui.menu_chat_btns[ti].modulate = Color(1, 1, 1) if ti == _menu_chat_tab else Color(0.55, 0.55, 0.6)
 
@@ -6064,7 +6066,7 @@ func _build_menu() -> void:
 		chat.offset_right = -16.0
 	else:
 		chat.offset_right = 316.0
-	chat.offset_top = -180.0
+	chat.offset_top = -232.0
 	chat.offset_bottom = -16.0
 	layer.add_child(chat)
 	_ui.menu_chat_panel = chat
@@ -6106,8 +6108,17 @@ func _build_menu() -> void:
 		tabs.add_child(tb)
 		_ui.menu_chat_btns.append(tb)
 	var lines := VBoxContainer.new()
-	content.add_child(lines)
+	lines.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# область сообщений — прокручиваемая, фиксированной высоты: рамка не растёт,
+	# старые сообщения уходят вверх, новые появляются снизу (как в боевом чате)
+	var lines_scroll := ScrollContainer.new()
+	lines_scroll.custom_minimum_size = Vector2(0, 58)
+	lines_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lines_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	content.add_child(lines_scroll)
+	lines_scroll.add_child(lines)
 	_ui.menu_chat_lines = lines
+	_ui.menu_chat_scroll = lines_scroll
 	var inrow := HBoxContainer.new()
 	inrow.add_theme_constant_override("separation", 4)
 	content.add_child(inrow)
@@ -6180,8 +6191,9 @@ func _toggle_menu_chat() -> void:
 			if str(ek).begins_with("emoji_panel_"):
 				_ui[ek].visible = false
 	# свёрнутый: заголовок 26 + конверты 44 + отступы рамки ~20 = ~90px — минус запас,
-	# иначе панель вылезает за нижний край экрана
-	p.offset_top = -104.0 if _menu_chat_collapsed else -180.0
+	# иначе панель вылезает за нижний край экрана. Развёрнутый выше: область сообщений —
+	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
+	p.offset_top = -104.0 if _menu_chat_collapsed else -232.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
