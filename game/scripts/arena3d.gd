@@ -7135,7 +7135,7 @@ func _show_menu_progress() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
+	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.95), 0)
 	vb.add_child(_screen_title("trophy", "Прогрессия"))
 	# текущее состояние главного бойца (самого прокачанного)
 	var bi := 0
@@ -7180,8 +7180,8 @@ func _show_menu_progress() -> void:
 		var tmin := int(t["min"])
 		var tmax := (int(XP_TIERS[ti + 1]["min"]) - 1) if ti + 1 < XP_TIERS.size() else 999
 		var th := Label.new()
-		th.text = "— %s (ур. %d%s) —" % [str(t["name"]), tmin, ("–%d" % tmax) if tmax < 900 else "+"]
-		th.add_theme_font_size_override("font_size", 15)
+		th.text = "%s · ур. %d%s" % [str(t["name"]), tmin, ("–%d" % tmax) if tmax < 900 else "+"]
+		th.add_theme_font_size_override("font_size", 16)
 		th.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4) if ti > 0 else Color(0.8, 0.85, 0.95))
 		list.add_child(th)
 		if ti > 0:
@@ -7198,23 +7198,39 @@ func _show_menu_progress() -> void:
 			rw.custom_minimum_size = Vector2(0, 0)
 			rw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			list.add_child(rw)
-		# уровни тира: компактно — на мобиле 3 в строке (4 не влезают по ширине)
+		# уровни тира — чипами с фоном: на десктопе 6 в строке, на мобиле 3
 		var rows := GridContainer.new()
-		rows.columns = 3 if _mob() else 4
+		rows.columns = 3 if _mob() else 6
 		rows.add_theme_constant_override("h_separation", 6)
-		rows.add_theme_constant_override("v_separation", 4)
+		rows.add_theme_constant_override("v_separation", 6)
 		list.add_child(rows)
 		var shown := 0
 		var lv := tmin
 		while lv <= tmax and shown < 12:
 			var reached := lvl >= lv
-			var cell := Label.new()
-			var reward := "очки"
-			if lv % 3 == 0:
-				reward = "+талант"
-			cell.text = "ур.%d %s" % [lv, reward]
-			cell.add_theme_font_size_override("font_size", 11 if _mob() else 12)
-			cell.add_theme_color_override("font_color", Color(0.55, 0.9, 0.6) if reached else Color(0.55, 0.6, 0.68))
+			var talent_lv := lv % 3 == 0
+			var cell := PanelContainer.new()
+			var cs := StyleBoxFlat.new()
+			cs.set_corner_radius_all(5)
+			cs.set_border_width_all(1)
+			cs.content_margin_left = 8
+			cs.content_margin_right = 8
+			cs.content_margin_top = 3
+			cs.content_margin_bottom = 3
+			if reached:
+				cs.bg_color = Color(0.18, 0.5, 0.3, 0.45)
+				cs.border_color = Color(0.5, 0.95, 0.6, 0.7)
+			else:
+				cs.bg_color = Color(0.5, 0.56, 0.66, 0.10)
+				cs.border_color = Color(1, 1, 1, 0.10)
+			if talent_lv:
+				cs.border_color = Color(1.0, 0.8, 0.35, 0.9)
+			cell.add_theme_stylebox_override("panel", cs)
+			var cl := Label.new()
+			cl.text = "ур.%d · %s" % [lv, "+талант" if talent_lv else "очки"]
+			cl.add_theme_font_size_override("font_size", 11 if _mob() else 12)
+			cl.add_theme_color_override("font_color", Color(0.62, 0.98, 0.68) if reached else (Color(1.0, 0.85, 0.5) if talent_lv else Color(0.68, 0.73, 0.8)))
+			cell.add_child(cl)
 			rows.add_child(cell)
 			shown += 1
 			lv += 1
