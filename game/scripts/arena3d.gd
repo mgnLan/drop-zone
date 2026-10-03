@@ -6191,6 +6191,8 @@ func _daily_box() -> PanelContainer:
 	var sb := _card_style()
 	sb.bg_color = Color(0.05, 0.08, 0.13, 0.60)
 	pc.add_theme_stylebox_override("panel", sb)
+	# блок по ширине содержимого и по центру — без пустой середины на широком лобби
+	pc.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var dvb := VBoxContainer.new()
 	dvb.add_theme_constant_override("separation", 6)
 	pc.add_child(dvb)
