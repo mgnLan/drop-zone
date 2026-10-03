@@ -754,6 +754,25 @@ func _profile_normalize() -> void:
 		while (v as Array).size() < 4:
 			(v as Array).append((defaults[k] as Array)[mini((v as Array).size(), 3)])
 		_profile[k] = (v as Array).slice(0, 4)
+	# типы элементов: пустые объекты после PHP (json_decode) приходят как [] —
+	# без конвертации спавн/миссии/экраны падают на типизации
+	for i in 4:
+		if not (_profile.talents[i] is Dictionary):
+			_profile.talents[i] = {}
+		if not (_profile.prof[i] is Dictionary):
+			_profile.prof[i] = {}
+		if not (_profile.stats[i] is Dictionary):
+			_profile.stats[i] = _default_fighter_stats()
+		if not (_profile.names[i] is String):
+			_profile.names[i] = str(_profile.names[i])
+	# миссии: prog/done только словари, иначе прогресс сбрасывается визуально и ломается экран
+	for mk in ["mq_day", "mq_week"]:
+		var mq = _profile.get(mk, {})
+		if mq is Dictionary:
+			if not (mq.get("prog", {}) is Dictionary):
+				mq["prog"] = {}
+			if not (mq.get("done", {}) is Dictionary):
+				mq["done"] = {}
 
 func _auth_fail(msg: String, act: String, net := false) -> void:
 	if act == "load":
@@ -1116,6 +1135,12 @@ func _mq_check() -> void:
 	var w: Dictionary = _profile.get("mq_week", {})
 	if int(w.get("week", -1)) != wk:
 		_profile.mq_week = {"week": wk, "prog": {}, "done": {}}
+	# prog/done после PHP-кругорейса могут быть массивами — чиним типы
+	for mq2 in [_profile.mq_day, _profile.mq_week]:
+		if not (mq2.get("prog", {}) is Dictionary):
+			mq2["prog"] = {}
+		if not (mq2.get("done", {}) is Dictionary):
+			mq2["done"] = {}
 
 func _mq_login_grant() -> void:
 	var d: Dictionary = _profile.mq_day
@@ -1318,6 +1343,7 @@ func _load_profile() -> void:
 	_profile.vip = int(cfg.get_value("player", "vip", 0))
 	_profile.reserve = cfg.get_value("player", "reserve", [])
 	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
+	_profile_normalize()
 	_mq_check()
 
 func _save_profile() -> void:
@@ -2320,9 +2346,10 @@ func _apply_outfit(p: Node3D, idx: int) -> void:
 				_outfit_mats[ckey] = dm
 			mi.set_surface_override_material(si, _outfit_mats[ckey])
 
-func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}, cls_idx := -1, slot := -1) -> void:
-	# отказоустойчивость: серверный профиль может прислать неверные типы —
-	# один битый боец не должен ронять весь спавн команды
+func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st = {}, lvl := 1, xp := 0, talents = {}, tpts := 0, prof = {}, cls_idx := -1, slot := -1) -> void:
+	# отказоустойчивость: серверный профиль может прислать неверные типы
+	# (пустые объекты после PHP json_decode приходят как []) — параметры без типизации,
+	# иначе вызов молча пропускается целиком и боец не появляется на арене
 	if not (st is Dictionary) or (st as Dictionary).is_empty():
 		st = _default_fighter_stats()
 	if not (talents is Dictionary):
@@ -4699,20 +4726,35 @@ func _build_ui() -> void:
 	sendb2.pressed.connect(func(): _battle_chat_send(inp))
 	inrow_b.add_child(sendb2)
 	_render_chat()
-	# мобильный режим: лог свёрнут, разворачивается кнопкой
+	# сворачивание чата: кнопка «—» в строке вкладок; разворот — плавающей кнопкой «Чат»
+	var ct2 := Button.new()
+	ct2.text = "Чат"
+	ct2.anchor_top = 1.0
+	ct2.anchor_bottom = 1.0
+	ct2.offset_left = 12.0
+	ct2.offset_right = 100.0
+	ct2.offset_top = -56.0
+	ct2.offset_bottom = -12.0
+	ct2.visible = false
+	ct2.pressed.connect(func():
+		chat.visible = true
+		ct2.visible = false
+	)
+	ct2.pressed.connect(_sfx_play.bind("click"))
+	layer.add_child(ct2)
+	var cb := Button.new()
+	cb.text = "—"
+	cb.tooltip_text = "Свернуть чат"
+	cb.custom_minimum_size = Vector2(36, 34)
+	cb.pressed.connect(func():
+		chat.visible = false
+		ct2.visible = true
+	)
+	tabs.add_child(cb)
+	# мобильный режим: лог свёрнут по умолчанию
 	if minf(_vw(), _vh()) < 700.0:
 		chat.visible = false
-		var ct := Button.new()
-		ct.text = "Лог"
-		ct.anchor_top = 1.0
-		ct.anchor_bottom = 1.0
-		ct.offset_left = 12.0
-		ct.offset_right = 100.0
-		ct.offset_top = -56.0
-		ct.offset_bottom = -12.0
-		ct.pressed.connect(func(): chat.visible = not chat.visible)
-		ct.pressed.connect(_sfx_play.bind("click"))
-		layer.add_child(ct)
+		ct2.visible = true
 	# --- панель выбранного бойца: справа ---
 	var fp := PanelContainer.new()
 	fp.anchor_left = 1.0
@@ -5633,9 +5675,9 @@ func _card_label(t: String, fsize: int, col: Color, bold := false) -> Label:
 	return l
 
 func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locked := false, glow := false) -> Button:
-	# крупная карточка режима боя: иконка на подложке + название + подпись
+	# карточка режима боя: иконка на подложке + название + подпись; компактная, без пустот
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(0, 92 if glow else 84)
+	b.custom_minimum_size = Vector2(0, 72 if glow else 64)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.add_theme_stylebox_override("normal", _card_style(false, glow))
 	b.add_theme_stylebox_override("hover", _card_style(true, glow))
@@ -5651,15 +5693,15 @@ func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locke
 	hb.add_theme_constant_override("separation", 14)
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(hb)
-	var chip := _icon_chip("lock" if locked else icon, 40)
+	var chip := _icon_chip("lock" if locked else icon, 36)
 	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(chip)
 	var vb2 := VBoxContainer.new()
-	vb2.add_theme_constant_override("separation", 4)
+	vb2.add_theme_constant_override("separation", 3)
 	vb2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb2.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(vb2)
-	vb2.add_child(_card_label(title, 16, Color(0.55, 0.6, 0.68) if locked else Color.WHITE, true))
+	vb2.add_child(_card_label(title, 15, Color(0.55, 0.6, 0.68) if locked else Color.WHITE, true))
 	if sub != "":
 		vb2.add_child(_card_label(sub, 13, sub_col))
 	return b
@@ -6109,16 +6151,19 @@ func _show_menu_main() -> void:
 		var fsb := Button.new()
 		fsb.text = "⛶"
 		fsb.tooltip_text = "Во весь экран"
-		fsb.add_theme_font_size_override("font_size", 15)
-		fsb.custom_minimum_size = Vector2(38, 30)
+		fsb.add_theme_font_size_override("font_size", 18)
+		fsb.custom_minimum_size = Vector2(44, 32)
 		var fsb_sb := _frame_box()
+		fsb_sb.border_color = Color(0.45, 0.8, 1.0, 0.9)
+		fsb_sb.bg_color = Color(0.10, 0.18, 0.26, 0.95)
 		fsb.add_theme_stylebox_override("normal", fsb_sb)
 		var fsb_h := _frame_box()
-		fsb_h.bg_color = Color(0.08, 0.14, 0.20, 0.95)
+		fsb_h.bg_color = Color(0.16, 0.28, 0.40, 0.95)
+		fsb_h.border_color = Color(0.6, 0.9, 1.0, 1.0)
 		fsb_h.shadow_size = 9
 		fsb.add_theme_stylebox_override("hover", fsb_h)
 		fsb.add_theme_stylebox_override("pressed", fsb_h)
-		fsb.add_theme_color_override("font_color", Color(0.75, 0.92, 1.0))
+		fsb.add_theme_color_override("font_color", Color(0.65, 0.9, 1.0))
 		fsb.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
 		fsb.pressed.connect(_request_fullscreen)
 		ch.add_child(fsb)
