@@ -4675,8 +4675,9 @@ func _build_ui() -> void:
 	fp.anchor_right = 1.0
 	fp.offset_left = -min(296.0, _vw() * 0.68)
 	fp.offset_right = -8.0
-	fp.offset_top = 96.0
-	fp.offset_bottom = 328.0
+	# ниже кнопок «Лобби»/⛶/«Дроп» (они занимают y 62–160) — иначе перекрывают первые строки
+	fp.offset_top = 166.0
+	fp.offset_bottom = 344.0
 	fp.add_theme_stylebox_override("panel", _frame_box())
 	layer.add_child(fp)
 	var vb := VBoxContainer.new()
@@ -4973,11 +4974,9 @@ func _run_testbots() -> void:
 func _run_testmenu(mobile := false) -> void:
 	var sfx := "_mob" if mobile else ""
 	await get_tree().process_frame
-	# дым-тест чата: локальное эхо с эмодзи + открытая панель эмодзи
-	_menu_chat_local[0].append("Вы: проверка чата")
+	# дым-тест чата: локальное эхо с эмодзи (панель эмодзи не открываем — на скринах должна быть честная картина меню)
+	_menu_chat_local[0].append("Вы: проверка чата 😀")
 	_render_menu_chat()
-	if _ui.has("menu_chat_input"):
-		_toggle_emoji_panel(_ui.menu_chat_input, _ui.menu_chat_panel)
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -6501,9 +6500,15 @@ func _show_menu_squad() -> void:
 			var ob := Button.new()
 			ob.custom_minimum_size = Vector2(34, 30)
 			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
-			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "Закрыто"
+			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "🔒"
+			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
 			var os: StyleBoxFlat = StyleBoxFlat.new()
-			os.bg_color = OUTFIT_SKINS[oi]["col"] if OUTFIT_SKINS[oi]["col"] != null else Color(0.25, 0.35, 0.25)
+			if owned_ofi:
+				os.bg_color = OUTFIT_SKINS[oi]["col"] if OUTFIT_SKINS[oi]["col"] != null else Color(0.25, 0.35, 0.25)
+			else:
+				# закрытый камуфляж — тусклая подложка, не кликабелен
+				os.bg_color = Color(0.10, 0.11, 0.14, 0.9)
+				ob.add_theme_color_override("font_color", Color(0.45, 0.5, 0.58))
 			os.set_corner_radius_all(6)
 			if int(_profile.get("outfit", 0)) == oi:
 				os.border_color = Color(1, 1, 1)
@@ -6515,7 +6520,6 @@ func _show_menu_squad() -> void:
 			ob.add_theme_stylebox_override("hover", os)
 			ob.add_theme_stylebox_override("pressed", os)
 			ob.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
 			if owned_ofi:
 				var ov: int = oi
 				ob.pressed.connect(func():
@@ -6568,11 +6572,13 @@ func _show_menu_squad() -> void:
 		vb.add_child(fgrid)
 		for fi2 in FRAME_NAMES.size():
 			var fb := Button.new()
-			fb.text = FRAME_NAMES[fi2] + (" ✓" if _profile.frame == fi2 else "")
+			var frame_locked := fi2 > 0 and not _shop_owned("frame", fi2)
+			fb.text = ("🔒 " if frame_locked else "") + FRAME_NAMES[fi2] + (" ✓" if _profile.frame == fi2 else "")
 			fb.add_theme_font_size_override("font_size", 11)
 			fb.custom_minimum_size = Vector2(84, 30)
-			if fi2 > 0 and not _shop_owned("frame", fi2):
+			if frame_locked:
 				fb.tooltip_text = "Открывается в магазине или из сундуков"
+				fb.add_theme_color_override("font_color", Color(0.5, 0.55, 0.62))
 			var fv: int = fi2
 			fb.pressed.connect(func():
 				if fv == 0 or _shop_owned("frame", fv):
@@ -7119,6 +7125,7 @@ func _show_menu_progress() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(0, minf(360.0, _vh() * 0.5))
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	vb.add_child(scroll)
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 6)
@@ -7143,10 +7150,13 @@ func _show_menu_progress() -> void:
 			rw.text = rwd
 			rw.add_theme_font_size_override("font_size", 13)
 			rw.add_theme_color_override("font_color", Color(1.0, 0.75, 0.35))
+			rw.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			rw.custom_minimum_size = Vector2(0, 0)
+			rw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			list.add_child(rw)
-		# уровни тира: компактно, по 4 в строке
+		# уровни тира: компактно — на мобиле 3 в строке (4 не влезают по ширине)
 		var rows := GridContainer.new()
-		rows.columns = 4
+		rows.columns = 3 if _mob() else 4
 		rows.add_theme_constant_override("h_separation", 6)
 		rows.add_theme_constant_override("v_separation", 4)
 		list.add_child(rows)
@@ -7159,7 +7169,7 @@ func _show_menu_progress() -> void:
 			if lv % 3 == 0:
 				reward = "+талант"
 			cell.text = "ур.%d %s" % [lv, reward]
-			cell.add_theme_font_size_override("font_size", 12)
+			cell.add_theme_font_size_override("font_size", 11 if _mob() else 12)
 			cell.add_theme_color_override("font_color", Color(0.55, 0.9, 0.6) if reached else Color(0.55, 0.6, 0.68))
 			rows.add_child(cell)
 			shown += 1
@@ -7558,7 +7568,7 @@ func _show_menu_shop() -> void:
 		# превью: цвет ника — квадрат цвета; рамка — панель с акцентной каймой
 		var FRAME_ACCENTS := [Color(0.6, 0.62, 0.66), Color(0.2, 0.9, 1.0), Color(1.0, 0.8, 0.25), Color(0.35, 0.5, 0.25), Color(0.85, 0.7, 0.4), Color(0.2, 1.0, 0.5), Color(1.0, 0.45, 0.1), Color(0.9, 0.9, 0.95), Color(1.0, 0.5, 1.0)]
 		var pv := PanelContainer.new()
-		pv.custom_minimum_size = Vector2(40, 40)
+		pv.custom_minimum_size = Vector2(34, 34) if _mob() else Vector2(40, 40)
 		var pvs := StyleBoxFlat.new()
 		if kind == "nick_color" and idx < NICK_COLORS.size():
 			pvs.bg_color = NICK_COLORS[idx]
@@ -7574,13 +7584,18 @@ func _show_menu_shop() -> void:
 		row.add_child(pv)
 		var nl := Label.new()
 		nl.text = str(it["name"])
-		nl.add_theme_font_size_override("font_size", 15)
+		# на мобиле шрифт меньше, чтобы самое длинное имя влезало без переноса
+		# (Label без autowrap требует полной ширины текста и иначе выталкивает цену за экран)
+		nl.add_theme_font_size_override("font_size", 13 if _mob() else 15)
 		nl.custom_minimum_size = Vector2(0, 0)
 		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		if _mob():
+			# на 360px переносим длинные имена — иначе Label выталкивает цену за экран
+			nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(nl)
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(140, 40)
+		b.custom_minimum_size = Vector2(104, 40) if _mob() else Vector2(140, 40)
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if _shop_equipped(kind, idx):
 			b.text = "✓ Выбрано"
@@ -7594,8 +7609,11 @@ func _show_menu_shop() -> void:
 				_show_menu_shop()
 			)
 		else:
-			b.text = "Купить · %d" % price
+			# на мобиле длинное «Купить · N» не влезает — только цена с иконкой монеты
+			b.text = ("%d" % price) if _mob() else ("Купить · %d" % price)
+			b.add_theme_font_size_override("font_size", 13 if _mob() else 16)
 			b.icon = _icon_tex("coin")
+			b.add_theme_constant_override("icon_max_width", 18)
 			b.add_theme_color_override("icon_normal_color", COIN_COLOR)
 			b.add_theme_color_override("icon_hover_color", COIN_COLOR)
 			b.add_theme_color_override("icon_pressed_color", COIN_COLOR)
@@ -7616,7 +7634,6 @@ func _show_menu_shop() -> void:
 				_show_menu_shop()
 			)
 		row.add_child(b)
-	# --- паки монет (реальные деньги; платежи — после запуска онлайна) ---
 	var packs_title := Label.new()
 	packs_title.text = "Паки монет"
 	packs_title.add_theme_font_size_override("font_size", 17)
@@ -7641,8 +7658,11 @@ func _show_menu_shop() -> void:
 		pn.text = ("+%d бонусом (%d%%)" % [bonus, int(round(bonus * 100.0 / maxf(1.0, float(int(pk["coins"]) - bonus))))]) if bonus > 0 else "без бонуса"
 		pn.add_theme_font_size_override("font_size", 13)
 		pn.add_theme_color_override("font_color", Color(0.65, 0.85, 0.6))
+		pn.custom_minimum_size = Vector2(0, 0)
 		pn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		pn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		if _mob():
+			pn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row2.add_child(pn)
 		var pb := Button.new()
 		pb.text = "%d ₽" % int(pk["price"])
@@ -7704,7 +7724,8 @@ func _show_menu_profile() -> void:
 	vb.add_child(agrid)
 	for pi in 6:
 		var pb := Button.new()
-		pb.custom_minimum_size = Vector2(58, 58)
+		# на мобиле все 6 пресетов должны помещаться без скролла: 6×46+5×6=306 ≤ ~336
+		pb.custom_minimum_size = Vector2(46, 46) if _mob() else Vector2(58, 58)
 		var ptex := _preset_avatar(pi)
 		if ptex != null:
 			var tr := TextureRect.new()
