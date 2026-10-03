@@ -727,9 +727,33 @@ func _profile_from_server(sp) -> void:
 		return
 	for k in (sp as Dictionary).keys():
 		_profile[k] = sp[k]
+	_profile_normalize()
 	_sync_push = false
 	_save_profile()
 	_sync_push = true
+
+func _profile_normalize() -> void:
+	# серверные данные старых аккаунтов могут иметь массивы короче 4 слотов —
+	# без этого спавн/медцентр падают по индексу и бой начинается без бойцов игрока
+	var defaults := {
+		"names": ["Волк", "Сокол", "Тень", "Барс"],
+		"stats": [_default_fighter_stats(), _default_fighter_stats(), _default_fighter_stats(), _default_fighter_stats()],
+		"lvl": [1, 1, 1, 1],
+		"xp": [0, 0, 0, 0],
+		"talents": [{}, {}, {}, {}],
+		"tpts": [0, 0, 0, 0],
+		"prof": [{}, {}, {}, {}],
+		"sidearm": [0, 0, 0, 0],
+		"cls": [0, 0, 0, 0],
+		"hp": [-1, -1, -1, -1],
+	}
+	for k in defaults.keys():
+		var v = _profile.get(k, null)
+		if not (v is Array):
+			v = (defaults[k] as Array).duplicate()
+		while (v as Array).size() < 4:
+			(v as Array).append((defaults[k] as Array)[mini((v as Array).size(), 3)])
+		_profile[k] = (v as Array).slice(0, 4)
 
 func _auth_fail(msg: String, act: String, net := false) -> void:
 	if act == "load":
@@ -2235,6 +2259,10 @@ func _spawn_teams() -> void:
 	# RED (0) — отряд игрока (модели из классов, ники и статы из профиля), BLUE (1) — боты
 	var blue_models := [["Character_Soldier", "AK", "Ворон"], ["Character_Hazmat", "SMG", "Клык"],
 		["Character_Soldier", "Shotgun", "Гром"], ["Character_Enemy", "Sniper", "Лёд"]]
+	# диагностика спавна: если боец не появится — по логу битвы увидим, на каком шаге облом
+	_log("СПАВН: режим=%d, имен=%d, stats=%d, lvl=%d, cls=%d, sidearm=%d, hp=%s" % [
+		_mode, _profile.names.size(), _profile.stats.size(), _profile.lvl.size(),
+		_profile.cls.size(), _profile.sidearm.size(), str(_profile.get("hp", []))])
 	# RED — юго-западный сектор, BLUE — северо-восточный; число бойцов = режим
 	var lo := 2
 	var hi := _grid_n - 3
@@ -2246,13 +2274,16 @@ func _spawn_teams() -> void:
 		# класс задаёт модель и перк (перк — стиль, а не сила)
 		var cls_i := clampi(int(_profile.cls[i]), 0, FIGHTER_CLASSES.size() - 1)
 		var model_c: String = FIGHTER_CLASSES[cls_i]["model"]
+		_log("СПАВН красный[%d]: %s, модель=%s, пистолет=%s" % [i, str(_profile.names[i]), model_c, sidearm])
 		_spawn_human(model_c, cell.x, cell.y, _rng.randf_range(-30, 90),
 			sidearm, Color("#ff4757"), 0, _profile.names[i], _profile.stats[i], _profile.lvl[i], _profile.xp[i],
 			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i], cls_i, i)
+		_log("СПАВН красный[%d] на арене, всего бойцов=%d" % [i, _fighters.size()])
 	for i in _mode:
 		var m = blue_models[i]
 		var cell := _free_cell_sector(mid + 4, hi, lo, mid - 4)
 		_spawn_human(m[0], cell.x, cell.y, _rng.randf_range(90, 210), m[1], Color("#3498ff"), 1, m[2])
+	_log("СПАВН готов: красных=%d, синих=%d" % [_alive_count(0), _alive_count(1)])
 
 func _free_cell_sector(x0: int, x1: int, z0: int, z1: int) -> Vector2i:
 	for attempt in 40:
@@ -2290,8 +2321,21 @@ func _apply_outfit(p: Node3D, idx: int) -> void:
 			mi.set_surface_override_material(si, _outfit_mats[ckey])
 
 func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st: Dictionary = {}, lvl := 1, xp := 0, talents: Dictionary = {}, tpts := 0, prof: Dictionary = {}, cls_idx := -1, slot := -1) -> void:
-	if st.is_empty():
+	# отказоустойчивость: серверный профиль может прислать неверные типы —
+	# один битый боец не должен ронять весь спавн команды
+	if not (st is Dictionary) or (st as Dictionary).is_empty():
 		st = _default_fighter_stats()
+	if not (talents is Dictionary):
+		talents = {}
+	if not (prof is Dictionary):
+		prof = {}
+	if lvl < 1:
+		lvl = 1
+	for k in STAT_KEYS:
+		var sv = st.get(k, 0)
+		if not (sv is int or sv is float):
+			sv = int(str(sv)) if str(sv).is_valid_int() else 0
+		st[k] = int(sv)
 	var p: Node3D = _place(H + model + ".gltf", gw(gx, gz), rot_y, HUMAN_SCALE)
 	if team_idx == 0:
 		_apply_outfit(p, int(_profile.get("outfit", 0)))
