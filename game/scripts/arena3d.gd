@@ -4624,7 +4624,7 @@ func _build_ui() -> void:
 	var ch := HBoxContainer.new()
 	card_v.add_child(ch)
 	var pvc := SubViewportContainer.new()
-	pvc.custom_minimum_size = Vector2(72, 104)
+	pvc.custom_minimum_size = Vector2(18, 26)   # портрет уменьшен в 4 раза — не загораживает обзор
 	pvc.stretch = true
 	var pv := SubViewport.new()
 	pv.size = Vector2i(172, 248)
@@ -4635,7 +4635,7 @@ func _build_ui() -> void:
 	_ui.card_pvc = pvc
 	# аватар игрока из профиля (заменяет 3D-портрет, если загружен)
 	var ava := TextureRect.new()
-	ava.custom_minimum_size = Vector2(72, 104)
+	ava.custom_minimum_size = Vector2(18, 26)
 	ava.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ava.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	ava.visible = false
@@ -4660,12 +4660,7 @@ func _build_ui() -> void:
 	ap_bar.custom_minimum_size = Vector2(88, 12) if _mob() else Vector2(104, 12)
 	ap_bar.show_percentage = false
 	cvb2.add_child(ap_bar)
-	# иконка рюкзака прямо под портретом/анимацией бойца
-	var bag := Button.new()
-	bag.text = "Рюкзак [I]"
-	bag.custom_minimum_size = Vector2(0, 40)
-	bag.pressed.connect(_toggle_inventory)
-	card_v.add_child(bag)
+	# иконка рюкзака убрана — дублировала кнопку в панели бойца справа ([I] работает)
 	card.visible = false
 	_ui.card = card
 	_ui.card_view = pv
@@ -4811,15 +4806,15 @@ func _build_ui() -> void:
 	if minf(_vw(), _vh()) < 700.0:
 		chat.visible = false
 		ct2.visible = true
-	# --- панель выбранного бойца: справа ---
+	# --- панель выбранного бойца: справа, компактная — минимум экрана загораживает ---
 	var fp := PanelContainer.new()
 	fp.anchor_left = 1.0
 	fp.anchor_right = 1.0
-	fp.offset_left = -min(296.0, _vw() * 0.68)
+	fp.offset_left = -min(232.0, _vw() * 0.62)
 	fp.offset_right = -8.0
 	# ниже кнопок «Лобби»/⛶/«Дроп» (они занимают y 62–160) — иначе перекрывают первые строки
 	fp.offset_top = 166.0
-	fp.offset_bottom = 344.0
+	fp.offset_bottom = 306.0
 	fp.add_theme_stylebox_override("panel", _frame_box())
 	layer.add_child(fp)
 	var vb := VBoxContainer.new()
@@ -4958,9 +4953,11 @@ func _refresh_fighter_panel() -> void:
 		var sp_txt := "∞" if int(f.get("spare", -1)) < 0 else str(int(f.spare))
 		ammo_txt = " [патр. %d/%s]" % [int(f.ammo), sp_txt]
 	w.text = "В руках: %s%s" % [f.weapon.get("name", "?"), ammo_txt]
+	w.add_theme_font_size_override("font_size", 12)
 	box.add_child(w)
 	var lv := Label.new()
 	lv.text = "Ур. %d · Опыт %d/%d · Убийств: %d" % [int(f.lvl), int(f.xp), _xp_need(int(f.lvl)), int(f.kills)]
+	lv.add_theme_font_size_override("font_size", 11)
 	box.add_child(lv)
 	var cls3 := _weapon_class(f.weapon)
 	if cls3 != "":
@@ -4969,58 +4966,69 @@ func _refresh_fighter_panel() -> void:
 		var next_txt := "МАКС" if plv >= 3 else "%d/%d" % [px, PROF_XP[plv]]
 		var pl2 := Label.new()
 		pl2.text = "Владение «%s»: ур. %d (%s)" % [CLASS_NAMES[cls3], plv, next_txt]
-		pl2.add_theme_font_size_override("font_size", 12)
+		pl2.add_theme_font_size_override("font_size", 11)
 		pl2.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
 		box.add_child(pl2)
 	var d := Label.new()
 	d.text = "Защита: %d   Вес: %.1f/%.1f кг" % [_defense(f), _load_weight(f), _carry_limit(f)]
+	d.add_theme_font_size_override("font_size", 11)
 	box.add_child(d)
 	var row := GridContainer.new()
-	row.columns = 2
+	row.columns = 3
+	row.add_theme_constant_override("h_separation", 4)
+	row.add_theme_constant_override("v_separation", 4)
 	box.add_child(row)
+	# компактные иконки действий (24px) — название и горячая клавиша в подсказке
 	var inv := Button.new()
-	inv.text = "Рюкзак [I]"
+	inv.tooltip_text = "Рюкзак [I]"
 	if ResourceLoader.exists("res://assets/ui/icons/backpack.png"):
 		inv.icon = load("res://assets/ui/icons/backpack.png")
-		inv.add_theme_constant_override("icon_max_width", 22)
+		inv.expand_icon = true
+		inv.add_theme_constant_override("icon_max_width", 16)
 	inv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inv.add_theme_font_size_override("font_size", 12)
+	inv.custom_minimum_size = Vector2(0, 24)
 	inv.pressed.connect(_toggle_inventory)
 	inv.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(inv)
 	var sw := Button.new()
-	sw.text = "Нож/ствол [F]"
+	sw.tooltip_text = "Нож/ствол [F]"
 	if ResourceLoader.exists("res://assets/ui/icons/Knife_1.png"):
 		sw.icon = load("res://assets/ui/icons/Knife_1.png")
-		sw.add_theme_constant_override("icon_max_width", 22)
+		sw.expand_icon = true
+		sw.add_theme_constant_override("icon_max_width", 16)
 	sw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sw.add_theme_font_size_override("font_size", 12)
+	sw.custom_minimum_size = Vector2(0, 24)
 	sw.pressed.connect(_swap_weapon)
 	sw.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(sw)
 	var rl := Button.new()
-	rl.text = "Перезарядка [R]"
+	rl.tooltip_text = "Перезарядка [R]"
 	if ResourceLoader.exists("res://assets/ui/icons/reload.png"):
 		rl.icon = load("res://assets/ui/icons/reload.png")
-		rl.add_theme_constant_override("icon_max_width", 22)
+		rl.expand_icon = true
+		rl.add_theme_constant_override("icon_max_width", 16)
 	rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rl.add_theme_font_size_override("font_size", 12)
+	rl.custom_minimum_size = Vector2(0, 24)
 	rl.pressed.connect(_reload_selected)
 	rl.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(rl)
 	var tt := Button.new()
-	tt.text = "Насмешка [T]"
-	tt.tooltip_text = "Насмешка (1 ОД): боты в радиусе 8 клеток 2 хода атакуют этого бойца"
+	tt.icon = _icon_tex("smile")
+	tt.expand_icon = true
+	tt.add_theme_constant_override("icon_max_width", 16)
+	tt.tooltip_text = "Насмешка [T] (1 ОД): боты в радиусе 8 клеток 2 хода атакуют этого бойца"
 	tt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tt.add_theme_font_size_override("font_size", 12)
+	tt.custom_minimum_size = Vector2(0, 24)
 	tt.pressed.connect(_taunt_selected)
 	tt.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(tt)
 	var gf := Button.new()
-	gf.text = "Граффити [G]"
-	gf.tooltip_text = "Граффити (1 ОД): оставить яркую метку на клетке"
+	gf.icon = _icon_tex("bolt")
+	gf.expand_icon = true
+	gf.add_theme_constant_override("icon_max_width", 16)
+	gf.tooltip_text = "Граффити [G] (1 ОД): оставить яркую метку на клетке"
 	gf.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	gf.add_theme_font_size_override("font_size", 12)
+	gf.custom_minimum_size = Vector2(0, 24)
 	gf.pressed.connect(_graffiti_selected)
 	gf.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(gf)
@@ -5035,6 +5043,8 @@ func _refresh_fighter_panel() -> void:
 		pbs.set_corner_radius_all(6)
 		pb.add_theme_stylebox_override("normal", pbs)
 		pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pb.custom_minimum_size = Vector2(0, 22)
+		pb.add_theme_font_size_override("font_size", 10)
 		pb.pressed.connect(_show_levelup.bind(_selected))
 		row.add_child(pb)
 	_refresh_card()
