@@ -4628,7 +4628,7 @@ func _build_ui() -> void:
 	var ch := HBoxContainer.new()
 	card_v.add_child(ch)
 	var pvc := SubViewportContainer.new()
-	pvc.custom_minimum_size = Vector2(18, 26)   # портрет уменьшен в 4 раза — не загораживает обзор
+	pvc.custom_minimum_size = Vector2(36, 52)   # портрет уменьшен в 4 раза по площади — виден, но не загораживает обзор
 	pvc.stretch = true
 	var pv := SubViewport.new()
 	pv.size = Vector2i(172, 248)
@@ -4639,7 +4639,7 @@ func _build_ui() -> void:
 	_ui.card_pvc = pvc
 	# аватар игрока из профиля (заменяет 3D-портрет, если загружен)
 	var ava := TextureRect.new()
-	ava.custom_minimum_size = Vector2(18, 26)
+	ava.custom_minimum_size = Vector2(36, 52)
 	ava.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ava.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	ava.visible = false
