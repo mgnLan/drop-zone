@@ -467,6 +467,14 @@ func _ready() -> void:
 		_build_ui()
 		_build_menu()
 		_run_testmenu()
+	elif args.has("--testmenumid"):
+		_load_sfx()
+		_build_ui()
+		get_window().size = Vector2i(913, 800)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_build_menu()
+		_run_testmenu(false, "_mid")
 	elif args.has("--testmenumobile"):
 		_load_sfx()
 		_build_ui()
@@ -5140,8 +5148,9 @@ func _run_testbots() -> void:
 	print("TESTBOTS_SAVED")
 	get_tree().quit()
 
-func _run_testmenu(mobile := false) -> void:
-	var sfx := "_mob" if mobile else ""
+func _run_testmenu(mobile := false, sfx := "") -> void:
+	if sfx == "":
+		sfx = "_mob" if mobile else ""
 	await get_tree().process_frame
 	# дым-тест чата: локальное эхо с эмодзи (панель эмодзи не открываем — на скринах должна быть честная картина меню)
 	_menu_chat_local[0].append("Вы: проверка чата 😀")
@@ -6309,7 +6318,13 @@ func _show_menu_main() -> void:
 	sett.pressed.connect(_show_menu_settings)
 	var ctrls: Array = [squad, heroes, shop, chests, bp, prog, med, prof, sett]
 	var vw4: float = _vw()
-	vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92) if vw4 >= 980.0 else minf(560.0, vw4 * 0.92), 0)
+	if vw4 >= 980.0:
+		vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92), 0)
+	elif vw4 >= 620.0:
+		# среднее окно (десктоп-панель ВК): две колонки — бой слева, управление справа
+		vb.custom_minimum_size = Vector2(minf(940.0, vw4 * 0.94), 0)
+	else:
+		vb.custom_minimum_size = Vector2(minf(560.0, vw4 * 0.92), 0)
 	vb.add_child(_section_title("БОЙ"))
 	if vw4 >= 980.0:
 		var brow := HBoxContainer.new()
@@ -6318,19 +6333,41 @@ func _show_menu_main() -> void:
 		brow.add_child(m1)
 		brow.add_child(m2)
 		brow.add_child(m4)
-	else:
-		vb.add_child(m1)
-		vb.add_child(m2)
-		vb.add_child(m4)
-	vb.add_child(_section_title("УПРАВЛЕНИЕ"))
-	if vw4 >= 980.0:
+		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
 		var crow := HBoxContainer.new()
 		crow.add_theme_constant_override("separation", 10)
 		crow.alignment = BoxContainer.ALIGNMENT_CENTER
 		vb.add_child(crow)
 		for cb in ctrls:
 			crow.add_child(cb)
+	elif vw4 >= 620.0:
+		var two := HBoxContainer.new()
+		two.add_theme_constant_override("separation", 18)
+		vb.add_child(two)
+		var col_l2 := VBoxContainer.new()
+		col_l2.custom_minimum_size = Vector2(minf(330.0, vw4 * 0.44), 0)
+		col_l2.add_theme_constant_override("separation", 8)
+		two.add_child(col_l2)
+		col_l2.add_child(m1)
+		col_l2.add_child(m2)
+		col_l2.add_child(m4)
+		var col_r2 := VBoxContainer.new()
+		col_r2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_r2.add_theme_constant_override("separation", 8)
+		two.add_child(col_r2)
+		col_r2.add_child(_section_title("УПРАВЛЕНИЕ"))
+		var flow := FlowContainer.new()
+		flow.add_theme_constant_override("h_separation", 6)
+		flow.add_theme_constant_override("v_separation", 6)
+		flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_r2.add_child(flow)
+		for cb in ctrls:
+			flow.add_child(cb)
 	else:
+		vb.add_child(m1)
+		vb.add_child(m2)
+		vb.add_child(m4)
+		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
 		var grid := GridContainer.new()
 		grid.columns = 3
 		grid.add_theme_constant_override("h_separation", 6)
