@@ -4574,7 +4574,7 @@ func _build_ui() -> void:
 	layer.add_child(lobby)
 	# во весь экран прямо в бою — справа под «Лобби»
 	var fsb := Button.new()
-	fsb.text = "⛶"
+	fsb.text = ""
 	fsb.tooltip_text = "Во весь экран"
 	fsb.anchor_left = 1.0
 	fsb.anchor_right = 1.0
@@ -4582,7 +4582,11 @@ func _build_ui() -> void:
 	fsb.offset_right = -8.0
 	fsb.offset_top = 114.0
 	fsb.offset_bottom = 150.0
-	fsb.add_theme_font_size_override("font_size", 16)
+	var bfsb_tex := _icon_tex("fullscreen")
+	if bfsb_tex:
+		fsb.icon = bfsb_tex
+		fsb.expand_icon = true
+		fsb.add_theme_constant_override("icon_max_width", 18)
 	var bfsb_sb := _frame_box()
 	fsb.add_theme_stylebox_override("normal", bfsb_sb)
 	var bfsb_h := _frame_box()
@@ -6314,10 +6318,14 @@ func _show_menu_main() -> void:
 			cc.queue_free()
 		# кнопка полного экрана — всегда под рукой, не только в настройках
 		var fsb := Button.new()
-		fsb.text = "⛶"
+		fsb.text = ""
 		fsb.tooltip_text = "Во весь экран"
-		fsb.add_theme_font_size_override("font_size", 18)
 		fsb.custom_minimum_size = Vector2(44, 32)
+		var fsb_tex := _icon_tex("fullscreen")
+		if fsb_tex:
+			fsb.icon = fsb_tex
+			fsb.expand_icon = true
+			fsb.add_theme_constant_override("icon_max_width", 18)
 		var fsb_sb := _frame_box()
 		fsb_sb.border_color = Color(0.45, 0.8, 1.0, 0.9)
 		fsb_sb.bg_color = Color(0.10, 0.18, 0.26, 0.95)
