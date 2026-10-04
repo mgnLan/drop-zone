@@ -1095,10 +1095,11 @@ const MQ_DAY_XP := 45
 const MQ_DAY_COINS := 5
 const MQ_LOGIN_XP := 20
 const MQ_LOGIN_COINS := 5
-const MQ_WEEK_XP := 60
+const MQ_WEEK_XP := 75
 const MQ_WEEK_COINS := 20
 const SEASON_START_UTC := 1790985600   # 2026-10-03 00:00 UTC — старт сезона 1
 const SEASON_DAYS := 60                # сезон длится 60 дней (конец: 2026-12-02)
+const BP_SEASON_LIVE := false          # false — заглушка «СКОРО!»; запускаем, когда наберём игроков
 # дневной пул: 4 миссии ротируются по дате + 5-я — всегда реклама
 const MQ_DAY_POOL := [
 	{"id": "kills", "name": "Убей 5 противников", "target": 5, "icon": "skull"},
@@ -6036,6 +6037,7 @@ func _start_mode_go(m: int) -> void:
 	get_tree().reload_current_scene()
 
 func _build_menu() -> void:
+	_bp_season_sync()
 	_menu_open = true
 	_busy = true
 	var layer := CanvasLayer.new()
@@ -6250,7 +6252,7 @@ const TIP_TEXTS := {
 	"squad": ["Отряд", "Здесь создаёшь и прокачиваешь бойцов: ник, оружие, класс, внешность.\nПогибшего бойца лечат в Медцентре — пока он восстанавливается, бери бойца из другого слота."],
 	"shop": ["Магазин", "Здесь тратишь монеты: камуфляжи, цвета ника, рамки.\nМонеты падают за бои и миссии; паки монет — за звёзды ВК."],
 	"chests": ["Сундуки", "Сундук удачи открывается за 150 монет.\nВнутри: осколки, косметика, аренда героев. Осколки — валюта редких наград."],
-	"bp": ["Battle Pass", "Миссии дня и недели дают сезонный опыт — качает уровни пропуска.\nБесплатная лента у всех. Premium открывает вторую ленту наград на все 60 дней сезона."],
+	"bp": ["Battle Pass", "Миссии дня и недели дают сезонный опыт — он качнет уровни пропуска со дня старта сезона.\nБесплатная лента у всех. Premium открывает вторую ленту наград. Старт сезона — СКОРО."],
 	"med": ["Медцентр", "Погибшие бойцы восстанавливаются со временем.\nХочешь быстрее — заплати монетами или осколками."],
 	"heroes": ["Герои", "Герои — бойцы с особыми стартовыми пистолетами и модами статов.\nПолучаешь из сундуков, фрагментов, аренды и наград Battle Pass."],
 	"progress": ["Прогрессия", "Опыт за бои поднимает уровень аккаунта.\nУровни открывают слоты бойцов и таланты."],
@@ -7920,7 +7922,21 @@ func _show_menu_progress() -> void:
 	back.pressed.connect(_show_menu_main)
 	vb.add_child(back)
 
+func _bp_season_sync() -> void:
+	# смена даты старта сезона = честный старт для всех: прогресс пропуска обнуляется.
+	# Пока сезон не запущен (BP_SEASON_LIVE=false), набранный опыт — тренировочный
+	# и обнулится в день запуска автоматически (константа SEASON_START_UTC сдвинется).
+	if int(_profile.get("bp_season_start", 0)) == SEASON_START_UTC:
+		return
+	_profile.bp_season_start = SEASON_START_UTC
+	_profile.bp_xp = 0
+	_profile.bp_claimed_free = []
+	_profile.bp_claimed_prem = []
+	_profile.bp_owned = 0
+	_save_profile()
+
 func _show_menu_bp() -> void:
+	_bp_season_sync()
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -7930,6 +7946,22 @@ func _show_menu_bp() -> void:
 	hrow_bp.alignment = BoxContainer.ALIGNMENT_END
 	vb.add_child(hrow_bp)
 	hrow_bp.add_child(_help_button("bp"))
+	# ЗАГЛУШКА: сезон запустим, когда наберём игроков. Покупка пропуска закрыта до старта.
+	if not BP_SEASON_LIVE:
+		_maybe_auto_tip("bp")
+		var soon := Label.new()
+		soon.text = "СКОРО!"
+		soon.add_theme_font_size_override("font_size", 44)
+		soon.add_theme_color_override("font_color", Color(1.0, 0.8, 0.25))
+		soon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(soon)
+		vb.add_child(_framed_label("Сезон 1 стартует, когда наберём игроков. Миссии дня и недели уже работают — опыт пропуска начнёт считаться со дня старта (у всех честно с нуля).", 13))
+		vb.add_child(_framed_label("50 уровней · 60 дней · две ленты наград\n• Бесплатно: аренды героев «Крот» и «Пёс», фрагменты «Вдова», герой «Призрак» навсегда, сундуки, монеты, осколки\n• Premium (399 ₽): аренды «Следопыт», «Молот», «Жнец», телепорт «Шторм», рамка «Легенда», сундуки ×6", 13))
+		var back_soon := Button.new()
+		back_soon.text = "← Назад"
+		back_soon.pressed.connect(_show_menu_main)
+		vb.add_child(back_soon)
+		return
 	_maybe_auto_tip("bp")
 	var lvl := _bp_level()
 	var cur_xp := int(_profile.get("bp_xp", 0))
