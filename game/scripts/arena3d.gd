@@ -6299,7 +6299,7 @@ func _build_menu() -> void:
 	scroll.offset_left = 12.0 if mob_w else 24.0
 	scroll.offset_right = -12.0 if mob_w else -24.0
 	scroll.offset_top = 90.0
-	scroll.offset_bottom = -166.0
+	scroll.offset_bottom = -140.0
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	layer.add_child(scroll)
 	var cc := CenterContainer.new()
@@ -6322,8 +6322,8 @@ func _build_menu() -> void:
 		chat.offset_right = -16.0
 	else:
 		chat.offset_right = 246.0
-	chat.offset_top = -180.0
-	chat.offset_bottom = -16.0
+	chat.offset_top = -150.0
+	chat.offset_bottom = -10.0
 	layer.add_child(chat)
 	_ui.menu_chat_panel = chat
 	var chat_v := VBoxContainer.new()
@@ -6368,7 +6368,7 @@ func _build_menu() -> void:
 	# область сообщений — прокручиваемая, фиксированной высоты: рамка не растёт,
 	# старые сообщения уходят вверх, новые появляются снизу (как в боевом чате)
 	var lines_scroll := ScrollContainer.new()
-	lines_scroll.custom_minimum_size = Vector2(0, 40)
+	lines_scroll.custom_minimum_size = Vector2(0, 26)
 	lines_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	lines_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	content.add_child(lines_scroll)
@@ -6588,7 +6588,7 @@ func _toggle_menu_chat() -> void:
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
-func _daily_box() -> PanelContainer:
+func _daily_box(force_single := false) -> PanelContainer:
 	_mq_check()
 	var pc := PanelContainer.new()
 	var sb := _card_style()
@@ -6637,7 +6637,7 @@ func _daily_box() -> PanelContainer:
 		l.text = "%s — %d/%d" % [str(m["name"]), int(prog.get(mid, 0)), int(m["target"])]
 		l.add_theme_font_size_override("font_size", 13)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		l.custom_minimum_size = Vector2(240, 0)
+		l.custom_minimum_size = Vector2(0 if force_single else 240, 0)
 		l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if done:
 			l.modulate = Color(0.6, 1.0, 0.6)
@@ -6649,7 +6649,7 @@ func _daily_box() -> PanelContainer:
 		rw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(rw)
 		rows.append(row)
-	if _vw() >= 760.0:
+	if _vw() >= 760.0 and not force_single:
 		# широкое окно: две колонки, чтобы не скроллить вниз
 		dvb.add_child(rows[0])
 		var cols := HBoxContainer.new()
@@ -6777,29 +6777,16 @@ func _show_menu_main() -> void:
 		vb.custom_minimum_size = Vector2(minf(940.0, vw4 * 0.94), 0)
 	else:
 		vb.custom_minimum_size = Vector2(minf(560.0, vw4 * 0.92), 0)
-	vb.add_child(_section_title("БОЙ"))
-	if vw4 >= 980.0:
-		var brow := HBoxContainer.new()
-		brow.add_theme_constant_override("separation", 14)
-		vb.add_child(brow)
-		brow.add_child(m1)
-		brow.add_child(m2)
-		brow.add_child(m4)
-		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
-		var crow := HBoxContainer.new()
-		crow.add_theme_constant_override("separation", 10)
-		crow.alignment = BoxContainer.ALIGNMENT_CENTER
-		vb.add_child(crow)
-		for cb in ctrls:
-			crow.add_child(cb)
-	elif vw4 >= 620.0:
+	if vw4 >= 620.0:
+		# две-три колонки — бой | управление | миссии: всё лобби помещается без скролла
 		var two := HBoxContainer.new()
-		two.add_theme_constant_override("separation", 18)
+		two.add_theme_constant_override("separation", 16)
 		vb.add_child(two)
 		var col_l2 := VBoxContainer.new()
-		col_l2.custom_minimum_size = Vector2(minf(330.0, vw4 * 0.44), 0)
+		col_l2.custom_minimum_size = Vector2(minf(300.0, vw4 * 0.34), 0)
 		col_l2.add_theme_constant_override("separation", 8)
 		two.add_child(col_l2)
+		col_l2.add_child(_section_title("БОЙ"))
 		col_l2.add_child(m1)
 		col_l2.add_child(m2)
 		col_l2.add_child(m4)
@@ -6815,7 +6802,18 @@ func _show_menu_main() -> void:
 		col_r2.add_child(flow)
 		for cb in ctrls:
 			flow.add_child(cb)
+		# третья колонка — миссии дня (на среднем окне под колонками, см. низ функции)
+		if vw4 >= 860.0:
+			var col_m2 := VBoxContainer.new()
+			col_m2.custom_minimum_size = Vector2(minf(330.0, vw4 * 0.36), 0)
+			col_m2.add_theme_constant_override("separation", 8)
+			two.add_child(col_m2)
+			col_m2.add_child(_section_title("МИССИИ ДНЯ"))
+			var dq := _daily_box(true)
+			dq.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			col_m2.add_child(dq)
 	else:
+		vb.add_child(_section_title("БОЙ"))
 		vb.add_child(m1)
 		vb.add_child(m2)
 		vb.add_child(m4)
@@ -6827,8 +6825,9 @@ func _show_menu_main() -> void:
 		vb.add_child(grid)
 		for cb in ctrls:
 			grid.add_child(cb)
-	vb.add_child(_section_title("МИССИИ ДНЯ"))
-	vb.add_child(_daily_box())
+	if vw4 < 860.0:
+		vb.add_child(_section_title("МИССИИ ДНЯ"))
+		vb.add_child(_daily_box())
 
 # ---------- полный экран: браузер (вкл/выкл), в ВК ещё и расширение окна ----------
 func _request_fullscreen() -> void:
