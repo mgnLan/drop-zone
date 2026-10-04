@@ -6437,6 +6437,29 @@ func _build_menu() -> void:
 		_profile.seen_welcome = 1
 		_save_profile()
 		_welcome_overlay()
+	# временная диагностика v6.108: причины чёрных полос и молчания звука в ВК (убрать после разбора)
+	if OS.has_feature("web"):
+		var dzl := Label.new()
+		dzl.add_theme_font_size_override("font_size", 11)
+		dzl.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0, 0.65))
+		dzl.anchor_left = 1.0
+		dzl.anchor_right = 1.0
+		dzl.anchor_top = 1.0
+		dzl.anchor_bottom = 1.0
+		dzl.offset_left = -640.0
+		dzl.offset_right = -8.0
+		dzl.offset_top = -22.0
+		dzl.offset_bottom = -2.0
+		dzl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		layer.add_child(dzl)
+		var dzt := Timer.new()
+		dzt.wait_time = 1.0
+		dzt.autostart = true
+		layer.add_child(dzt)
+		dzt.timeout.connect(func():
+			var d = JavaScriptBridge.eval("window.dzDiag?JSON.stringify(window.dzDiag):'no-diag'", true)
+			dzl.text = "%s | sfx:%d snd:%s" % [str(d), _sfx.size(), str(_settings.get("sound", true))]
+		)
 	_show_menu_main()
 
 # ---------- превью для новых игроков (А+Б+Г): приветствие, подсказки разделов, кнопка «?» ----------
