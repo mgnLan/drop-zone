@@ -8322,6 +8322,7 @@ func _open_show_chest() -> void:
 	_profile.coins = int(_profile.coins) - CHEST_PRICE
 	_mq_event("luckchest", 1)
 	_chest_roll()
+	_chest_open_overlay()
 
 # ---------- герои, крафт и обмен: общие хелперы ----------
 func _cosm_name(k: String, idx: int) -> String:
@@ -8510,6 +8511,93 @@ func _chest_roll() -> void:
 	_chest_last_rarity = rarity
 	_save_profile()
 
+# поставить pivot в центр карточки после первого кадра раскладки (для scale-твинов)
+func _set_pivot_next_frame(card: Control) -> void:
+	await get_tree().process_frame
+	if is_instance_valid(card):
+		card.pivot_offset = card.size / 2.0
+
+# оверлей открытия сундука: карточка выпавшего предмета — появление с масштаба, рамка и свечение цветом редкости
+func _chest_open_overlay() -> void:
+	if not _ui.has("menu_layer") or not is_instance_valid(_ui.menu_layer):
+		_show_menu_chests()
+		return
+	var rarity: int = clampi(_chest_last_rarity, 0, 5)
+	var rcol: Color = RARITY_COLORS[rarity]
+	var layer: CanvasLayer = _ui.menu_layer
+	var ov := Control.new()
+	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(ov)
+	var shade := ColorRect.new()
+	shade.color = Color(0.01, 0.02, 0.04, 0.82)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(shade)
+	var ctr := CenterContainer.new()
+	ctr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(ctr)
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(minf(430.0, _vw() * 0.9), 0)
+	var cs := _inv_card_style(rcol, Color(0.05, 0.06, 0.10, 0.98))
+	cs.shadow_color = Color(rcol.r, rcol.g, rcol.b, 0.55)
+	cs.shadow_size = 20
+	card.add_theme_stylebox_override("panel", cs)
+	ctr.add_child(card)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 8)
+	cv.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(cv)
+	var chiprow := HBoxContainer.new()
+	chiprow.alignment = BoxContainer.ALIGNMENT_CENTER
+	chiprow.add_child(_icon_chip("chest", 44))
+	cv.add_child(chiprow)
+	var tl := Label.new()
+	tl.text = "СУНДУК ОТКРЫТ"
+	tl.add_theme_font_size_override("font_size", 13)
+	tl.add_theme_color_override("font_color", Color(0.62, 0.68, 0.78))
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cv.add_child(tl)
+	var nl := Label.new()
+	nl.text = _chest_last
+	nl.add_theme_font_size_override("font_size", 19)
+	nl.add_theme_color_override("font_color", rcol)
+	nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cv.add_child(nl)
+	var rl := Label.new()
+	rl.text = "Редкость: " + RARITY_NAMES[rarity]
+	rl.add_theme_font_size_override("font_size", 14)
+	rl.add_theme_color_override("font_color", rcol)
+	rl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cv.add_child(rl)
+	var line := ColorRect.new()
+	line.color = Color(rcol.r, rcol.g, rcol.b, 0.45)
+	line.custom_minimum_size = Vector2(0, 1)
+	cv.add_child(line)
+	var take := _menu_button("Забрать", true)
+	take.custom_minimum_size = Vector2(180, 48)
+	take.pressed.connect(func():
+		ov.queue_free()
+		_show_menu_chests()
+	)
+	var brow := HBoxContainer.new()
+	brow.alignment = BoxContainer.ALIGNMENT_CENTER
+	brow.add_child(take)
+	cv.add_child(brow)
+	# анимация появления: с масштаба 0.55 к 1.0 с пружиной + мягкое свечение карточки
+	card.scale = Vector2(0.55, 0.55)
+	card.modulate = Color(1, 1, 1, 0)
+	_set_pivot_next_frame(card)
+	var tw := card.create_tween()
+	tw.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tw.tween_property(card, "scale", Vector2(1, 1), 0.45)
+	tw.parallel().tween_property(card, "modulate", Color(1, 1, 1, 1), 0.3)
+	var tw2 := card.create_tween()
+	tw2.set_loops()
+	tw2.tween_interval(0.9)
+	tw2.tween_property(card, "self_modulate", Color(1.18, 1.18, 1.1), 0.55).set_trans(Tween.TRANS_SINE)
+	tw2.tween_property(card, "self_modulate", Color(1, 1, 1), 0.55).set_trans(Tween.TRANS_SINE)
+
 func _chest_exchange(kind: String, idx: int, price: int) -> void:
 	if int(_profile.get("shards", 0)) < price:
 		return
@@ -8522,7 +8610,11 @@ func _show_menu_chests() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(520.0, _vw() * 0.94), 0)
-	vb.add_child(_screen_title("chest", "Сундуки удачи"))
+	var trow := _screen_title("chest", "Сундуки удачи")
+	for tch in trow.get_children():
+		if tch is Label:
+			(tch as Label).add_theme_color_override("font_color", Color(1.0, 0.82, 0.35))
+	vb.add_child(trow)
 	var hrow_chests := HBoxContainer.new()
 	hrow_chests.alignment = BoxContainer.ALIGNMENT_END
 	vb.add_child(hrow_chests)
@@ -8536,20 +8628,25 @@ func _show_menu_chests() -> void:
 	vb.add_child(bal)
 	var pity: Array = _profile.get("pity", [0, 0, 0])
 	var pity_siren: int = int(_profile.get("pity_siren", 0))
-	# гаранты с тонкими прогресс-барами
+	# гаранты: карточка с прогресс-барами, подписи цветом редкости
+	var gwrap := PanelContainer.new()
+	gwrap.add_theme_stylebox_override("panel", _inv_card_style(Color(0.30, 0.42, 0.58, 0.6)))
+	gwrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(gwrap)
 	var gbox := VBoxContainer.new()
-	gbox.add_theme_constant_override("separation", 4)
-	vb.add_child(gbox)
+	gbox.add_theme_constant_override("separation", 5)
+	gwrap.add_child(gbox)
 	var gn := ["Эпик", "Легенда", "Мифик", "Сиреневый"]
 	var gn_max := [10, 30, 80, 200]
 	var gn_vals := [int(pity[0]), int(pity[1]), int(pity[2]), pity_siren]
+	var gn_col := [RARITY_COLORS[2], RARITY_COLORS[3], RARITY_COLORS[4], RARITY_COLORS[5]]
 	for gi in 4:
 		var grow3 := HBoxContainer.new()
 		grow3.add_theme_constant_override("separation", 8)
 		gbox.add_child(grow3)
 		var gl2 := _mk_label("%s через %d" % [gn[gi], maxi(1, int(gn_max[gi]) - gn_vals[gi])], 12)
 		gl2.custom_minimum_size = Vector2(130, 0)
-		gl2.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9))
+		gl2.add_theme_color_override("font_color", gn_col[gi])
 		grow3.add_child(gl2)
 		var pb := ProgressBar.new()
 		pb.max_value = gn_max[gi]
@@ -8560,17 +8657,25 @@ func _show_menu_chests() -> void:
 		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		grow3.add_child(pb)
 	if _chest_last != "":
-		var rl := Label.new()
-		rl.text = "Выпало: " + _chest_last
-		rl.add_theme_font_size_override("font_size", 18)
+		# последний дроп: карточка с обводкой редкости
+		var lwrap := PanelContainer.new()
+		lwrap.add_theme_stylebox_override("panel", _inv_card_style(RARITY_COLORS[clampi(_chest_last_rarity, 0, 5)]))
+		lwrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vb.add_child(lwrap)
+		var lv := VBoxContainer.new()
+		lv.add_theme_constant_override("separation", 2)
+		lwrap.add_child(lv)
 		if _chest_last_rarity >= 0:
-			rl.add_theme_color_override("font_color", RARITY_COLORS[_chest_last_rarity])
 			var rn := Label.new()
-			rn.text = "Редкость: " + RARITY_NAMES[_chest_last_rarity]
-			rn.add_theme_font_size_override("font_size", 13)
+			rn.text = "Выпало · " + RARITY_NAMES[_chest_last_rarity]
+			rn.add_theme_font_size_override("font_size", 12)
 			rn.add_theme_color_override("font_color", RARITY_COLORS[_chest_last_rarity])
-			vb.add_child(rn)
-		vb.add_child(rl)
+			lv.add_child(rn)
+		var rl := Label.new()
+		rl.text = _chest_last
+		rl.add_theme_font_size_override("font_size", 15)
+		rl.add_theme_color_override("font_color", Color(0.9, 0.93, 0.97))
+		lv.add_child(rl)
 	var ob := _menu_button("Открыть сундук — %d" % CHEST_PRICE)
 	ob.icon = _icon_tex("coin")
 	ob.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
@@ -8591,7 +8696,6 @@ func _show_menu_chests() -> void:
 	ob.pressed.connect(func():
 		_open_show_chest()
 		_sfx_play("open")
-		_show_menu_chests()
 	)
 	vb.add_child(ob)
 	var leg := Label.new()
@@ -8601,9 +8705,9 @@ func _show_menu_chests() -> void:
 	vb.add_child(leg)
 	# обмен осколков: недельная ротация — 2 позиции каждой редкости (кроме сиреневой)
 	var wleft := int(604800 - (int(Time.get_unix_time_from_system()) % 604800))
-	vb.add_child(_framed_label("Обмен недели — ротация каждый понедельник", 15))
+	vb.add_child(_inv_section("ОБМЕН НЕДЕЛИ", Color(1.0, 0.82, 0.35)))
 	var rot := Label.new()
-	rot.text = "Новые позиции через %d дн. %d ч." % [wleft / 86400, (wleft % 86400) / 3600]
+	rot.text = "Ротация каждый понедельник · новые позиции через %d дн. %d ч." % [wleft / 86400, (wleft % 86400) / 3600]
 	rot.add_theme_font_size_override("font_size", 12)
 	rot.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	vb.add_child(rot)
@@ -8611,17 +8715,24 @@ func _show_menu_chests() -> void:
 		for e in _week_exchange(r):
 			var k2 := str(e["k"])
 			var i2 := int(e["i"])
+			var rcol2: Color = RARITY_COLORS[r]
+			var roww := PanelContainer.new()
+			roww.add_theme_stylebox_override("panel", _inv_card_style(Color(rcol2.r, rcol2.g, rcol2.b, 0.55), Color(0.05, 0.06, 0.10, 0.9)))
+			roww.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			vb.add_child(roww)
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
-			vb.add_child(row)
+			roww.add_child(row)
 			var nl := Label.new()
 			nl.text = _cosm_name(k2, i2)
 			nl.add_theme_font_size_override("font_size", 14)
-			nl.add_theme_color_override("font_color", RARITY_COLORS[r])
+			nl.add_theme_color_override("font_color", rcol2)
 			nl.custom_minimum_size = Vector2(230, 0)
+			nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			row.add_child(nl)
 			var eb := Button.new()
 			eb.custom_minimum_size = Vector2(140, 34)
+			eb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			if _cosm_owned(k2, i2):
 				eb.text = "Есть"
 				eb.disabled = true
