@@ -132,6 +132,10 @@ var _onboard_bar: PanelContainer = null
 var _onboard_lbl: Label = null
 var _onboard_pulse: Control = null
 var _pulse_t := 0.0
+
+# ---------- лимит времени на ход ----------
+const TURN_TIME := 40.0            # секунд на ход игрока — дальше ход переходит противнику
+var _turn_time_left := TURN_TIME
 const ONBOARD_TXT := [
 	"Обучение 1/4: выбери бойца — кликни по нему на поле или по карточке слева",
 	"Обучение 2/4: кликни подсвеченную клетку — боец переместится",
@@ -2915,6 +2919,8 @@ func _process(delta: float) -> void:
 	_update_sel_marker()
 	_update_edge_arrows()
 	_pulse_end_btn()
+	_pulse_lvl_note()
+	_tick_turn_timer(delta)
 
 # ---------- эффекты: взрыв и гибель ----------
 func _spawn_burst(pos: Vector3, color: Color) -> void:
@@ -3019,7 +3025,7 @@ func _select_from_squad(i: int) -> void:
 func _refresh_squad() -> void:
 	if not _ui.has("squad_rows"):
 		return
-	for i in mini(4, _ui.squad_rows.size()):
+	for i in mini(5, _ui.squad_rows.size()):
 		var r: Dictionary = _ui.squad_rows[i]
 		if i >= _fighters.size():
 			r.row.visible = false
@@ -3029,15 +3035,23 @@ func _refresh_squad() -> void:
 		var tex := _fighter_portrait_tex(i)
 		if tex != null:
 			r.portrait.texture = tex
+		if r.has("hp"):
+			r.hp.max_value = f.max_hp
+			r.hp.value = maxf(0, f.hp)
+		var sb: StyleBoxFlat = r.row.get_theme_stylebox("panel")
 		if not f.alive:
-			r.name.text = "%s †" % f.name
-			r.stats.text = "выбыл из шоу"
-			r.row.modulate = Color(0.45, 0.45, 0.5)
-		else:
-			var mark := "► " if i == _selected else ""
-			r.name.text = mark + f.name
-			r.stats.text = "HP %d/%d · ОД %d/%d" % [f.hp, f.max_hp, f.ap, f.max_ap]
+			r.row.modulate = Color(0.42, 0.42, 0.48)
+			sb.border_color = Color(0.3, 0.3, 0.34, 0.6)
+		elif i == _selected:
 			r.row.modulate = Color(1, 1, 1)
+			sb.border_color = Color(0.35, 0.90, 1.0, 1.0)
+			sb.shadow_color = Color(0.2, 0.7, 1.0, 0.5)
+			sb.shadow_size = 6
+		else:
+			r.row.modulate = Color(1, 1, 1)
+			sb.border_color = Color(0.20, 0.35, 0.48, 0.7)
+			sb.shadow_size = 0
+	_refresh_lvl_note()
 
 func _key(c: Vector2i) -> String:
 	return "%d,%d" % [c.x, c.y]
@@ -4277,6 +4291,7 @@ func _end_turn() -> void:
 		_tick_fire()
 	if not _game_over:
 		_turn += 1
+		_turn_time_left = TURN_TIME   # новый ход — лимит времени снова полный
 		for f in _fighters:
 			if f.alive:
 				f.ap = f.max_ap
@@ -4568,11 +4583,74 @@ func _build_ui() -> void:
 	vig.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(vig)
 	_ensure_http()   # сам добавляет _http в дерево; повторный add_child = ошибка репарента
+	# табличка хода — по центру сверху: ход, счёт, таймер; под ней золотая кнопка «Новый уровень»
+	var turn_plate := PanelContainer.new()
+	turn_plate.anchor_left = 0.5
+	turn_plate.anchor_right = 0.5
+	var plate_half := minf(190.0, _vw() * 0.46)
+	turn_plate.offset_left = -plate_half
+	turn_plate.offset_right = plate_half
+	turn_plate.offset_top = 8.0
+	turn_plate.offset_bottom = 56.0
+	var tps := _frame_box()
+	tps.bg_color = Color(0.03, 0.06, 0.11, 0.82)
+	tps.border_color = Color(0.30, 0.80, 1.0, 0.65)
+	tps.shadow_color = Color(0.1, 0.5, 0.9, 0.3)
+	tps.shadow_size = 7
+	turn_plate.add_theme_stylebox_override("panel", tps)
+	layer.add_child(turn_plate)
+	var turn_vb := VBoxContainer.new()
+	turn_vb.add_theme_constant_override("separation", 1)
+	turn_plate.add_child(turn_vb)
 	var turn := Label.new()
-	turn.position = Vector2(16, 10)
-	turn.add_theme_font_size_override("font_size", 14 if _mob() else 20)
-	layer.add_child(turn)
+	turn.add_theme_font_size_override("font_size", 13 if _mob() else 17)
+	turn.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	turn.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	turn_vb.add_child(turn)
 	_ui.turn = turn
+	var turn_timer := Label.new()
+	turn_timer.add_theme_font_size_override("font_size", 11 if _mob() else 13)
+	turn_timer.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0))
+	turn_timer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	turn_vb.add_child(turn_timer)
+	_ui.turn_timer = turn_timer
+	# золотая заметка «Новый уровень» — мерцает, пока есть нетраченные очки навыков
+	var lvl_note := Button.new()
+	lvl_note.text = ""
+	lvl_note.visible = false
+	lvl_note.anchor_left = 0.5
+	lvl_note.anchor_right = 0.5
+	lvl_note.offset_left = -120.0
+	lvl_note.offset_right = 120.0
+	lvl_note.offset_top = 62.0
+	lvl_note.offset_bottom = 90.0
+	var lns := StyleBoxFlat.new()
+	lns.bg_color = Color(0.30, 0.21, 0.04, 0.92)
+	lns.border_color = Color(1.0, 0.85, 0.35, 0.95)
+	lns.set_border_width_all(2)
+	lns.set_corner_radius_all(12)
+	lns.shadow_color = Color(1.0, 0.75, 0.2, 0.55)
+	lns.shadow_size = 9
+	lvl_note.add_theme_stylebox_override("normal", lns)
+	var lnh: StyleBoxFlat = lns.duplicate()
+	lnh.bg_color = Color(0.42, 0.30, 0.06, 0.96)
+	lvl_note.add_theme_stylebox_override("hover", lnh)
+	lvl_note.add_theme_stylebox_override("pressed", lnh)
+	lvl_note.add_theme_color_override("font_color", Color(1.0, 0.88, 0.45))
+	lvl_note.add_theme_font_size_override("font_size", 12 if _mob() else 13)
+	lvl_note.tooltip_text = "Есть нетраченные очки навыков — нажми, чтобы прокачать бойца"
+	lvl_note.pressed.connect(func():
+		if _selected >= 0 and _selected < _fighters.size() and int(_fighters[_selected].get("pts", 0)) > 0:
+			_show_levelup(_selected)
+		else:
+			for i in _fighters.size():
+				if _fighters[i].team == 0 and _fighters[i].alive and int(_fighters[i].get("pts", 0)) > 0:
+					_select(i)
+					_show_levelup(i)
+					break
+	)
+	layer.add_child(lvl_note)
+	_ui.lvl_note = lvl_note
 	var btn := Button.new()
 	btn.text = "Конец хода" if _mob() else "Конец хода [Space]"
 	btn.anchor_left = 1.0
@@ -4720,39 +4798,43 @@ func _build_ui() -> void:
 	_ui.card_ap = ap_bar
 	_style_bar(hp_bar, Color(0.25, 0.9, 0.3))
 	_style_bar(ap_bar, Color(0.2, 0.8, 1.0))
-	# --- ростер отряда: вертикальный список слева, компактный, с портретами ---
-	var roster := VBoxContainer.new()
-	roster.position = Vector2(12, 226)
-	roster.add_theme_constant_override("separation", 4)
+	# --- ростер отряда: горизонтальный ряд прямоугольных портретов-иконок под карточкой ---
+	var roster := HBoxContainer.new()
+	roster.position = Vector2(12, 224)
+	roster.add_theme_constant_override("separation", 6)
 	layer.add_child(roster)
 	_ui.squad_rows = []
-	for i in 4:
+	for i in 5:
 		var row := PanelContainer.new()
-		row.custom_minimum_size = Vector2(160, 42) if _mob() else Vector2(190, 42)
-		var rh := HBoxContainer.new()
-		rh.add_theme_constant_override("separation", 6)
-		row.add_child(rh)
+		row.custom_minimum_size = Vector2(36, 56)
+		var r_sb := StyleBoxFlat.new()
+		r_sb.bg_color = Color(0.03, 0.06, 0.11, 0.80)
+		r_sb.border_color = Color(0.20, 0.35, 0.48, 0.7)
+		r_sb.set_border_width_all(1)
+		r_sb.set_corner_radius_all(7)
+		r_sb.set_content_margin_all(2)
+		row.add_theme_stylebox_override("panel", r_sb)
+		var rv := VBoxContainer.new()
+		rv.add_theme_constant_override("separation", 2)
+		row.add_child(rv)
 		var rp := TextureRect.new()
-		rp.custom_minimum_size = Vector2(30, 30)
+		rp.custom_minimum_size = Vector2(30, 38)   # прямоугольный портрет
 		rp.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		rp.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		rh.add_child(rp)
-		var rv := VBoxContainer.new()
-		rv.add_theme_constant_override("separation", 0)
-		rh.add_child(rv)
-		var rn := Label.new()
-		rn.add_theme_font_size_override("font_size", 12)
-		rv.add_child(rn)
-		var rs := Label.new()
-		rs.add_theme_font_size_override("font_size", 10)
-		rv.add_child(rs)
+		rv.add_child(rp)
+		var rh := ProgressBar.new()
+		rh.max_value = 100
+		rh.show_percentage = false
+		rh.custom_minimum_size = Vector2(30, 5)
+		rv.add_child(rh)
+		_style_bar(rh, Color(0.25, 0.9, 0.3))
 		var fi: int = i
 		row.gui_input.connect(func(ev: InputEvent):
 			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 				_select_from_squad(fi)
 		)
 		roster.add_child(row)
-		_ui.squad_rows.append({"row": row, "portrait": rp, "name": rn, "stats": rs})
+		_ui.squad_rows.append({"row": row, "portrait": rp, "hp": rh})
 	# --- диалоговое окно снизу слева: вкладки Логи битвы / Чат Арены / Чат комнаты ---
 	var chat := PanelContainer.new()
 	chat.anchor_top = 1.0
@@ -5082,20 +5164,7 @@ func _refresh_fighter_panel() -> void:
 	gf.pressed.connect(_sfx_play.bind("click"))
 	row.add_child(gf)
 	if (int(f.get("pts", 0)) > 0 or int(f.get("tpts", 0)) > 0) and f.team == 0:
-		var pb := Button.new()
-		pb.text = "Навыки +%d" % int(f.pts)
-		pb.add_theme_color_override("font_color", Color(1.0, 0.92, 0.4))
-		var pbs := StyleBoxFlat.new()
-		pbs.bg_color = Color(0.45, 0.33, 0.08, 0.95)
-		pbs.border_color = Color(1.0, 0.85, 0.3, 0.95)
-		pbs.set_border_width_all(2)
-		pbs.set_corner_radius_all(6)
-		pb.add_theme_stylebox_override("normal", pbs)
-		pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		pb.custom_minimum_size = Vector2(0, 22)
-		pb.add_theme_font_size_override("font_size", 10)
-		pb.pressed.connect(_show_levelup.bind(_selected))
-		row.add_child(pb)
+		_refresh_lvl_note()
 	_refresh_card()
 
 # ---------- тестовый прогон для скриншота ----------
@@ -5614,6 +5683,50 @@ func _pulse_end_btn() -> void:
 		b.modulate = Color(g, g, g)
 	elif b.modulate != Color(1, 1, 1):
 		b.modulate = Color(1, 1, 1)
+
+func _refresh_lvl_note() -> void:
+	# золотая заметка сверху: видна, пока у боёв команды игрока есть нетраченные очки навыков
+	if not _ui.has("lvl_note"):
+		return
+	var total := 0
+	for f in _fighters:
+		if f.team == 0 and f.alive:
+			total += int(f.get("pts", 0))
+	var nb: Button = _ui.lvl_note
+	if total > 0 and not _game_over:
+		nb.text = "✦ Новый уровень — навыки +%d ✦" % total
+		nb.visible = true
+	else:
+		nb.visible = false
+
+func _pulse_lvl_note() -> void:
+	# мерцание золотом, пока очки не потрачены
+	if not _ui.has("lvl_note"):
+		return
+	var nb: Button = _ui.lvl_note
+	if not nb.visible:
+		return
+	var g := 0.86 + 0.14 * sin(Time.get_ticks_msec() * 0.005)
+	nb.modulate = Color(1.0, 0.88 + 0.12 * g, 0.5 + 0.5 * g)
+
+func _tick_turn_timer(delta: float) -> void:
+	# лимит 40 с на ход: истёк — ход уходит противнику. В тестах не тикает
+	if _test_run() or _game_over or _busy or _menu_open or _lvl_open:
+		return
+	if _ui.has("turn_timer"):
+		_turn_time_left = maxf(0.0, _turn_time_left - delta)
+		var t := int(ceil(_turn_time_left))
+		var tt: Label = _ui.turn_timer
+		tt.text = "0:%02d" % t
+		if _turn_time_left <= 10.0:
+			tt.add_theme_color_override("font_color", Color(1.0, 0.42, 0.32))
+		elif _turn_time_left <= 20.0:
+			tt.add_theme_color_override("font_color", Color(1.0, 0.80, 0.30))
+		else:
+			tt.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0))
+		if _turn_time_left <= 0.0:
+			_log("Время хода вышло — ход переходит противнику")
+			_end_turn()
 
 func _update_edge_arrows() -> void:
 	# красные стрелки у края экрана на видимых врагов вне кадра + дистанция
