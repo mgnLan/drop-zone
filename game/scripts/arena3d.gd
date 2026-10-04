@@ -5229,7 +5229,7 @@ func _run_testmenu(mobile := false, sfx := "") -> void:
 		sfx = "_mob" if mobile else ""
 	await get_tree().process_frame
 	# дым-тест чата: локальное эхо с эмодзи (панель эмодзи не открываем — на скринах должна быть честная картина меню)
-	_menu_chat_local[0].append("Вы: проверка чата 😀")
+	_menu_chat_local[0].append("Вы: проверка чата :)")
 	_render_menu_chat()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -5921,7 +5921,7 @@ const MENU_CHAT_STUBS := [
 ]
 
 var _menu_chat_local := [[], [], []]  # локальные сообщения игрока (эхо до онлайна)
-const MENU_EMOJIS := ["😀", "😂", "😎", "😢", "😡", "🤝", "👍", "👎", "🔥", "💀", "⚡", "🏆", "❤️", "👋", "🎉", "💪"]
+const MENU_EMOJIS := [":)", ":D", ";)", ":P", "xD", "B)", ":(", ":'(", ":/", ":O", "o_O", ">:)", "<3", "*_*", ":|", ":-*"]
 
 func _render_menu_chat() -> void:
 	if not _ui.has("menu_chat_lines"):
@@ -5941,7 +5941,9 @@ func _render_menu_chat() -> void:
 		l2.modulate = Color(0.85, 0.95, 1.0)
 		_ui.menu_chat_lines.add_child(l2)
 	if _ui.has("menu_chat_scroll"):
-		_ui.menu_chat_scroll.scroll_vertical = 100000   # прилипаем к последним сообщениям
+		# прилипаем к последним сообщениям; set_deferred — после пересчёта раскладки,
+		# иначе scroll_vertical не «дожимает» до низа (WebView ВК особенно заметно)
+		_ui.menu_chat_scroll.set_deferred("scroll_vertical", 100000)
 	for ti in _ui.menu_chat_btns.size():
 		_ui.menu_chat_btns[ti].modulate = Color(1, 1, 1) if ti == _menu_chat_tab else Color(0.55, 0.55, 0.6)
 
@@ -5963,7 +5965,7 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 		_ui[key].visible = not _ui[key].visible
 		return
 	var p := PanelContainer.new()
-	p.custom_minimum_size = Vector2(288, 0)
+	p.custom_minimum_size = Vector2(340, 0)
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.05, 0.08, 0.13, 0.95)
 	sb.set_corner_radius_all(8)
@@ -5978,8 +5980,8 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	for em in MENU_EMOJIS:
 		var eb := Button.new()
 		eb.text = em
-		eb.custom_minimum_size = Vector2(34, 34)
-		eb.add_theme_font_size_override("font_size", 18)
+		eb.custom_minimum_size = Vector2(40, 34)
+		eb.add_theme_font_size_override("font_size", 14)
 		var e: String = em
 		eb.pressed.connect(func():
 			inp.insert_text_at_caret(e)
@@ -5992,7 +5994,7 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	p.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	var hr := host.get_rect()
 	p.position = Vector2(hr.position.x, hr.position.y - 108.0)
-	p.size = Vector2(300, 100)
+	p.size = Vector2(352, 100)
 	_ui[key] = p
 
 func _start_mode(m: int) -> void:
