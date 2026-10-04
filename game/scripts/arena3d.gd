@@ -4611,9 +4611,11 @@ func _build_ui() -> void:
 	lobby.offset_top = 62.0
 	lobby.offset_bottom = 108.0
 	lobby.tooltip_text = "Выйти в главное меню (бой будет потерян)"
+	_style_menu_button(lobby)
+	lobby.add_theme_font_size_override("font_size", 14 if _mob() else 16)
 	lobby.pressed.connect(_go_lobby)
 	layer.add_child(lobby)
-	# во весь экран прямо в бою — справа под «Лобби»
+	# во весь экран прямо в бою — справа под «Дроп» (узкая иконка у правого края)
 	var fsb := Button.new()
 	fsb.text = ""
 	fsb.tooltip_text = "Во весь экран"
@@ -4621,8 +4623,8 @@ func _build_ui() -> void:
 	fsb.anchor_right = 1.0
 	fsb.offset_left = -56.0
 	fsb.offset_right = -8.0
-	fsb.offset_top = 114.0
-	fsb.offset_bottom = 150.0
+	fsb.offset_top = 166.0
+	fsb.offset_bottom = 202.0
 	var bfsb_tex := _icon_tex("fullscreen")
 	if bfsb_tex:
 		fsb.icon = bfsb_tex
@@ -4649,6 +4651,8 @@ func _build_ui() -> void:
 	sponsor.offset_top = 114.0
 	sponsor.offset_bottom = 160.0
 	sponsor.tooltip_text = "Спонсорский дроп: посмотри ролик — получи +3 AP и 25 монет"
+	_style_menu_button(sponsor, true)
+	sponsor.add_theme_font_size_override("font_size", 14 if _mob() else 16)
 	sponsor.pressed.connect(func():
 		_show_rewarded_ad()
 		sponsor.disabled = _sponsor_used
@@ -4857,9 +4861,9 @@ func _build_ui() -> void:
 	fp.anchor_right = 1.0
 	fp.offset_left = -min(232.0, _vw() * 0.62)
 	fp.offset_right = -8.0
-	# ниже кнопок «Лобби»/⛶/«Дроп» (они занимают y 62–160) — иначе перекрывают первые строки
-	fp.offset_top = 166.0
-	fp.offset_bottom = 306.0
+	# ниже кнопок «Лобби»/«Дроп»/⛶ (они занимают y 62–202) — иначе перекрывают первые строки
+	fp.offset_top = 208.0
+	fp.offset_bottom = 348.0
 	fp.add_theme_stylebox_override("panel", _frame_box())
 	layer.add_child(fp)
 	var vb := VBoxContainer.new()
