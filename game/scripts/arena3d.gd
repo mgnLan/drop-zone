@@ -4970,12 +4970,23 @@ func _build_ui() -> void:
 	# --- окно инвентаря (скрыто) ---
 	var iw := PanelContainer.new()
 	iw.set_anchors_preset(Control.PRESET_CENTER)
-	var iw2: float = min(320.0, _vw() * 0.47)
+	var iw2: float = min(430.0, _vw() * 0.47)
 	iw.offset_left = -iw2
 	iw.offset_right = iw2
-	iw.offset_top = -250.0
-	iw.offset_bottom = 250.0
-	iw.add_theme_stylebox_override("panel", _frame_box())
+	iw.offset_top = -270.0
+	iw.offset_bottom = 270.0
+	var iws := StyleBoxFlat.new()
+	iws.bg_color = Color(0.025, 0.045, 0.085, 0.97)
+	iws.border_color = Color(0.30, 0.75, 1.0, 0.55)
+	iws.set_border_width_all(2)
+	iws.set_corner_radius_all(14)
+	iws.shadow_color = Color(0.1, 0.4, 0.8, 0.35)
+	iws.shadow_size = 14
+	iws.content_margin_left = 14.0
+	iws.content_margin_right = 14.0
+	iws.content_margin_top = 12.0
+	iws.content_margin_bottom = 12.0
+	iw.add_theme_stylebox_override("panel", iws)
 	layer.add_child(iw)
 	var ivb := VBoxContainer.new()
 	iw.add_child(ivb)
@@ -9097,6 +9108,73 @@ func _silhouette_tex() -> Texture2D:
 	_sil_tex = ImageTexture.create_from_image(img)
 	return _sil_tex
 
+# ---------- инвентарь: RPG-стили ----------
+func _inv_item_border(kind: String) -> Color:
+	return {"weapon": Color(1.0, 0.38, 0.38, 0.9), "armor": Color(0.38, 0.72, 1.0, 0.9), "consumable": Color(0.45, 0.95, 0.55, 0.9)}.get(kind, Color(0.6, 0.65, 0.7, 0.8))
+
+# карточка предмета/слота: тёмная, со скруглением и цветной обводкой по типу
+func _inv_card_style(col: Color, bg := Color(0.045, 0.075, 0.12, 0.96)) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.border_color = col
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 8.0
+	sb.content_margin_right = 8.0
+	sb.content_margin_top = 6.0
+	sb.content_margin_bottom = 6.0
+	return sb
+
+# «призрак» пустого слота: тусклая пунктирная рамка
+func _inv_ghost_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.03, 0.05, 0.08, 0.35)
+	sb.border_color = Color(0.45, 0.55, 0.65, 0.28)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 8.0
+	sb.content_margin_right = 8.0
+	sb.content_margin_top = 6.0
+	sb.content_margin_bottom = 6.0
+	return sb
+
+# заголовок секции инвентаря с акцентной полосой снизу
+func _inv_section(txt: String, accent := Color(0.35, 0.85, 1.0)) -> VBoxContainer:
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	var l := Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", 14)
+	l.add_theme_color_override("font_color", accent)
+	vb.add_child(l)
+	var line := ColorRect.new()
+	line.color = Color(accent.r, accent.g, accent.b, 0.45)
+	line.custom_minimum_size = Vector2(0, 1)
+	vb.add_child(line)
+	return vb
+
+# чип стата: тёмная подложка + подпись слева, значение справа цветом
+func _inv_stat_chip(cap: String, val: String, vcol: Color) -> PanelContainer:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _inv_card_style(Color(0.25, 0.42, 0.55, 0.55)))
+	pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	pc.add_child(hb)
+	var c := Label.new()
+	c.text = cap
+	c.add_theme_font_size_override("font_size", 11)
+	c.add_theme_color_override("font_color", Color(0.55, 0.65, 0.75))
+	hb.add_child(c)
+	var v := Label.new()
+	v.text = val
+	v.add_theme_font_size_override("font_size", 12)
+	v.add_theme_color_override("font_color", vcol)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hb.add_child(v)
+	return pc
+
 func _toggle_inventory() -> void:
 	if _selected < 0 or not _ui.has("inv_panel"):
 		return
@@ -9116,14 +9194,24 @@ func _show_inventory() -> void:
 	for c in box.get_children():
 		c.queue_free()
 	var title := Label.new()
-	title.text = "Снаряжение: %s" % f.name
-	title.add_theme_font_size_override("font_size", 20)
-	title.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	title.text = "СНАРЯЖЕНИЕ — %s" % str(f.name).to_upper()
+	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_color_override("font_color", Color(1.0, 0.82, 0.38))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	if _mob():
 		_show_inventory_mobile(f, box)
 		_ui.inv_panel.visible = true
 		return
+	# чипы статов: HP / ОД / Защита / Вес
+	var chips := GridContainer.new()
+	chips.columns = 4
+	chips.add_theme_constant_override("h_separation", 6)
+	box.add_child(chips)
+	chips.add_child(_inv_stat_chip("HP", "%d/%d" % [f.hp, f.max_hp], Color(0.35, 0.95, 0.45)))
+	chips.add_child(_inv_stat_chip("ОД", "%d/%d" % [f.ap, f.max_ap], Color(0.35, 0.85, 1.0)))
+	chips.add_child(_inv_stat_chip("Защита", str(_defense(f)), Color(0.75, 0.85, 0.95)))
+	chips.add_child(_inv_stat_chip("Вес", "%.1f/%.1f кг" % [_load_weight(f), _carry_limit(f)], Color(0.9, 0.8, 0.5)))
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 24)
 	box.add_child(hb)
@@ -9131,10 +9219,6 @@ func _show_inventory() -> void:
 	var sil := VBoxContainer.new()
 	sil.add_theme_constant_override("separation", 6)
 	hb.add_child(sil)
-	var stats := Label.new()
-	stats.text = "HP %d/%d   AP %d/%d\nЗащита: %d\nВес: %.1f/%.1f кг" % [
-		f.hp, f.max_hp, f.ap, f.max_ap, _defense(f), _load_weight(f), _carry_limit(f)]
-	sil.add_child(stats)
 	var fig := Control.new()
 	fig.custom_minimum_size = Vector2(240, 330)
 	sil.add_child(fig)
@@ -9158,16 +9242,14 @@ func _show_inventory() -> void:
 			if sit != null:
 				b.icon = sit
 				b.add_theme_constant_override("icon_max_width", 30)
+			b.add_theme_stylebox_override("normal", _inv_card_style(Color(0.38, 0.72, 1.0, 0.9)))
+			b.add_theme_stylebox_override("hover", _inv_card_style(Color(0.55, 0.85, 1.0, 1.0), Color(0.08, 0.13, 0.20, 0.98)))
+			b.add_theme_color_override("font_color", Color(0.88, 0.94, 1.0))
 			b.tooltip_text = _item_tooltip({"kind": "armor", "cat": cat, "item": it}) + "\n—\nКлик — снять"
 		else:
 			# пустой слот — «призрак»: тусклая рамка и подпись, а не серая кнопка
 			b.text = "%s · пусто" % sd[0]
-			var gb := StyleBoxFlat.new()
-			gb.bg_color = Color(0.03, 0.05, 0.08, 0.45)
-			gb.border_color = Color(0.45, 0.55, 0.65, 0.35)
-			gb.set_border_width_all(1)
-			gb.set_corner_radius_all(6)
-			b.add_theme_stylebox_override("normal", gb)
+			b.add_theme_stylebox_override("normal", _inv_ghost_style())
 			b.add_theme_color_override("font_color", Color(0.42, 0.5, 0.58))
 			b.tooltip_text = "Не экипировано — перетащи броню из рюкзака"
 		b.pressed.connect(func(): _unequip(cat))
@@ -9190,6 +9272,9 @@ func _show_inventory() -> void:
 		hands.add_theme_constant_override("icon_max_width", 44)
 	hands.position = Vector2(50, 152)
 	hands.custom_minimum_size = Vector2(140, 52)
+	hands.add_theme_stylebox_override("normal", _inv_card_style(Color(1.0, 0.38, 0.38, 0.9)))
+	hands.add_theme_stylebox_override("hover", _inv_card_style(Color(1.0, 0.55, 0.55, 1.0), Color(0.14, 0.09, 0.10, 0.98)))
+	hands.add_theme_color_override("font_color", Color(0.95, 0.9, 0.9))
 	hands.tooltip_text = _item_tooltip({"kind": "weapon", "item": f.weapon}) + "\n—\nКлик — нож/ствол; перетащить оружие из рюкзака"
 	hands.pressed.connect(func():
 		_swap_weapon()
@@ -9211,9 +9296,7 @@ func _show_inventory() -> void:
 	# --- сетка рюкзака ---
 	var right := VBoxContainer.new()
 	hb.add_child(right)
-	var bl := Label.new()
-	bl.text = "Рюкзак (клик или перетащи на слот):"
-	right.add_child(bl)
+	right.add_child(_inv_section("РЮКЗАК — клик или перетащи на слот"))
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 6)
@@ -9240,12 +9323,11 @@ func _show_inventory() -> void:
 		# drag&drop: предмет рюкзака можно тянуть на слоты силуэта
 		var kind: String = f.backpack[idx]["kind"]
 		var cat2: String = f.backpack[idx].get("cat", "")
-		var kb := StyleBoxFlat.new()
-		kb.bg_color = Color(0.05, 0.08, 0.12, 0.95)
-		kb.set_corner_radius_all(6)
-		kb.set_border_width_all(2)
-		kb.border_color = {"weapon": Color(1.0, 0.35, 0.35, 0.8), "armor": Color(0.35, 0.7, 1.0, 0.8), "consumable": Color(0.4, 0.95, 0.5, 0.8)}.get(kind, Color(0.6, 0.6, 0.6, 0.8))
+		var kb := _inv_card_style(_inv_item_border(kind))
 		b.add_theme_stylebox_override("normal", kb)
+		var kbh := _inv_card_style(Color(_inv_item_border(kind).r, _inv_item_border(kind).g, _inv_item_border(kind).b, 1.0), Color(0.09, 0.14, 0.20, 0.98))
+		b.add_theme_stylebox_override("hover", kbh)
+		b.add_theme_color_override("font_color", Color(0.9, 0.93, 0.97))
 		b.set_drag_forwarding(
 			func(_pos: Vector2):
 				var prev := Label.new()
@@ -9263,6 +9345,9 @@ func _show_inventory() -> void:
 		db.text = "✕"
 		db.custom_minimum_size = Vector2(30, 56)
 		db.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		var dbs := _inv_ghost_style()
+		dbs.border_color = Color(1.0, 0.4, 0.4, 0.35)
+		db.add_theme_stylebox_override("normal", dbs)
 		db.tooltip_text = "Выбросить на землю"
 		var di: int = idx
 		db.pressed.connect(func(): _drop_item(di))
@@ -9272,19 +9357,23 @@ func _show_inventory() -> void:
 		var e := Label.new()
 		e.text = "(пусто — ищите ящики)"
 		grid.add_child(e)
-	var close := Button.new()
-	close.text = "Закрыть [I]"
+	var close := _menu_button("Закрыть [I]")
+	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	close.pressed.connect(_toggle_inventory)
 	box.add_child(close)
 	_ui.inv_panel.visible = true
 
 func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
-	# компактный инвентарь для узкого экрана: статы, слоты в ряд, сетка 2 колонки
-	var stats := Label.new()
-	stats.text = "HP %d/%d · ОД %d/%d · Защита %d · Вес %.1f/%.1f" % [
-		f.hp, f.max_hp, f.ap, f.max_ap, _defense(f), _load_weight(f), _carry_limit(f)]
-	stats.add_theme_font_size_override("font_size", 12)
-	box.add_child(stats)
+	# компактный инвентарь для узкого экрана: чипы статов, слоты в ряд, сетка 2 колонки
+	var chips := GridContainer.new()
+	chips.columns = 2
+	chips.add_theme_constant_override("h_separation", 4)
+	chips.add_theme_constant_override("v_separation", 4)
+	box.add_child(chips)
+	chips.add_child(_inv_stat_chip("HP", "%d/%d" % [f.hp, f.max_hp], Color(0.35, 0.95, 0.45)))
+	chips.add_child(_inv_stat_chip("ОД", "%d/%d" % [f.ap, f.max_ap], Color(0.35, 0.85, 1.0)))
+	chips.add_child(_inv_stat_chip("Защита", str(_defense(f)), Color(0.75, 0.85, 0.95)))
+	chips.add_child(_inv_stat_chip("Вес", "%.1f/%.1f" % [_load_weight(f), _carry_limit(f)], Color(0.9, 0.8, 0.5)))
 	var srow := HBoxContainer.new()
 	srow.add_theme_constant_override("separation", 4)
 	box.add_child(srow)
@@ -9303,6 +9392,8 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 			var hic: Texture2D = _item_icon({"kind": "weapon", "item": f.weapon})
 			if hic != null:
 				b.icon = hic
+			b.add_theme_stylebox_override("normal", _inv_card_style(Color(1.0, 0.38, 0.38, 0.9)))
+			b.add_theme_color_override("font_color", Color(0.95, 0.9, 0.9))
 			b.tooltip_text = _item_tooltip({"kind": "weapon", "item": f.weapon}) + "\n—\nКлик — нож/ствол"
 			b.pressed.connect(func():
 				_swap_weapon()
@@ -9316,16 +9407,18 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 				var sit := _item_icon({"kind": "armor", "cat": cat, "item": it})
 				if sit != null:
 					b.icon = sit
+				b.add_theme_stylebox_override("normal", _inv_card_style(Color(0.38, 0.72, 1.0, 0.9)))
+				b.add_theme_color_override("font_color", Color(0.88, 0.94, 1.0))
 				b.tooltip_text = _item_tooltip({"kind": "armor", "cat": cat, "item": it}) + "\n—\nКлик — снять"
 			else:
+				b.add_theme_stylebox_override("normal", _inv_ghost_style())
+				b.add_theme_color_override("font_color", Color(0.42, 0.5, 0.58))
 				b.tooltip_text = "Пусто"
 			b.pressed.connect(func():
 				_unequip(cat)
 			)
 		srow.add_child(b)
-	var bl := Label.new()
-	bl.text = "Рюкзак (клик — надеть/использовать):"
-	bl.add_theme_font_size_override("font_size", 12)
+	var bl := _inv_section("РЮКЗАК")
 	box.add_child(bl)
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size = Vector2(0, 170)
@@ -9350,12 +9443,11 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 		b2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		b2.tooltip_text = _item_tooltip(f.backpack[idx])
 		var kind: String = f.backpack[idx]["kind"]
-		var kb := StyleBoxFlat.new()
-		kb.bg_color = Color(0.05, 0.08, 0.12, 0.95)
-		kb.set_corner_radius_all(6)
-		kb.set_border_width_all(2)
-		kb.border_color = {"weapon": Color(1.0, 0.35, 0.35, 0.8), "armor": Color(0.35, 0.7, 1.0, 0.8), "consumable": Color(0.4, 0.95, 0.5, 0.8)}.get(kind, Color(0.6, 0.6, 0.6, 0.8))
+		var kb := _inv_card_style(_inv_item_border(kind))
 		b2.add_theme_stylebox_override("normal", kb)
+		var kbh2 := _inv_card_style(Color(_inv_item_border(kind).r, _inv_item_border(kind).g, _inv_item_border(kind).b, 1.0), Color(0.09, 0.14, 0.20, 0.98))
+		b2.add_theme_stylebox_override("hover", kbh2)
+		b2.add_theme_color_override("font_color", Color(0.9, 0.93, 0.97))
 		var i: int = idx
 		b2.pressed.connect(func():
 			_use_backpack(i)
@@ -9370,6 +9462,9 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 		db2.text = "✕"
 		db2.custom_minimum_size = Vector2(30, 50)
 		db2.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		var dbs2 := _inv_ghost_style()
+		dbs2.border_color = Color(1.0, 0.4, 0.4, 0.35)
+		db2.add_theme_stylebox_override("normal", dbs2)
 		db2.tooltip_text = "Выбросить на землю"
 		var di2: int = idx
 		db2.pressed.connect(func(): _drop_item(di2))
@@ -9379,9 +9474,8 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 		var e := Label.new()
 		e.text = "(пусто — ищите ящики)"
 		grid.add_child(e)
-	var close := Button.new()
-	close.text = "Закрыть [I]"
-	close.custom_minimum_size = Vector2(0, 44)
+	var close := _menu_button("Закрыть [I]")
+	close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	close.pressed.connect(_toggle_inventory)
 	box.add_child(close)
 
