@@ -5363,30 +5363,80 @@ func _sfx_play(n: String) -> void:
 # ============================================================
 # ---------------- ГЛАВНОЕ МЕНЮ ----------------
 # ============================================================
-# ---------- стиль меню: рамки, неон, hover-прожатие ----------
-func _style_menu_button(b: Button) -> void:
+# ---------- стиль меню: градиентные кнопки со свечением ----------
+var _btn_tex_cache := {}
+
+# процедурная текстура кнопки: вертикальный градиент, скругление, обводка и
+# мягкое внешнее свечение; рисуется один раз на набор цветов и кешируется
+func _grad_tex(key: String, top: Color, bottom: Color, border: Color, glow: Color) -> Texture2D:
+	if _btn_tex_cache.has(key):
+		return _btn_tex_cache[key]
+	var w := 96
+	var h := 64
+	var radius := 14.0
+	var border_w := 2.5
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var half := Vector2(w * 0.5, h * 0.5)
+	for y in h:
+		for x in w:
+			var p := Vector2(x + 0.5, y + 0.5)
+			var q: Vector2 = (p - half).abs() - (half - Vector2(radius, radius))
+			var d := Vector2(maxf(q.x, 0.0), maxf(q.y, 0.0)).length() + minf(maxf(q.x, q.y), 0.0) - radius
+			var col := Color(0, 0, 0, 0)
+			if d <= 0.0:
+				var t := clampf((p.y - radius) / maxf(h - radius * 2.0, 1.0), 0.0, 1.0)
+				var fill := top.lerp(bottom, t)
+				if d > -border_w:
+					fill = border.lerp(fill, clampf(-d / border_w, 0.0, 1.0))
+				col = fill
+			else:
+				col = Color(glow.r, glow.g, glow.b, exp(-d / 3.5) * glow.a * 0.55)
+			img.set_pixel(x, y, col)
+	var tex := ImageTexture.create_from_image(img)
+	_btn_tex_cache[key] = tex
+	return tex
+
+func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow: Color) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = _grad_tex(key, top, bottom, border, glow)
+	sb.texture_margin_left = 16.0
+	sb.texture_margin_right = 16.0
+	sb.texture_margin_top = 16.0
+	sb.texture_margin_bottom = 16.0
+	sb.content_margin_left = 20.0
+	sb.content_margin_right = 20.0
+	sb.content_margin_top = 11.0
+	sb.content_margin_bottom = 11.0
+	return sb
+
+func _style_menu_button(b: Button, accent := false) -> void:
 	b.pressed.connect(_sfx_play.bind("click"))
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.05, 0.08, 0.14, 0.85)
-	normal.border_color = Color(0.16, 0.85, 1.0, 0.75)
-	normal.set_border_width_all(1)
-	normal.set_corner_radius_all(8)
-	normal.content_margin_top = 8.0
-	# при наводке кнопка «прожимается»: текст смещается вниз, рамка розовеет
-	var hover: StyleBoxFlat = normal.duplicate()
-	hover.bg_color = Color(0.03, 0.05, 0.10, 0.92)
-	hover.border_color = Color(1.0, 0.24, 0.43, 0.95)
-	hover.content_margin_top = 11.0
-	var pressed: StyleBoxFlat = hover.duplicate()
-	pressed.bg_color = Color(0.02, 0.03, 0.07, 0.96)
-	pressed.content_margin_top = 13.0
+	var top := Color(0.16, 0.38, 0.52)
+	var bottom := Color(0.05, 0.11, 0.22)
+	var border := Color(0.42, 0.88, 1.0)
+	var glow := Color(0.25, 0.72, 1.0, 0.85)
+	var fcol := Color(0.93, 0.97, 1.0)
+	if accent:
+		top = Color(1.0, 0.80, 0.36)
+		bottom = Color(0.86, 0.44, 0.10)
+		border = Color(1.0, 0.92, 0.62)
+		glow = Color(1.0, 0.62, 0.18, 0.95)
+		fcol = Color(0.25, 0.12, 0.02)
+	var pre := "ba_" if accent else "bn_"
+	var normal := _grad_button_sb(pre + "n", top, bottom, border, glow)
+	var hover := _grad_button_sb(pre + "h", top * 1.16, bottom * 1.16, border, glow)
+	var pressed := _grad_button_sb(pre + "p", top * 0.78, bottom * 0.72, border * 0.85, glow)
+	var disabled := _grad_button_sb(pre + "d", top * 0.55, bottom * 0.5, border * 0.5, glow * 0.3)
 	b.add_theme_stylebox_override("normal", normal)
 	b.add_theme_stylebox_override("hover", hover)
 	b.add_theme_stylebox_override("pressed", pressed)
+	b.add_theme_stylebox_override("disabled", disabled)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	b.add_theme_color_override("font_color", Color(0.88, 0.94, 1.0))
-	b.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
-	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", fcol)
+	b.add_theme_color_override("font_hover_color", fcol)
+	b.add_theme_color_override("font_pressed_color", fcol)
+	b.add_theme_color_override("font_disabled_color", Color(fcol.r, fcol.g, fcol.b, 0.45))
+	b.add_theme_font_size_override("font_size", 17)
 
 # ---------- иконки предметов: офлайн-рендер из 3D-моделей ----------
 const ICON_ALIAS := {"Molotov": "Grenade", "FireGrenade": "Grenade", "knife_1": "Knife_1"}
@@ -5684,11 +5734,11 @@ func _framed_label(txt: String, fsize := 14) -> PanelContainer:
 	pc.add_child(l)
 	return pc
 
-func _menu_button(txt: String) -> Button:
+func _menu_button(txt: String, accent := false) -> Button:
 	var b := Button.new()
 	b.text = txt
-	b.custom_minimum_size = Vector2(0, 46)
-	_style_menu_button(b)
+	b.custom_minimum_size = Vector2(150, 50)
+	_style_menu_button(b, accent)
 	return b
 
 # ---------- иконки-пиктограммы лобби (SVG, белые силуэты) ----------
@@ -6359,7 +6409,7 @@ func _welcome_overlay() -> void:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 10)
 	vb.add_child(row)
-	var fight := _menu_button("В бой")
+	var fight := _menu_button("В бой", true)
 	fight.pressed.connect(func():
 		ov.queue_free()
 		_start_mode(1)
@@ -7957,8 +8007,8 @@ func _show_menu_bp() -> void:
 		vb.add_child(soon)
 		vb.add_child(_framed_label("Сезон 1 стартует, когда наберём игроков. Миссии дня и недели уже работают — опыт пропуска начнёт считаться со дня старта (у всех честно с нуля).", 13))
 		vb.add_child(_framed_label("50 уровней · 60 дней · две ленты наград\n• Бесплатно: аренды героев «Крот» и «Пёс», фрагменты «Вдова», герой «Призрак» навсегда, сундуки, монеты, осколки\n• Premium (399 ₽): аренды «Следопыт», «Молот», «Жнец», телепорт «Шторм», рамка «Легенда», сундуки ×6", 13))
-		var back_soon := Button.new()
-		back_soon.text = "← Назад"
+		var back_soon := _menu_button("← Назад")
+		back_soon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		back_soon.pressed.connect(_show_menu_main)
 		vb.add_child(back_soon)
 		return
@@ -8004,7 +8054,7 @@ func _show_menu_bp() -> void:
 			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
 		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
-		var buy := _menu_button("Premium — 399 ₽")
+		var buy := _menu_button("Premium — 399 ₽", true)
 		buy.disabled = not PAYMENTS_ENABLED
 		buy.tooltip_text = "Premium-лента сезона (50 ур.): аренды героев, камуфляж «Тень», насмешки, золотая рамка, телепорт «Шторм» + рамка «Легенда» на 50-м"
 		buy.pressed.connect(_buy_bp_pass)
@@ -8396,13 +8446,14 @@ func _show_menu_chests() -> void:
 	ob.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
 	ob.add_theme_color_override("icon_pressed_color", Color(0.12, 0.08, 0.02))
 	ob.custom_minimum_size = Vector2(0, 56)
-	# крупная золотая кнопка открытия
-	var obs := StyleBoxFlat.new()
-	obs.bg_color = Color(0.78, 0.55, 0.10, 0.97)
-	obs.border_color = Color(1.0, 0.85, 0.35, 0.95)
-	obs.set_border_width_all(2)
-	obs.set_corner_radius_all(12)
-	ob.add_theme_stylebox_override("normal", obs)
+	# крупная золотая кнопка открытия — акцентный градиент
+	var at := Color(1.0, 0.80, 0.36)
+	var ab := Color(0.86, 0.44, 0.10)
+	var abr := Color(1.0, 0.92, 0.62)
+	var ag := Color(1.0, 0.62, 0.18, 0.95)
+	ob.add_theme_stylebox_override("normal", _grad_button_sb("chest_n", at, ab, abr, ag))
+	ob.add_theme_stylebox_override("hover", _grad_button_sb("chest_h", at * 1.16, ab * 1.16, abr, ag))
+	ob.add_theme_stylebox_override("pressed", _grad_button_sb("chest_p", at * 0.78, ab * 0.72, abr * 0.85, ag))
 	ob.add_theme_color_override("font_color", Color(0.12, 0.08, 0.02))
 	ob.add_theme_font_size_override("font_size", 18)
 	ob.disabled = int(_profile.get("coins", 0)) < CHEST_PRICE
