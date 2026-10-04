@@ -4496,7 +4496,7 @@ func _check_end() -> void:
 						_save_profile()
 						if is_instance_valid(rw):
 							rw.text = "Награда: +%d монет (удвоено за ролик) · Всего: %d монет" % [rw_coins * 2, int(_profile.get("coins", 0))]
-						bdouble.text = "✓ Награда удвоена"
+						bdouble.text = "Награда удвоена"
 					)
 				)
 				vb.add_child(bdouble)
@@ -6855,7 +6855,7 @@ func _show_menu_settings() -> void:
 	var names := ["Низкая", "Средняя", "Высокая"]
 	for i in 3:
 		var b := Button.new()
-		b.text = names[i] + (" ✓" if _settings.graphics == i else "")
+		b.text = _sel(names[i], _settings.graphics == i)
 		var lv: int = i
 		b.pressed.connect(func():
 			_apply_graphics(lv)
@@ -6884,7 +6884,7 @@ func _show_menu_settings() -> void:
 		var tid: String = tp[0]
 		var ots: Array = _profile.get("owned_teleports", [1, 1, 0])
 		var locked := tid == "storm" and (ots.size() < 3 or int(ots[2]) == 0)
-		tb2.text = str(tp[1]) + (" ✓" if str(_profile.get("teleport", "beam")) == tid else "")
+		tb2.text = _sel(str(tp[1]), str(_profile.get("teleport", "beam")) == tid)
 		tb2.disabled = locked
 		if locked:
 			tb2.tooltip_text = "Эксклюзив Battle Pass — 50 уровень 1 сезона"
@@ -7095,7 +7095,7 @@ func _show_menu_squad() -> void:
 	for i in 4:
 		var b := Button.new()
 		if i < _profile.unlocked_slots:
-			b.text = _profile.names[i] + (" ✓" if i == _squad_edit else "")
+			b.text = _sel(_profile.names[i], i == _squad_edit)
 		else:
 			b.text = "Слот %d" % (i + 1)
 		b.custom_minimum_size = Vector2(slot_w, 34)
@@ -7161,7 +7161,7 @@ func _show_menu_squad() -> void:
 	for wi in SIDEARMS.size():
 		var wd: Dictionary = _weapon_by_id(SIDEARMS[wi])
 		var wb := Button.new()
-		wb.text = str(wd.get("name", SIDEARMS[wi])) + (" ✓" if int(_profile.sidearm[_squad_edit]) == wi else "")
+		wb.text = _sel(str(wd.get("name", SIDEARMS[wi])), int(_profile.sidearm[_squad_edit]) == wi)
 		if not _mob():
 			wb.add_theme_font_size_override("font_size", 12)
 		wb.tooltip_text = "Урон %d · %d ОД · обойма %d · дальность %d" % [
@@ -7189,7 +7189,7 @@ func _show_menu_squad() -> void:
 	crow3.add_child(cl3)
 	for ci in FIGHTER_CLASSES.size():
 		var cb := Button.new()
-		cb.text = FIGHTER_CLASSES[ci]["name"] + (" ✓" if int(_profile.cls[_squad_edit]) == ci else "")
+		cb.text = _sel(FIGHTER_CLASSES[ci]["name"], int(_profile.cls[_squad_edit]) == ci)
 		if not _mob():
 			cb.add_theme_font_size_override("font_size", 12)
 		cb.tooltip_text = str(FIGHTER_CLASSES[ci]["desc"])
@@ -7225,7 +7225,7 @@ func _show_menu_squad() -> void:
 		var md := int(hmods.get(mk, 0))
 		if md != 0:
 			mod_parts.append("%s %+d" % [STAT_NAMES[mk], md])
-	hb.text = ("— базовый боец —" if hid0 < 0 else str(HEROES[hid0]["name"])) + (" ✓" if hid0 >= 0 else "")
+	hb.text = _sel("— базовый боец —" if hid0 < 0 else str(HEROES[hid0]["name"]), hid0 >= 0)
 	hb.tooltip_text = ("В бою выходит базовый боец слота (класс, оружие и статы из этого экрана)." if hid0 < 0
 		else "%s\n%s\nМоды: %s\nВ бою заменяет класс, оружие и статы слота." % [
 			HEROES[hid0]["perk"], FIGHTER_CLASSES[int(HEROES[hid0]["cls"])]["desc"],
@@ -7261,7 +7261,7 @@ func _show_menu_squad() -> void:
 		grow2.add_child(gl)
 		for g in [["m", "Мужчина"], ["f", "Женщина"]]:
 			var gb := Button.new()
-			gb.text = g[1] + (" ✓" if _profile.gender == g[0] else "")
+			gb.text = _sel(g[1], _profile.gender == g[0])
 			if not _mob():
 				gb.add_theme_font_size_override("font_size", 12)
 			var gv: String = g[0]
@@ -7325,7 +7325,8 @@ func _show_menu_squad() -> void:
 			var ob := Button.new()
 			ob.custom_minimum_size = Vector2(34, 30)
 			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
-			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "🔒"
+			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "?"
+			ob.modulate = Color(1, 1, 1) if owned_ofi else Color(0.4, 0.4, 0.45)
 			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
 			var os: StyleBoxFlat = StyleBoxFlat.new()
 			if owned_ofi:
@@ -7379,6 +7380,7 @@ func _show_menu_squad() -> void:
 			cb.add_theme_stylebox_override("pressed", cs)
 			cb.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 			if ci > 0 and not _shop_owned("nick_color", ci):
+				cb.modulate = Color(0.38, 0.38, 0.44)   # закрытый цвет — тусклый
 				cb.tooltip_text = NICK_COLOR_NAMES[ci] + " — открывается в магазине или из сундуков"
 			var cv: int = ci
 			cb.pressed.connect(func():
@@ -7398,10 +7400,11 @@ func _show_menu_squad() -> void:
 		for fi2 in FRAME_NAMES.size():
 			var fb := Button.new()
 			var frame_locked := fi2 > 0 and not _shop_owned("frame", fi2)
-			fb.text = ("🔒 " if frame_locked else "") + FRAME_NAMES[fi2] + (" ✓" if _profile.frame == fi2 else "")
+			fb.text = _sel(FRAME_NAMES[fi2], _profile.frame == fi2)
 			fb.add_theme_font_size_override("font_size", 11)
 			fb.custom_minimum_size = Vector2(84, 30) if _mob() else Vector2(70, 28)
 			if frame_locked:
+				fb.modulate = Color(0.55, 0.55, 0.62)   # закрытая рамка — тусклая
 				fb.tooltip_text = "Открывается в магазине или из сундуков"
 				fb.add_theme_color_override("font_color", Color(0.5, 0.55, 0.62))
 			var fv: int = fi2
@@ -8134,7 +8137,7 @@ func _show_menu_bp() -> void:
 		soon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vb.add_child(soon)
 		vb.add_child(_framed_label("Сезон 1 стартует, когда наберём игроков. Миссии дня и недели уже работают — опыт пропуска начнёт считаться со дня старта (у всех честно с нуля).", 13))
-		vb.add_child(_framed_label("50 уровней · 60 дней · две ленты наград\n• Бесплатно: аренды героев «Крот» и «Пёс», фрагменты «Вдова», герой «Призрак» навсегда, сундуки, монеты, осколки\n• Premium (399 ₽): аренды «Следопыт», «Молот», «Жнец», телепорт «Шторм», рамка «Легенда», сундуки ×6", 13))
+		vb.add_child(_framed_label("50 уровней · 60 дней · две ленты наград\n• Бесплатно: аренды героев «Крот» и «Пёс», фрагменты «Вдова», герой «Призрак» навсегда, сундуки, монеты, осколки\n• Premium (399 руб): аренды «Следопыт», «Молот», «Жнец», телепорт «Шторм», рамка «Легенда», сундуки ×6", 13))
 		var back_soon := _menu_button("← Назад")
 		back_soon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		back_soon.pressed.connect(_show_menu_main)
@@ -8182,7 +8185,7 @@ func _show_menu_bp() -> void:
 			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
 		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
-		var buy := _menu_button("Premium — 399 ₽", true)
+		var buy := _menu_button("Premium — 399 руб", true)
 		buy.disabled = not PAYMENTS_ENABLED
 		buy.tooltip_text = "Premium-лента сезона (50 ур.): аренды героев, камуфляж «Тень», насмешки, золотая рамка, телепорт «Шторм» + рамка «Легенда» на 50-м"
 		buy.pressed.connect(_buy_bp_pass)
@@ -8232,7 +8235,7 @@ func _show_menu_bp() -> void:
 			if prem:
 				rb.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 			if got:
-				rb.text = "✓"
+				rb.text = "ОК"
 				rb.disabled = true
 			elif lv > lvl or (prem and int(_profile.get("bp_owned", 0)) != 1):
 				rb.disabled = true
@@ -8370,7 +8373,7 @@ func _hero_status(hid: int) -> String:
 	# строка статуса для экрана «Герои»
 	var ho: Array = _profile.get("hero_owned", [])
 	if hid < ho.size() and int(ho[hid]) == 1:
-		return "Навсегда ✓"
+		return "Навсегда"
 	var rentals: Dictionary = _profile.get("hero_rentals", {})
 	var until := float(rentals.get(str(hid), 0))
 	var left := int((until - Time.get_unix_time_from_system()) / 86400.0) + 1
@@ -8620,7 +8623,7 @@ func _show_menu_chests() -> void:
 			var eb := Button.new()
 			eb.custom_minimum_size = Vector2(140, 34)
 			if _cosm_owned(k2, i2):
-				eb.text = "✓ Есть"
+				eb.text = "Есть"
 				eb.disabled = true
 			else:
 				eb.text = "%d" % RARITY_EXCHANGE[r]
@@ -8807,7 +8810,7 @@ func _show_menu_shop() -> void:
 		b.custom_minimum_size = Vector2(104, 40) if _mob() else Vector2(140, 40)
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if _shop_equipped(kind, idx):
-			b.text = "✓ Выбрано"
+			b.text = "Выбрано"
 			b.disabled = true
 		elif _shop_owned(kind, idx):
 			b.text = "Выбрать"
@@ -8874,7 +8877,7 @@ func _show_menu_shop() -> void:
 			pn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row2.add_child(pn)
 		var pb := Button.new()
-		pb.text = "%d ₽" % int(pk["price"])
+		pb.text = "%d руб" % int(pk["price"])
 		pb.custom_minimum_size = Vector2(140, 40)
 		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		pb.disabled = not PAYMENTS_ENABLED
@@ -8945,7 +8948,7 @@ func _show_menu_profile() -> void:
 			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			pb.add_child(tr)
 		if _profile.avatar == "" and _profile.avatar_preset == pi + 1:
-			pb.text = "✓"
+			pb.text = "ОК"
 		var pv2: int = pi + 1
 		pb.pressed.connect(func():
 			_profile.avatar_preset = pv2
@@ -9109,6 +9112,10 @@ func _silhouette_tex() -> Texture2D:
 	return _sil_tex
 
 # ---------- инвентарь: RPG-стили ----------
+# маркер выбранного пункта: кавычки-ёлочки (есть в Manrope, в отличие от ✓)
+func _sel(txt: String, cond: bool) -> String:
+	return ("«%s»" % txt) if cond else txt
+
 func _inv_item_border(kind: String) -> Color:
 	return {"weapon": Color(1.0, 0.38, 0.38, 0.9), "armor": Color(0.38, 0.72, 1.0, 0.9), "consumable": Color(0.45, 0.95, 0.55, 0.9)}.get(kind, Color(0.6, 0.65, 0.7, 0.8))
 
