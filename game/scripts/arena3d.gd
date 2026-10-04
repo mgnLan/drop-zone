@@ -1177,6 +1177,7 @@ func _buy_coin_pack(pi: int) -> void:
 			_log("Платежи доступны в версии для ВК")
 	else:
 		_profile.coins = int(_profile.get("coins", 0)) + int(pk["coins"]) + int(pk.get("bonus", 0))
+		_sfx_play("cash")
 		_save_profile()
 		_show_menu_shop()
 
@@ -1266,6 +1267,7 @@ func _mq_event(eid: String, n: int) -> Array:
 				var cn: int = MQ_WEEK_COINS if weekly else MQ_DAY_COINS
 				_profile.bp_xp = int(_profile.get("bp_xp", 0)) + xp
 				_profile.coins = int(_profile.get("coins", 0)) + cn
+				_sfx_play("cash")
 				granted.append("«%s» — +%d XP, +%d монет" % [str(m["name"]), xp, cn])
 		if changed or not done.is_empty():
 			src["prog"] = prog
@@ -2069,7 +2071,7 @@ func _shoot_cover(att: int, cell: Vector2i) -> void:
 	if w.has("ammo"):
 		a.ammo -= burst
 	_face_cell(a, cell)
-	_sfx_play("shot")
+	_sfx_shot(w)
 	if aoe2 > 0:
 		if a.team == 0:
 			_mq_acc["grenades"] = int(_mq_acc.get("grenades", 0)) + 1
@@ -3541,6 +3543,9 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1) -> in
 			var k = _fighters[src_idx]
 			k.kills = int(k.kills) + 1
 			_gain_xp(src_idx, 50)
+			# отдельный «динь» подтверждения, когда убивает боец игрока
+			if int(k.team) == 0:
+				_sfx_play("kill")
 			# штурмовик: адреналин — +1 ОД за убийство (раз за ход)
 			if int(k.get("cls", -1)) == 0 and not k.get("adren_used", false) and k.alive:
 				k.adren_used = true
@@ -3583,7 +3588,7 @@ func _shoot(att: int, def: int) -> void:
 	if w.has("ammo"):
 		a.ammo -= burst
 	_face_cell(a, d.cell)
-	_sfx_play("shot")
+	_sfx_shot(w)
 	var aoe: int = w.get("aoe", 0)
 	if aoe > 0:
 		if a.team == 0:
@@ -4436,6 +4441,7 @@ func _check_end() -> void:
 		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + bp_gain
 		var reward := 2 + 1 * p_kills  # +2 за бой, +1 за убийство
 		_profile.coins = int(_profile.get("coins", 0)) + reward
+		_sfx_play("cash")
 		_profile.total_kills = int(_profile.get("total_kills", 0)) + p_kills
 		if win:
 			_profile.wins = int(_profile.get("wins", 0)) + 1
@@ -4492,6 +4498,7 @@ func _check_end() -> void:
 					bdouble.text = "Показ ролика..."
 					_show_rewarded_ad(func():
 						_profile.coins = int(_profile.get("coins", 0)) + rw_coins
+						_sfx_play("cash")
 						_battle_reward["coins"] = rw_coins * 2
 						_save_profile()
 						if is_instance_valid(rw):
@@ -5413,7 +5420,9 @@ func _run_testhouses() -> void:
 # ---------------- ЗВУК ----------------
 # ============================================================
 func _load_sfx() -> void:
-	for n in ["shot", "hit", "open", "step", "explosion", "death", "reload", "swap", "levelup", "click", "zone"]:
+	for n in ["shot", "hit", "open", "step", "explosion", "death", "reload", "swap", "levelup", "click", "zone",
+			"shot_pistol", "shot_revolver", "shot_smg", "shot_rifle", "shot_shotgun", "shot_sniper", "shot_launcher",
+			"swing", "kill", "cash", "chest"]:
 		var p := "res://assets/sfx/%s.wav" % n
 		if ResourceLoader.exists(p):
 			_sfx[n] = load(p)
@@ -5443,6 +5452,16 @@ func _sfx_play(n: String) -> void:
 	add_child(a)
 	a.play()
 	a.finished.connect(a.queue_free)
+
+# выстрел по классу оружия: у каждого ствола свой звук
+const SHOT_SFX := {"Pistol": "shot_pistol", "Revolver_Small": "shot_pistol", "Revolver": "shot_revolver",
+	"SMG": "shot_smg", "AK": "shot_rifle", "Shotgun": "shot_shotgun",
+	"Sniper": "shot_sniper", "Sniper_2": "shot_sniper",
+	"GrenadeLauncher": "shot_launcher", "RocketLauncher": "shot_launcher", "ShortCannon": "shot_launcher",
+	"Shovel": "swing", "Knife_2": "swing"}
+
+func _sfx_shot(w: Dictionary) -> void:
+	_sfx_play(SHOT_SFX.get(str(w.get("id", "")), "shot_pistol"))
 
 # ============================================================
 # ---------------- ГЛАВНОЕ МЕНЮ ----------------
@@ -7686,6 +7705,7 @@ func _bp_claim(lv: int, prem: bool) -> void:
 			_profile.shards = int(_profile.get("shards", 0)) + int(rw["n"])
 		"coins":
 			_profile.coins = int(_profile.get("coins", 0)) + int(rw["n"])
+			_sfx_play("cash")
 		"frame":
 			if _owned_grant("frame", int(rw["idx"])):
 				_profile.shards = int(_profile.get("shards", 0)) + 40   # дубликат → осколки
@@ -8695,7 +8715,7 @@ func _show_menu_chests() -> void:
 	ob.disabled = int(_profile.get("coins", 0)) < CHEST_PRICE
 	ob.pressed.connect(func():
 		_open_show_chest()
-		_sfx_play("open")
+		_sfx_play("chest")
 	)
 	vb.add_child(ob)
 	var leg := Label.new()
