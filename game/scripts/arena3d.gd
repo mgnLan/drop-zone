@@ -267,7 +267,10 @@ func _on_order_event(args: Array) -> void:
 	var d: Dictionary = args[0]
 	if str(d.get("status", "")) != "paid":
 		return
-	_server_credit_pack(int(d.get("pack", -1)), str(d.get("order_id", "")))
+	if str(d.get("item", "")) == "bp":
+		_server_credit_bp(str(d.get("order_id", "")))
+	else:
+		_server_credit_pack(int(d.get("pack", -1)), str(d.get("order_id", "")))
 
 # бесшовный вход через ВК: личность подтверждает подпись launch-параметров (sign),
 # vk_id берём из ПОДПИСАННЫХ параметров URL, а не из клиентских данных.
@@ -374,6 +377,38 @@ func _on_buy_result(d: Dictionary) -> void:
 	_log("Пак монет начислен сервером: +%d монет" % int(d.get("credited", 0)))
 	if _menu_open:
 		_show_menu_shop()
+
+func _server_credit_bp(order_id: String) -> void:
+	# покупка Premium-пропуска: активирует bp_owned только сервер (верификация order_id у ВК)
+	if _auth_token == "" or _http == null or order_id == "":
+		return
+	_api_call("buybp", {"token": _auth_token, "order_id": order_id})
+
+func _on_buybp_result(d: Dictionary) -> void:
+	if not bool(d.get("ok", false)):
+		_log("Пропуск не активирован: %s" % str(d.get("error", "ошибка сервера")))
+		return
+	_profile.bp_owned = 1
+	_sync_push = false
+	_save_profile()
+	_sync_push = true
+	_sfx_play("levelup")
+	_log("Premium Battle Pass активен! Премиум-награды доступны к получению")
+	if _menu_open:
+		_show_menu_bp()
+
+func _buy_bp_pass() -> void:
+	# покупка пропуска: в ВК — VKWebAppShowOrderBox через мост оболочки; вне ВК — dev-выдача
+	if int(_profile.get("bp_owned", 0)) == 1 or not PAYMENTS_ENABLED:
+		return
+	if OS.has_feature("web"):
+		var r = JavaScriptBridge.eval("(function(){ if (typeof window.dzOrderItem === 'function') { window.dzOrderItem('bp'); return true; } return false; })()", true)
+		if r == null or not bool(r):
+			_log("Платежи доступны в версии для ВК")
+	else:
+		_profile.bp_owned = 1
+		_save_profile()
+		_show_menu_bp()
 
 func _show_rewarded_ad(on_reward: Callable = Callable()) -> void:
 	# on_reward — что выдать за просмотр; пусто — спонсорский дроп (боевой бонус)
@@ -681,6 +716,8 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 		var err := str(d.get("error", "Ошибка"))
 		if act == "buy":
 			_on_buy_result(d)
+		elif act == "buybp":
+			_on_buybp_result(d)
 		elif err.contains("Сессия устарела"):
 			# протухшая сессия: сбрасываем и молча перелогиниваемся (в ВК — по подписи)
 			_auth_token = ""
@@ -725,6 +762,8 @@ func _on_api_done(result: int, code: int, _headers: PackedStringArray, body: Pac
 			_build_menu()
 		"buy":
 			_on_buy_result(d)
+		"buybp":
+			_on_buybp_result(d)
 		_:
 			pass
 	_api_next()
@@ -1052,13 +1091,14 @@ const CLASS_NAMES := {"pistols": "Пистолеты", "smg": "ПП", "rifles": 
 # Расчёт (сезон 28 дней = 4 недели): до 50 ур. нужно 22 800 XP.
 # Дневные 5×50=250/день (7 000) + вход +20/день (560) + недельные 12×300=3 600/нед (14 400) = 21 960
 # + бои 3/3/10 (~1 300 у активного) ≈ 23 300 → запас ~3 дня. Пропуск 4+ дней = финал недостижим.
-const MQ_DAY_XP := 50
+const MQ_DAY_XP := 45
 const MQ_DAY_COINS := 5
 const MQ_LOGIN_XP := 20
 const MQ_LOGIN_COINS := 5
-const MQ_WEEK_XP := 300
-const MQ_WEEK_COINS := 25
-const SEASON_END_UTC := 1793318400   # 2026-10-30 00:00 UTC — конец сезона 1 (сдвигается константой)
+const MQ_WEEK_XP := 60
+const MQ_WEEK_COINS := 20
+const SEASON_START_UTC := 1790985600   # 2026-10-03 00:00 UTC — старт сезона 1
+const SEASON_DAYS := 60                # сезон длится 60 дней (конец: 2026-12-02)
 # дневной пул: 4 миссии ротируются по дате + 5-я — всегда реклама
 const MQ_DAY_POOL := [
 	{"id": "kills", "name": "Убей 5 противников", "target": 5, "icon": "skull"},
@@ -1245,7 +1285,7 @@ func _mq_flush_battle(win: bool, p_kills: int) -> Array:
 	return msgs
 
 func _mq_season_days_left() -> int:
-	return maxi(0, int((SEASON_END_UTC - Time.get_unix_time_from_system()) / 86400.0))
+	return maxi(0, int((SEASON_START_UTC + SEASON_DAYS * 86400 - Time.get_unix_time_from_system()) / 86400.0))
 
 const STAMINA_MAX := 100.0
 const STAMINA_COST := 15.0
@@ -6191,7 +6231,140 @@ func _build_menu() -> void:
 	if mob_w:
 		# на телефоне чат стартует свёрнутым — не перекрывает меню
 		_toggle_menu_chat()
+	# превью для новых игроков: приветствие при первом входе (в тестах не мешает скринам)
+	if not _test_run() and int(_profile.get("seen_welcome", 0)) != 1:
+		_profile.seen_welcome = 1
+		_save_profile()
+		_welcome_overlay()
 	_show_menu_main()
+
+# ---------- превью для новых игроков (А+Б+Г): приветствие, подсказки разделов, кнопка «?» ----------
+func _test_run() -> bool:
+	var a := OS.get_cmdline_user_args()
+	return a.has("--testmenu") or a.has("--testmenumid") or a.has("--testmenumobile") \
+		or a.has("--testplay") or a.has("--testbots")
+
+const TIP_TEXTS := {
+	"squad": ["Отряд", "Здесь создаёшь и прокачиваешь бойцов: ник, оружие, класс, внешность.\nПогибшего бойца лечат в Медцентре — пока он восстанавливается, бери бойца из другого слота."],
+	"shop": ["Магазин", "Здесь тратишь монеты: камуфляжи, цвета ника, рамки.\nМонеты падают за бои и миссии; паки монет — за звёзды ВК."],
+	"chests": ["Сундуки", "Сундук удачи открывается за 150 монет.\nВнутри: осколки, косметика, аренда героев. Осколки — валюта редких наград."],
+	"bp": ["Battle Pass", "Миссии дня и недели дают сезонный опыт — качает уровни пропуска.\nБесплатная лента у всех. Premium открывает вторую ленту наград на все 60 дней сезона."],
+	"med": ["Медцентр", "Погибшие бойцы восстанавливаются со временем.\nХочешь быстрее — заплати монетами или осколками."],
+	"heroes": ["Герои", "Герои — бойцы с особыми стартовыми пистолетами и модами статов.\nПолучаешь из сундуков, фрагментов, аренды и наград Battle Pass."],
+	"progress": ["Прогрессия", "Опыт за бои поднимает уровень аккаунта.\nУровни открывают слоты бойцов и таланты."],
+}
+
+func _tip_overlay(tip_id: String, mark_seen := true) -> void:
+	# оверлей подсказки: полупрозрачная подложка + карточка; закрывается кнопкой
+	if not _ui.has("menu_layer") or not is_instance_valid(_ui.menu_layer):
+		return
+	var layer: CanvasLayer = _ui.menu_layer
+	var ov := Control.new()
+	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(ov)
+	var shade := ColorRect.new()
+	shade.color = Color(0.01, 0.02, 0.04, 0.72)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(shade)
+	var ctr := CenterContainer.new()
+	ctr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(ctr)
+	var pc := PanelContainer.new()
+	pc.custom_minimum_size = Vector2(minf(430.0, _vw() * 0.9), 0)
+	pc.add_theme_stylebox_override("panel", _frame_box())
+	ctr.add_child(pc)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	pc.add_child(vb)
+	var t: Array = TIP_TEXTS.get(tip_id, ["Подсказка", ""])
+	var tl := Label.new()
+	tl.text = str(t[0])
+	tl.add_theme_font_size_override("font_size", 20)
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(tl)
+	var bl := Label.new()
+	bl.text = str(t[1])
+	bl.add_theme_font_size_override("font_size", 14)
+	bl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	vb.add_child(bl)
+	var ok := _menu_button("Понятно")
+	ok.pressed.connect(func():
+		ov.queue_free()
+		if mark_seen and tip_id != "":
+			var seen: Array = _profile.get("seen_tips", []).duplicate()
+			if tip_id not in seen:
+				seen.append(tip_id)
+				_profile.seen_tips = seen
+				_save_profile()
+	)
+	vb.add_child(ok)
+
+func _maybe_auto_tip(tip_id: String) -> void:
+	# показать подсказку раздела при первом визите (отметка — по закрытию)
+	if _test_run():
+		return
+	var seen: Array = _profile.get("seen_tips", [])
+	if tip_id in seen:
+		return
+	_tip_overlay(tip_id)
+
+func _help_button(tip_id: String) -> Button:
+	# кнопка «?» на экране раздела — подсказку можно перечитать
+	var hb := Button.new()
+	hb.text = "?"
+	hb.tooltip_text = "Что здесь"
+	hb.custom_minimum_size = Vector2(40, 30)
+	hb.pressed.connect(func(): _tip_overlay(tip_id, false))
+	return hb
+
+func _welcome_overlay() -> void:
+	# А: экран приветствия при первом входе — 3 карточки «где что» и сразу кнопка в бой
+	if not _ui.has("menu_layer") or not is_instance_valid(_ui.menu_layer):
+		return
+	var layer: CanvasLayer = _ui.menu_layer
+	var ov := Control.new()
+	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(ov)
+	var shade := ColorRect.new()
+	shade.color = Color(0.01, 0.02, 0.04, 0.78)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(shade)
+	var ctr := CenterContainer.new()
+	ctr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(ctr)
+	var pc := PanelContainer.new()
+	pc.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
+	pc.add_theme_stylebox_override("panel", _frame_box())
+	ctr.add_child(pc)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	pc.add_child(vb)
+	var tl := Label.new()
+	tl.text = "Добро пожаловать в ТОЧКУ СБРОСА"
+	tl.add_theme_font_size_override("font_size", 20)
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(tl)
+	var bl := Label.new()
+	bl.text = "Шоу на выживание: бойцы, оружие и зона, которая сжимается.\n\n• Нажми «1×1 · Дуэль» — сразу в бой против бота\n• Монеты за бои трать в Магазине и на Сундуки\n• Миссии дня дают опыт Battle Pass"
+	bl.add_theme_font_size_override("font_size", 14)
+	bl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	vb.add_child(bl)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	vb.add_child(row)
+	var fight := _menu_button("В бой")
+	fight.pressed.connect(func():
+		ov.queue_free()
+		_start_mode(1)
+	)
+	row.add_child(fight)
+	var later := _menu_button("К меню")
+	later.pressed.connect(func(): ov.queue_free())
+	row.add_child(later)
+
 
 func _toggle_menu_chat() -> void:
 	# свернуть/развернуть чат лобби; в свёрнутом виде — конверты вкладок
@@ -6725,6 +6898,11 @@ func _show_menu_squad() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	vb.add_child(_screen_title("squad", "Отряд — создание бойцов"))
+	var hrow_squad := HBoxContainer.new()
+	hrow_squad.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_squad)
+	hrow_squad.add_child(_help_button("squad"))
+	_maybe_auto_tip("squad")
 	# вкладки 4 слотов: открыт только первый, остальные — заслуги/подписка
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 4)
@@ -7405,6 +7583,11 @@ func _show_menu_med() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
 	vb.add_child(_screen_title("shield", "Медцентр"))
+	var hrow_med := HBoxContainer.new()
+	hrow_med.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_med)
+	hrow_med.add_child(_help_button("med"))
+	_maybe_auto_tip("med")
 	var info := Label.new()
 	var vip_txt := " · ВИП: реген ×2" if int(_profile.get("vip", 0)) == 1 else ""
 	info.text = "HP сохраняется между боями и восстанавливается со временем%s. Погибший приходит в себя здесь с 1 HP и регенерирует. Мгновенно: лечение — %d монет или %d осколков, реанимация — %d монет или %d осколков (без лимита)." % [vip_txt, MED_HEAL_COST, MED_HEAL_SHARDS, MED_REVIVE_COST, MED_REVIVE_SHARDS]
@@ -7616,6 +7799,11 @@ func _show_menu_progress() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.95), 0)
 	vb.add_child(_screen_title("trophy", "Прогрессия"))
+	var hrow_progress := HBoxContainer.new()
+	hrow_progress.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_progress)
+	hrow_progress.add_child(_help_button("progress"))
+	_maybe_auto_tip("progress")
 	# текущее состояние главного бойца (самого прокачанного)
 	var bi := 0
 	for i in range(1, _profile.names.size()):
@@ -7734,14 +7922,19 @@ func _show_menu_bp() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
 	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1" if _mob() else "Battle Pass — сезон 1 «Первый сброс»"))
+	var hrow_bp := HBoxContainer.new()
+	hrow_bp.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_bp)
+	hrow_bp.add_child(_help_button("bp"))
+	_maybe_auto_tip("bp")
 	var lvl := _bp_level()
 	var cur_xp := int(_profile.get("bp_xp", 0))
 	# на мобильном явный перенос: PanelContainer не сжимает Label до ширины экрана
-	var bp_head := "Уровень %d/%d · сезонный опыт %d (бои: +3 за бой, +3 за убийство, +10 за победу)" % [
-		lvl, BP_LEVELS, cur_xp]
+	var bp_head := "Уровень %d/%d · сезонный опыт %d (миссии дня +%d, недельные +%d · бои +3 за бой, +3 за убийство, +10 за победу)" % [
+		lvl, BP_LEVELS, cur_xp, MQ_DAY_XP, MQ_WEEK_XP]
 	if _mob():
-		bp_head = "Уровень %d/%d · сезонный опыт %d\n(бои: +3 за бой, +3 за убийство, +10 за победу)" % [
-			lvl, BP_LEVELS, cur_xp]
+		bp_head = "Уровень %d/%d · сезонный опыт %d\n(миссии дня +%d, недельные +%d · бои +3/+3/+10)" % [
+			lvl, BP_LEVELS, cur_xp, MQ_DAY_XP, MQ_WEEK_XP]
 	vb.add_child(_framed_label(bp_head, 13))
 	# таймер до конца сезона
 	var days_left := _mq_season_days_left()
@@ -7775,9 +7968,10 @@ func _show_menu_bp() -> void:
 			wl.add_theme_color_override("font_color", Color(0.55, 0.75, 0.55))
 		vb.add_child(wl)
 	if int(_profile.get("bp_owned", 0)) != 1:
-		var buy := _menu_button("Premium — 399 ₽" if _mob() else "Premium — 399 ₽ (платежи после запуска онлайна)")
-		buy.disabled = true
-		buy.tooltip_text = "Premium-лента сезона (50 ур.): 450 монет, 150 осколков, наёмник 30 дней, ник «Закат», насмешки, камуфляжи «Тень»/«Саванна», рамки «Крипто»/«Золото», телепорт «Шторм» + рамка «Легенда» на 50-м"
+		var buy := _menu_button("Premium — 399 ₽")
+		buy.disabled = not PAYMENTS_ENABLED
+		buy.tooltip_text = "Premium-лента сезона (50 ур.): аренды героев, камуфляж «Тень», насмешки, золотая рамка, телепорт «Шторм» + рамка «Легенда» на 50-м"
+		buy.pressed.connect(_buy_bp_pass)
 		vb.add_child(buy)
 	else:
 		vb.add_child(_framed_label("Premium активен", 14))
@@ -8112,6 +8306,11 @@ func _show_menu_chests() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(520.0, _vw() * 0.94), 0)
 	vb.add_child(_screen_title("chest", "Сундуки удачи"))
+	var hrow_chests := HBoxContainer.new()
+	hrow_chests.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_chests)
+	hrow_chests.add_child(_help_button("chests"))
+	_maybe_auto_tip("chests")
 	var bal := HBoxContainer.new()
 	bal.add_theme_constant_override("separation", 8)
 	bal.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
@@ -8233,6 +8432,11 @@ func _show_menu_heroes() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.94), 0)
 	vb.add_child(_screen_title("swords", "Герои — наём и сборка"))
+	var hrow_heroes := HBoxContainer.new()
+	hrow_heroes.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_heroes)
+	hrow_heroes.add_child(_help_button("heroes"))
+	_maybe_auto_tip("heroes")
 	var bal := HBoxContainer.new()
 	bal.add_theme_constant_override("separation", 8)
 	bal.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
@@ -8329,6 +8533,11 @@ func _show_menu_shop() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
 	vb.add_child(_screen_title("shop", "Магазин"))
+	var hrow_shop := HBoxContainer.new()
+	hrow_shop.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_child(hrow_shop)
+	hrow_shop.add_child(_help_button("shop"))
+	_maybe_auto_tip("shop")
 	var bal2 := HBoxContainer.new()
 	bal2.add_theme_constant_override("separation", 8)
 	bal2.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))

@@ -223,4 +223,46 @@ if ($action === 'buy') {
     out(['ok' => true, 'coins' => $profile['coins'], 'credited' => $PACKS[$pack_id]]);
 }
 
+if ($action === 'buybp') {
+    // покупка Premium-пропуска Battle Pass: верификация order_id у ВК, bp_owned ставит сервер
+    $token   = (string)($in['token'] ?? '');
+    $orderId = trim((string)($in['order_id'] ?? ''));
+    if ($token === '' || $orderId === '') out(['ok' => false, 'error' => 'bad request']);
+    $st = $db->prepare("SELECT id, profile FROM users WHERE token = ?");
+    $st->execute([$token]);
+    $u = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$u) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
+    // idempotency: один order_id — одна активация (pack=-1 — маркер пропуска)
+    $db->exec("CREATE TABLE IF NOT EXISTS orders (
+        order_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        pack INTEGER,
+        coins INTEGER,
+        created_at TEXT
+    )");
+    $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
+    $st->execute([$orderId]);
+    if ($st->fetch()) out(['ok' => true, 'duplicate' => true]);
+    $VK_APP_TOKEN = (string)($DZ_CFG['vk_app_token'] ?? '');
+    if ($VK_APP_TOKEN !== '') {
+        $vk = @file_get_contents('https://api.vk.com/method/orders.getById?'
+            . http_build_query(['order_id' => $orderId, 'access_token' => $VK_APP_TOKEN, 'v' => '5.199']));
+        $vkr = $vk ? json_decode($vk, true) : null;
+        $status = $vkr['response']['status'] ?? null;
+        if ($status === null || (int)$status !== 1) { // 1 = оплачен
+            out(['ok' => false, 'error' => 'Заказ не подтверждён ВК']);
+        }
+    } else {
+        out(['ok' => false, 'error' => 'payments disabled']);
+    }
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
+    if (!is_array($profile)) $profile = [];
+    $profile['bp_owned'] = 1;
+    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+    $db->prepare("INSERT INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
+       ->execute([$orderId, $u['id'], -1, 0]);
+    out(['ok' => true]);
+}
+
 out(['ok' => false, 'error' => 'unknown action']);
