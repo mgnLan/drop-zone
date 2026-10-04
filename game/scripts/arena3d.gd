@@ -6097,8 +6097,8 @@ func _build_menu() -> void:
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scroll.offset_left = 12.0 if mob_w else 24.0
 	scroll.offset_right = -12.0 if mob_w else -24.0
-	scroll.offset_top = 100.0
-	scroll.offset_bottom = -196.0
+	scroll.offset_top = 90.0
+	scroll.offset_bottom = -166.0
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	layer.add_child(scroll)
 	var cc := CenterContainer.new()
@@ -6211,7 +6211,7 @@ func _build_menu() -> void:
 	var env_tips := ["Общий чат", "Чат комнаты", "Чат с кланом"]
 	for ei in 3:
 		var eb := Button.new()
-		eb.custom_minimum_size = Vector2(64, 44)
+		eb.custom_minimum_size = Vector2(48, 40)
 		var etr := TextureRect.new()
 		etr.texture = _icon_tex(env_icons[ei])
 		etr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -6378,10 +6378,12 @@ func _toggle_menu_chat() -> void:
 		for ek in _ui.keys():
 			if str(ek).begins_with("emoji_panel_"):
 				_ui[ek].visible = false
-	# свёрнутый: заголовок 26 + конверты 44 + отступы рамки ~20 = ~90px — минус запас,
-	# иначе панель вылезает за нижний край экрана. Развёрнутый выше: область сообщений —
+	# свёрнутый: заголовок 26 + конверты 40 + отступы рамки ~20 = ~86px. Ширина — по
+	# содержимому (узкая полоса), развёрнутый — полная. Область сообщений развёрнутого —
 	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
-	p.offset_top = -84.0 if _menu_chat_collapsed else -180.0
+	p.offset_top = -88.0 if _menu_chat_collapsed else -180.0
+	if not _mob():
+		p.offset_right = 210.0 if _menu_chat_collapsed else 246.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
