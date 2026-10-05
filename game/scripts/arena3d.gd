@@ -4442,7 +4442,11 @@ func _check_end() -> void:
 			_profile.tpts[pi] = int(pf.get("tpts", 0))
 			_profile.prof[pi] = pf.get("prof", {})
 			# здоровье бойцов сохраняется: живые — с текущим HP, погибшие — 0 (медцентр)
-			_profile.hp[pi] = int(pf.hp) if pf.alive else 0
+			# первые 3 боя — тренировочные: HP восстанавливается мгновенно, без медцентра
+			if int(_profile.get("total_battles", 0)) < 3:
+				_profile.hp[pi] = -1
+			else:
+				_profile.hp[pi] = int(pf.hp) if pf.alive else 0
 		_profile.hp_ts = Time.get_unix_time_from_system()
 		# --- награды за бой: монеты, XP Battle Pass, миссии ---
 		var win := blue == 0
@@ -4464,6 +4468,8 @@ func _check_end() -> void:
 			_log("Миссия: " + mmsg)
 		# задания недели — прогресс к XP Battle Pass
 		_profile.total_battles = int(_profile.get("total_battles", 0)) + 1
+		if int(_profile.total_battles) <= 3:
+			_log("Тренировочный бой: бойцы восстановлены мгновенно")
 		_battle_reward = {"coins": reward, "kills": p_kills, "win": win, "unlock": unlock_msg, "daily": daily_msgs}
 		_save_profile()
 		var msg := "ПОБЕДА! Арена ваша!" if blue == 0 else "Поражение. Шоу окончено."
@@ -4760,7 +4766,7 @@ func _build_ui() -> void:
 	# --- карточка бойца слева сверху: портрет + HP/AP + рюкзак под анимацией ---
 	var card := PanelContainer.new()
 	card.position = Vector2(12, 48)
-	card.custom_minimum_size = Vector2(292, 100) if _mob() else Vector2(324, 104)
+	card.custom_minimum_size = Vector2(0, 100) if _mob() else Vector2(0, 104)   # ширина — по содержимому, без пустот справа
 	var card_sb := _frame_box()
 	card_sb.border_color = Color(1.0, 0.28, 0.34, 0.8)
 	card_sb.shadow_color = Color(1.0, 0.2, 0.35, 0.25)
@@ -4771,7 +4777,7 @@ func _build_ui() -> void:
 	var ch := HBoxContainer.new()
 	card_v.add_child(ch)
 	var pvc := SubViewportContainer.new()
-	pvc.custom_minimum_size = Vector2(36, 52)   # портрет уменьшен в 4 раза по площади — виден, но не загораживает обзор
+	pvc.custom_minimum_size = Vector2(42, 56)   # портрет уменьшен в 4 раза по площади — виден, но не загораживает обзор
 	pvc.stretch = true
 	var pv := SubViewport.new()
 	pv.size = Vector2i(172, 248)
@@ -4782,7 +4788,7 @@ func _build_ui() -> void:
 	_ui.card_pvc = pvc
 	# аватар игрока из профиля (заменяет 3D-портрет, если загружен)
 	var ava := TextureRect.new()
-	ava.custom_minimum_size = Vector2(36, 52)
+	ava.custom_minimum_size = Vector2(42, 56)
 	ava.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ava.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	ava.visible = false
@@ -5032,6 +5038,14 @@ func _build_ui() -> void:
 	layer.add_child(al)
 	_arrow_layer = al
 	_refresh_turn_lbl()
+	# пробел = «конец хода»: кнопки с фокусом перехватывают Space как клик — запрещаем фокус весь бой
+	_strip_button_focus(layer)
+
+func _strip_button_focus(node: Node) -> void:
+	if node is Button:
+		node.focus_mode = Control.FOCUS_NONE
+	for c in node.get_children():
+		_strip_button_focus(c)
 
 func _layout_menu() -> void:
 	# логотип центрируется над фактической шириной колонки кнопок
@@ -9330,8 +9344,9 @@ func _refresh_card() -> void:
 	var hh: float = maxf(bb2.size.y, 0.2)
 	var head := Vector3(bb2.get_center().x, bb2.end.y - hh * 0.08, bb2.get_center().z)
 	var cam := Camera3D.new()
-	cam.position = head + Vector3(0.10 * hh, 0.02 * hh, 0.60 * hh)
-	cam.fov = 26.0
+	# дальше и чуть выше: голова целиком с полем, не в упор
+	cam.position = head + Vector3(0.14 * hh, 0.10 * hh, 0.85 * hh)
+	cam.fov = 24.0
 	pv.add_child(cam)
 	cam.look_at(head, Vector3.UP)
 	cam.make_current()
