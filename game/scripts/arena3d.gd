@@ -532,6 +532,9 @@ func _ready() -> void:
 		_run_testauth("test_auth_mobile.png")
 	elif args.has("--rendericons"):
 		_run_rendericons()
+	elif args.has("--testlight"):
+		_build_ui()
+		_run_testlight()
 	elif args.has("--testhouses"):
 		_run_testhouses()
 	else:
@@ -5209,6 +5212,84 @@ func _refresh_fighter_panel() -> void:
 	_refresh_card()
 
 # ---------- тестовый прогон для скриншота ----------
+# ---------------- ДЕМО-СЦЕНА: кинематографичный свет (--testlight) ----------------
+# пресет не трогает боевую сцену: применяется поверх _setup_lighting, снимок test_light.png
+func _apply_cinematic_env() -> void:
+	var moon: DirectionalLight3D = _gfx.get("moon")
+	var env: Environment = _gfx.get("env")
+	if moon == null or env == null:
+		return
+	# ключевой свет: теплее и ниже — длинные тени; мягкость через угловой размер источника
+	moon.light_color = Color(0.66, 0.72, 1.0)
+	moon.light_energy = 1.2
+	moon.rotation_degrees = Vector3(-52, 38, 0)
+	moon.light_angular_distance = 0.5
+	moon.directional_shadow_max_distance = 140.0
+	# фон и воздух: глубокий сине-фиолетовый ночной градиент
+	env.background_color = Color(0.02, 0.026, 0.058)
+	env.ambient_light_color = Color(0.17, 0.18, 0.24)
+	env.ambient_light_energy = 0.95
+	# пост-обработка
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.glow_enabled = true
+	env.glow_intensity = 0.55
+	env.glow_bloom = 0.12
+	env.glow_hdr_threshold = 0.9
+	env.ssao_enabled = true
+	env.ssao_radius = 1.6
+	env.ssao_intensity = 2.6
+	env.ssao_power = 1.15
+	env.fog_enabled = true
+	env.fog_density = 0.008
+	env.fog_light_color = Color(0.05, 0.07, 0.13)
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.03
+	env.adjustment_contrast = 1.07
+	env.adjustment_saturation = 1.14
+	# точки: сильнее, тёплый/холодный контраст по углам
+	for i in mini(4, _gfx.spots.size()):
+		var sp: SpotLight3D = _gfx.spots[i]
+		sp.light_energy = 9.5
+		sp.spot_range = 80.0
+		if i % 2 == 0:
+			sp.light_color = Color(1.0, 0.72, 0.42)
+		else:
+			sp.light_color = Color(0.42, 0.78, 1.0)
+	# контровой свет с северо-востока: отделяет бойцов от фона, фиолетовый «луна-2»
+	var rim := DirectionalLight3D.new()
+	rim.light_color = Color(0.52, 0.46, 0.95)
+	rim.light_energy = 0.5
+	rim.shadow_enabled = false
+	rim.rotation_degrees = Vector3(-35, -135, 0)
+	add_child(rim)
+
+func _run_testlight() -> void:
+	await get_tree().process_frame
+	_profile.onboarded = 1
+	_apply_graphics(2)
+	if not OS.get_cmdline_user_args().has("--base"):
+		_apply_cinematic_env()
+	# чистый кадр без интерфейса и без сетки перемещения
+	_ui.layer.visible = false
+	var poses := [Vector2i(19, 18), Vector2i(21, 19), Vector2i(20, 21)]
+	for i in mini(poses.size(), _fighters.size()):
+		var f = _fighters[i]
+		_unit_at.erase(_key(f.cell))
+		f.cell = poses[i]
+		_unit_at[_key(f.cell)] = i
+		f.node.position = gw(poses[i].x, poses[i].y)
+		f.pad.position = gw(poses[i].x, poses[i].y, 0.02)
+	# низкий кинематографичный ракурс через центр арены
+	_cam.position = Vector3(24, 13, 27)
+	_cam.look_at(Vector3(0, 1.2, 0), Vector3.UP)
+	_cam.fov = 33.0
+	_cam.make_current()
+	for i in 6:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_light.png")
+	print("LIGHT_SAVED")
+	get_tree().quit()
+
 func _run_testplay() -> void:
 	await get_tree().process_frame
 	_profile.onboarded = 1
@@ -6489,7 +6570,7 @@ func _build_menu() -> void:
 func _test_run() -> bool:
 	var a := OS.get_cmdline_user_args()
 	return a.has("--testmenu") or a.has("--testmenumid") or a.has("--testmenumobile") \
-		or a.has("--testplay") or a.has("--testbots")
+		or a.has("--testplay") or a.has("--testbots") or a.has("--testlight")
 
 const TIP_TEXTS := {
 	"squad": ["Отряд", "Здесь создаёшь и прокачиваешь бойцов: ник, оружие, класс, внешность.\nПогибшего бойца лечат в Медцентре — пока он восстанавливается, бери бойца из другого слота."],
