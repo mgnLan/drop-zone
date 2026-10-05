@@ -535,6 +535,8 @@ func _ready() -> void:
 	elif args.has("--testlight"):
 		_build_ui()
 		_run_testlight()
+	elif args.has("--testlos"):
+		_run_testlos()
 	elif args.has("--testhouses"):
 		_run_testhouses()
 	else:
@@ -1844,20 +1846,29 @@ func _generate_houses() -> void:
 		if cell.x < 0:
 			continue
 		_claim(cell, fp)
-		var hcells: Array = []
-		for ox in range(-fp / 2, fp / 2 + 1):  # дома блокируют обзор (туман войны)
-			for oz in range(-fp / 2, fp / 2 + 1):
-				var hc := Vector2i(cell.x + ox, cell.y + oz)
-				_blocks_sight[_key(hc)] = true
-				hcells.append(hc)
 		var model: String = HOUSE_MODELS[_rng.randi() % HOUSE_MODELS.size()]
 		var pal: String = HOUSE_PALETTES[_rng.randi() % HOUSE_PALETTES.size()]
-		# дверь — «от границы»: сторона с наибольшим запасом свободного места до края карты.
-		# выбираем ДО установки модели, чтобы повернуть реальный проём двери на клетку входа
+		# ставим без поворота, жмём масштаб до размера слота, потом считаем реальный
+		# занимаемый прямоугольник — дверь и регистрация клеток строго по визуалу
+		var hnode := _place(B + model, gw(cell.x, cell.y), 0.0, 2.9 * k + 0.7, pal)
+		# подгонка: модель не должна визуально вылезать за занятые клетки (иначе «сквозь стены»).
+		# AABB в МИРОВЫХ координатах — раньше сравнивали локальный размер (без scale узла)
+		# с мировым таргетом и недожимали масштаб в ~2-3 раза
+		var wb2: AABB = _node_aabb(hnode)
+		var hw: float = maxf(wb2.size.x, wb2.size.z)
+		var target := fp * CELL * 0.75
+		if hw > target:
+			hnode.scale *= target / hw
+		# реальный прямоугольник клеток под визуалом (до поворота)
+		var wb3: AABB = _node_aabb(hnode)
+		var c0 := Vector2i(int(floor(wb3.position.x / CELL + _half_n)), int(floor(wb3.position.z / CELL + _half_n)))
+		var c1 := Vector2i(int(ceil((wb3.position.x + wb3.size.x) / CELL + _half_n)) - 1, int(ceil((wb3.position.z + wb3.size.z) / CELL + _half_n)) - 1)
+		# дверь — «от границы»: сторона с наибольшим запасом свободного места до края карты
+		var dc := Vector2i((c0.x + c1.x) / 2, (c0.y + c1.y) / 2)
+		var half := maxi(c1.x - c0.x, c1.y - c0.y) / 2 + 1
 		var door := Vector2i(-1, -1)
-		var half := fp / 2 + 1
-		var cands := [Vector2i(cell.x, cell.y + half), Vector2i(cell.x, cell.y - half),
-			Vector2i(cell.x + half, cell.y), Vector2i(cell.x - half, cell.y)]
+		var cands := [Vector2i(dc.x, dc.y + half), Vector2i(dc.x, dc.y - half),
+			Vector2i(dc.x + half, dc.y), Vector2i(dc.x - half, dc.y)]
 		cands.sort_custom(func(p7, q7):
 			var dp := mini(mini(p7.x, p7.y), mini(_grid_n - 1 - p7.x, _grid_n - 1 - p7.y))
 			var dq := mini(mini(q7.x, q7.y), mini(_grid_n - 1 - q7.x, _grid_n - 1 - q7.y))
@@ -1865,7 +1876,7 @@ func _generate_houses() -> void:
 		for cand in cands:
 			if cand.x < 0 or cand.y < 0 or cand.x >= _grid_n or cand.y >= _grid_n:
 				continue
-			if _occupied.has(_key(cand)):
+			if _occupied.has(_key(cand)) and cand.x >= c0.x and cand.x <= c1.x and cand.y >= c0.y and cand.y <= c1.y:
 				continue
 			door = cand
 			break
@@ -1873,33 +1884,42 @@ func _generate_houses() -> void:
 		# тестовым режимом --testhouses): крутим дом так, чтобы проём оказался на клетке двери
 		var door_yaw := 0.0
 		if door.x >= 0:
-			if door.y < cell.y:
+			if door.y < dc.y:
 				door_yaw = 180.0
-			elif door.x > cell.x:
+			elif door.x > dc.x:
 				door_yaw = 90.0
-			elif door.x < cell.x:
+			elif door.x < dc.x:
 				door_yaw = 270.0
-		var hnode := _place(B + model, gw(cell.x, cell.y), door_yaw, 2.9 * k + 0.7, pal)
-		# подгонка: модель не должна визуально вылезать за занятые клетки (иначе «сквозь стены»)
-		var hb := AABB()
-		var hfirst := true
-		for mi in hnode.find_children("*", "MeshInstance3D", true, false):
-			var mt: Transform3D = hnode.global_transform.affine_inverse() * mi.global_transform
-			var mb: AABB = mt * mi.get_aabb()
-			hb = mb if hfirst else hb.merge(mb)
-			hfirst = false
-		if not hfirst:
-			var hw: float = maxf(hb.size.x, hb.size.z)
-			var target := fp * CELL * 0.75
-			if hw > target:
-				hnode.scale *= target / hw
+			hnode.rotation_degrees.y = door_yaw
+		# финальный прямоугольник (после поворота) — регистрируем ровно его
+		var wb4: AABB = _node_aabb(hnode)
+		var f0 := Vector2i(int(floor(wb4.position.x / CELL + _half_n)), int(floor(wb4.position.z / CELL + _half_n)))
+		var f1 := Vector2i(int(ceil((wb4.position.x + wb4.size.x) / CELL + _half_n)) - 1, int(ceil((wb4.position.z + wb4.size.z) / CELL + _half_n)) - 1)
+		var hcells: Array = []
+		var hset := {}
+		for hx in range(f0.x, f1.x + 1):
+			for hz in range(f0.y, f1.y + 1):
+				var hc := Vector2i(hx, hz)
+				hcells.append(hc)
+				hset[_key(hc)] = true
+		# клетки старого резерва вне визуала освобождаем — они снова проходимый двор
+		for ox in range(-fp / 2, fp / 2 + 1):
+			for oz in range(-fp / 2, fp / 2 + 1):
+				var ock := _key(Vector2i(cell.x + ox, cell.y + oz))
+				if not hset.has(ock):
+					_occupied.erase(ock)
+		for hc2 in hcells:  # дома блокируют обзор (туман войны)
+			_blocks_sight[_key(hc2)] = true
+			_occupied[_key(hc2)] = true
 		var tints := [Color(0.55, 0.33, 0.24), Color(0.42, 0.46, 0.54), Color(0.60, 0.52, 0.38), Color(0.36, 0.44, 0.32)]
 		_paint_house(hnode, tints[_rng.randi() % tints.size()])
 		_add_house_windows(hnode)
 		var hid := _houses.size()
 		for hc2 in hcells:
 			_house_at[_key(hc2)] = hid
-		_houses.append({"cells": hcells, "door": door, "node": hnode, "faded": false})
+		_houses.append({"cells": hcells, "door": door, "node": hnode, "faded": false,
+			"rmin": Vector2(wb4.position.x / CELL + _half_n, wb4.position.z / CELL + _half_n),
+			"rmax": Vector2((wb4.position.x + wb4.size.x) / CELL + _half_n, (wb4.position.z + wb4.size.z) / CELL + _half_n)})
 		if door.x >= 0:
 			var dpad := MeshInstance3D.new()
 			var dcyl := CylinderMesh.new()
@@ -5493,6 +5513,121 @@ func _run_testauth(fname: String) -> void:
 		await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://" + fname)
 	print("TESTAUTH_SAVED " + fname)
+	get_tree().quit()
+
+func _seg_crosses_rect(a: Vector2, b: Vector2, rmin: Vector2, rmax: Vector2) -> bool:
+	# пересекает ли отрезок прямоугольник (параметрический тест по осям); оба конца внутри — false
+	if rmin.x <= a.x and a.x <= rmax.x and rmin.y <= a.y and a.y <= rmax.y \
+		and rmin.x <= b.x and b.x <= rmax.x and rmin.y <= b.y and b.y <= rmax.y:
+		return false
+	var d := b - a
+	var t0 := 0.0
+	var t1 := 1.0
+	for axis in 2:
+		var av: float = a[axis]
+		var dv: float = d[axis]
+		var lo: float = rmin[axis]
+		var hi2: float = rmax[axis]
+		if absf(dv) < 0.00001:
+			if av < lo or av > hi2:
+				return false
+		else:
+			var ta := (lo - av) / dv
+			var tb := (hi2 - av) / dv
+			if ta > tb:
+				var tmp := ta
+				ta = tb
+				tb = tmp
+			t0 = maxf(t0, ta)
+			t1 = minf(t1, tb)
+			if t0 > t1:
+				return false
+	return true
+
+func _seg_rect_t(a: Vector2, b: Vector2, rmin: Vector2, rmax: Vector2) -> Vector2:
+	# параметрический интервал пересечения отрезка a→b с прямоугольником; пусто — (0,0) с tt.y<=tt.x
+	var d := b - a
+	var t0 := 0.0
+	var t1 := 1.0
+	for axis in 2:
+		var av: float = a[axis]
+		var dv: float = d[axis]
+		var lo: float = rmin[axis]
+		var hi2: float = rmax[axis]
+		if absf(dv) < 0.00001:
+			if av < lo or av > hi2:
+				return Vector2(0, 0)
+		else:
+			var ta := (lo - av) / dv
+			var tb := (hi2 - av) / dv
+			if ta > tb:
+				var tmp := ta
+				ta = tb
+				tb = tmp
+			t0 = maxf(t0, ta)
+			t1 = minf(t1, tb)
+			if t0 > t1:
+				return Vector2(0, 0)
+	return Vector2(t0, t1)
+
+func _run_testlos() -> void:
+	# диагностика «сквозь стены»: сверяем визуальный AABB домов с логической сеткой
+	await get_tree().process_frame
+	var report := []
+	for hi in _houses.size():
+		var h = _houses[hi]
+		# rect в момент регистрации клеток (до навешивания окон/декора, расширяющих AABB)
+		var rmin: Vector2 = h.get("rmin", Vector2.ZERO)
+		var rmax: Vector2 = h.get("rmax", Vector2.ZERO)
+		# 1) центр клетки внутри визуала дома, но клетка не занята — «стоишь в стене»
+		var uncovered := []
+		for cx in range(maxi(0, int(floor(rmin.x))), mini(_grid_n - 1, int(ceil(rmax.x - 0.001))) + 1):
+			for cz in range(maxi(0, int(floor(rmin.y))), mini(_grid_n - 1, int(ceil(rmax.y - 0.001))) + 1):
+				var c := Vector2i(cx, cz)
+				if not (rmin.x <= cx + 0.5 and cx + 0.5 <= rmax.x and rmin.y <= cz + 0.5 and cz + 0.5 <= rmax.y):
+					continue
+				if not _house_at.has(_key(c)) and not _occupied.has(_key(c)):
+					uncovered.append(c)
+		# 2) пары клеток с LOS=true, хотя отрезок проходит сквозь визуал дома.
+		# Классифицируем по глубине проникновения: <0.35 клетки — заскок по углу
+		# (артефакт Брезенхема, в бою почти не влияет), больше — реальная дыра.
+		var mism := []
+		var deep := []
+		for ax in _grid_n:
+			for ay in _grid_n:
+				for bx in _grid_n:
+					for by in _grid_n:
+						var ca := Vector2i(ax, ay)
+						var cb := Vector2i(bx, by)
+						var va := Vector2(ax + 0.5, ay + 0.5)
+						var vb := Vector2(bx + 0.5, by + 0.5)
+						# оба конца внутри ОДНОГО дома — стрельба разрешена правилом, не дыра
+						if _house_of(ca) >= 0 and _house_of(ca) == _house_of(cb):
+							continue
+						var tt := _seg_rect_t(va, vb, rmin, rmax)
+						if tt.y <= tt.x:
+							continue
+						var depth: float = (tt.y - tt.x) * va.distance_to(vb)
+						if _los(ca, cb):
+							mism.append(Vector4i(ax, ay, bx, by))
+							if depth >= 0.35:
+								deep.append(Vector4i(ax, ay, bx, by))
+		report.append("house %d model=%s rect=[%.1f,%.1f]-[%.1f,%.1f] cells=%d UNCOVERED=%s MISMATCH_LOS=%d DEEP=%d %s" % [
+			hi, h.node.name, rmin.x, rmin.y, rmax.x, rmax.y, (h.cells as Array).size(),
+			str(uncovered), mism.size(), deep.size(), str(deep.slice(0, 6))])
+	for line in report:
+		print(line)
+	# вид сверху для сверки глазами
+	if _cam == null:
+		_setup_camera()
+	_cam.position = Vector3(0, 70, 0.01)
+	_cam.look_at(Vector3(0, 0, 0), Vector3.UP)
+	_cam.fov = 60.0
+	_cam.make_current()
+	for i in 4:
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_los.png")
+	print("LOS_CHECK houses=", _houses.size())
 	get_tree().quit()
 
 func _run_testhouses() -> void:
@@ -9866,37 +10001,51 @@ func _tick_zone() -> void:
 # ---------------- ТУМАН ВОЙНЫ ----------------
 # ============================================================
 func _los(a: Vector2i, b: Vector2i) -> bool:
-	# линия видимости по клеткам (Брезенхэм); блокируют дома и тяжёлые укрытия
+	# линия видимости по клеткам (DDA-суперпокрытие): блокируют дома и тяжёлые укрытия
 	# дома: снаружи внутрь (и обратно) стрелять нельзя; внутри одного дома — можно
+	# суперпокрытие вместо Брезенхема: старый алгоритм срезал углы и пускал выстрелы
+	# сквозь стены на границах клеток
 	var ha := _house_of(a)
 	var hb := _house_of(b)
 	if ha != hb:
 		return false
 	if ha >= 0:
 		return true
-	var x0: int = a.x
-	var y0: int = a.y
-	var x1: int = b.x
-	var y1: int = b.y
-	var dx: int = absi(x1 - x0)
-	var dy: int = -absi(y1 - y0)
-	var sx: int = 1 if x0 < x1 else -1
-	var sy: int = 1 if y0 < y1 else -1
-	var err: int = dx + dy
-	var x := x0
-	var y := y0
-	while true:
-		if x == x1 and y == y1:
-			return true
-		if not (x == x0 and y == y0) and _blocks_sight.has("%d,%d" % [x, y]):
+	# проходим ВСЕ клетки, пересечённые отрезком центр→центр (включая соседей при
+	# прохождении ровно через угол — иначе остаётся срез угла)
+	var p0 := Vector2(a) + Vector2(0.5, 0.5)
+	var d := Vector2(b) + Vector2(0.5, 0.5) - p0
+	var step_x := 1 if d.x > 0 else (-1 if d.x < 0 else 0)
+	var step_y := 1 if d.y > 0 else (-1 if d.y < 0 else 0)
+	var t_max_x := 1e9 if step_x == 0 else (((a.x + (1 if step_x > 0 else 0)) - p0.x) / d.x)
+	var t_max_y := 1e9 if step_y == 0 else (((a.y + (1 if step_y > 0 else 0)) - p0.y) / d.y)
+	var t_dx := 1e9 if step_x == 0 else absf(1.0 / d.x)
+	var t_dy := 1e9 if step_y == 0 else absf(1.0 / d.y)
+	var cx := a.x
+	var cy := a.y
+	for _guard in 256:
+		if not (cx == a.x and cy == a.y) and _blocks_sight.has("%d,%d" % [cx, cy]):
 			return false
-		var e2 := 2 * err
-		if e2 >= dy:
-			err += dy
-			x += sx
-		if e2 <= dx:
-			err += dx
-			y += sy
+		if cx == b.x and cy == b.y:
+			return true
+		if t_max_x == t_max_y:
+			# ровно через угол четырёх клеток: проверяем обе боковые, иначе срез
+			var nx := cx + step_x
+			var ny := cy + step_y
+			if not (nx == a.x and cy == a.y) and _blocks_sight.has("%d,%d" % [nx, cy]):
+				return false
+			if not (cx == a.x and ny == a.y) and _blocks_sight.has("%d,%d" % [cx, ny]):
+				return false
+			cx = nx
+			cy = ny
+			t_max_x += t_dx
+			t_max_y += t_dy
+		elif t_max_x < t_max_y:
+			cx += step_x
+			t_max_x += t_dx
+		else:
+			cy += step_y
+			t_max_y += t_dy
 	return true
 
 func _update_fog() -> void:
