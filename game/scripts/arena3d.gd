@@ -81,6 +81,7 @@ var _menu_open := false
 var _blocks_sight := {}      # "x,z" -> true (дома и тяжёлые укрытия)
 var _soft_cover := {}        # "x,z" -> true (лёгкие укрытия: -15% к шансу попадания)
 var _sfx := {}
+var _audio_unlocked := false # веб: аудиоконтекст разбужен первым жестом
 var _profile := {}           # личный профиль: ники, город, аватар, статы бойцов
 var _battle_log := []        # последние строки боевого лога
 var _shake := 0.0            # тряска камеры при взрывах
@@ -2840,7 +2841,7 @@ func _setup_lighting() -> void:
 			_gfx.spots.append(c)
 
 func _apply_graphics(level: int) -> void:
-	# 0 — низкая, 1 — средняя, 2 — высокая
+	# 0 — низкая, 1 — средняя, 2 — высокая (кинематографичный пресет света)
 	_settings.graphics = level
 	var moon: DirectionalLight3D = _gfx.get("moon")
 	var env: Environment = _gfx.get("env")
@@ -2851,6 +2852,47 @@ func _apply_graphics(level: int) -> void:
 		sp.shadow_enabled = level >= 2
 	env.glow_enabled = level >= 1
 	env.fog_enabled = level >= 2
+	if level >= 2:
+		_apply_cinematic_env()
+	else:
+		_reset_base_env()
+
+func _reset_base_env() -> void:
+	# возврат к базовому свету _setup_lighting после кинопресета
+	var moon: DirectionalLight3D = _gfx.get("moon")
+	var env: Environment = _gfx.get("env")
+	if moon == null or env == null:
+		return
+	moon.light_color = Color(0.55, 0.65, 0.9)
+	moon.light_energy = 0.9
+	moon.rotation_degrees = Vector3(-60, 30, 0)
+	moon.light_angular_distance = 0.0
+	moon.directional_shadow_max_distance = 120.0
+	env.background_color = Color(0.008, 0.01, 0.02)
+	env.ambient_light_color = Color(0.13, 0.13, 0.16)
+	env.ambient_light_energy = 0.75
+	env.glow_intensity = 0.45
+	env.glow_bloom = 0.1
+	env.glow_hdr_threshold = 1.0
+	env.ssao_enabled = false
+	env.fog_density = 0.005
+	env.fog_light_color = Color(0.02, 0.03, 0.06)
+	env.adjustment_enabled = false
+	# точки: как в _setup_lighting — углы тёплые/холодные по диагоналям, центральная светлее
+	var hues := [Color(1.0, 0.75, 0.45), Color(0.45, 0.8, 1.0), Color(0.45, 0.8, 1.0), Color(1.0, 0.75, 0.45)]
+	for i in _gfx.spots.size():
+		var sp: SpotLight3D = _gfx.spots[i]
+		if i < 4:
+			sp.light_color = hues[i]
+			sp.light_energy = 8.0
+			sp.spot_range = 70.0
+		else:
+			sp.light_color = Color(1.0, 0.9, 0.75)
+			sp.light_energy = 10.0
+			sp.spot_range = 30.0
+	var rim: DirectionalLight3D = _gfx.get("rim")
+	if rim != null:
+		rim.visible = false
 
 func _setup_camera() -> void:
 	var cam := Camera3D.new()
@@ -4161,7 +4203,22 @@ func _use_backpack(idx: int) -> void:
 	_after_action()
 
 # ---------- ввод ----------
+func _web_audio_unlock() -> void:
+	# веб: политика автоплея может держать AudioContext в suspended — на первый жест
+	# будим контекст принудительно; безопасно, если API отсутствует или уже running
+	if _audio_unlocked or not OS.has_feature("web"):
+		return
+	_audio_unlocked = true
+	JavaScriptBridge.eval("""
+		try {
+			var ac = (window.GodotAudio && GodotAudio.ctx) ? GodotAudio.ctx : null;
+			if (ac && ac.state !== 'running') { ac.resume(); }
+		} catch (e) {}
+	""", true)
+
 func _unhandled_input(event: InputEvent) -> void:
+	if event.is_pressed():
+		_web_audio_unlock()
 	if event is InputEventMouseButton:
 		if event.pressed:
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -5290,19 +5347,25 @@ func _apply_cinematic_env() -> void:
 		else:
 			sp.light_color = Color(0.42, 0.78, 1.0)
 	# контровой свет с северо-востока: отделяет бойцов от фона, фиолетовый «луна-2»
-	var rim := DirectionalLight3D.new()
-	rim.light_color = Color(0.52, 0.46, 0.95)
-	rim.light_energy = 0.5
-	rim.shadow_enabled = false
-	rim.rotation_degrees = Vector3(-35, -135, 0)
-	add_child(rim)
+	# (узел создаётся один раз — _apply_graphics может дёргать пресет при каждом переключении)
+	var rim: DirectionalLight3D = _gfx.get("rim")
+	if rim == null:
+		rim = DirectionalLight3D.new()
+		rim.light_color = Color(0.52, 0.46, 0.95)
+		rim.light_energy = 0.5
+		rim.shadow_enabled = false
+		rim.rotation_degrees = Vector3(-35, -135, 0)
+		add_child(rim)
+		_gfx.rim = rim
+	rim.visible = true
 
 func _run_testlight() -> void:
 	await get_tree().process_frame
 	_profile.onboarded = 1
-	_apply_graphics(2)
-	if not OS.get_cmdline_user_args().has("--base"):
-		_apply_cinematic_env()
+	if OS.get_cmdline_user_args().has("--base"):
+		_apply_graphics(1)   # базовый свет без кинопресета
+	else:
+		_apply_graphics(2)   # высокая графика = кинопресет (как в игре)
 	# чистый кадр без интерфейса и без сетки перемещения
 	_ui.layer.visible = false
 	var poses := [Vector2i(19, 18), Vector2i(21, 19), Vector2i(20, 21)]
