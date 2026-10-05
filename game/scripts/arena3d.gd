@@ -3027,6 +3027,16 @@ func _select_from_squad(i: int) -> void:
 func _refresh_squad() -> void:
 	if not _ui.has("squad_rows"):
 		return
+	# ростер нужен только для переключения между бойцами: один боец — прячем ряд целиком
+	var mine := 0
+	for f in _fighters:
+		if f.team == 0:
+			mine += 1
+	if mine <= 1:
+		for r in _ui.squad_rows:
+			r.row.visible = false
+		_refresh_lvl_note()
+		return
 	for i in mini(5, _ui.squad_rows.size()):
 		var r: Dictionary = _ui.squad_rows[i]
 		if i >= _fighters.size():
@@ -4747,7 +4757,7 @@ func _build_ui() -> void:
 	# --- карточка бойца слева сверху: портрет + HP/AP + рюкзак под анимацией ---
 	var card := PanelContainer.new()
 	card.position = Vector2(12, 48)
-	card.custom_minimum_size = Vector2(180, 158) if _mob() else Vector2(204, 168)
+	card.custom_minimum_size = Vector2(292, 100) if _mob() else Vector2(324, 104)
 	var card_sb := _frame_box()
 	card_sb.border_color = Color(1.0, 0.28, 0.34, 0.8)
 	card_sb.shadow_color = Color(1.0, 0.2, 0.35, 0.25)
@@ -4776,24 +4786,37 @@ func _build_ui() -> void:
 	ch.add_child(ava)
 	_ui.card_avatar = ava
 	var cvb2 := VBoxContainer.new()
+	cvb2.add_theme_constant_override("separation", 4)
 	ch.add_child(cvb2)
 	var name_l := Label.new()
 	name_l.add_theme_font_size_override("font_size", 16)
 	cvb2.add_child(name_l)
+	var hp_row := HBoxContainer.new()
+	hp_row.add_theme_constant_override("separation", 6)
+	cvb2.add_child(hp_row)
 	var hp_l := Label.new()
-	cvb2.add_child(hp_l)
+	hp_l.custom_minimum_size = Vector2(64, 0)
+	hp_l.add_theme_font_size_override("font_size", 13)
+	hp_row.add_child(hp_l)
 	var hp_bar := ProgressBar.new()
 	hp_bar.max_value = 100
-	hp_bar.custom_minimum_size = Vector2(88, 12) if _mob() else Vector2(104, 12)
+	hp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hp_bar.custom_minimum_size = Vector2(140, 12) if _mob() else Vector2(180, 12)
 	hp_bar.show_percentage = false
-	cvb2.add_child(hp_bar)
+	hp_row.add_child(hp_bar)
+	var ap_row := HBoxContainer.new()
+	ap_row.add_theme_constant_override("separation", 6)
+	cvb2.add_child(ap_row)
 	var ap_l := Label.new()
-	cvb2.add_child(ap_l)
+	ap_l.custom_minimum_size = Vector2(64, 0)
+	ap_l.add_theme_font_size_override("font_size", 13)
+	ap_row.add_child(ap_l)
 	var ap_bar := ProgressBar.new()
 	ap_bar.max_value = 10
-	ap_bar.custom_minimum_size = Vector2(88, 12) if _mob() else Vector2(104, 12)
+	ap_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ap_bar.custom_minimum_size = Vector2(140, 12) if _mob() else Vector2(180, 12)
 	ap_bar.show_percentage = false
-	cvb2.add_child(ap_bar)
+	ap_row.add_child(ap_bar)
 	# иконка рюкзака убрана — дублировала кнопку в панели бойца справа ([I] работает)
 	card.visible = false
 	_ui.card = card
