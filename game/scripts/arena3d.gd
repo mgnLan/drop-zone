@@ -5425,7 +5425,7 @@ func _run_testmenu(mobile := false, sfx := "") -> void:
 		sfx = "_mob" if mobile else ""
 	await get_tree().process_frame
 	# дым-тест чата: локальное эхо с эмодзи (панель эмодзи не открываем — на скринах должна быть честная картина меню)
-	_menu_chat_local[0].append("Вы: проверка чата :)")
+	_menu_chat_local[0].append("Вы: проверка чата 😀🔥💀")
 	_render_menu_chat()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -6213,9 +6213,9 @@ func _ctrl_button(icon: String, caption: String) -> Button:
 var _menu_chat_tab := 0
 var _menu_chat_collapsed := false
 const MENU_CHAT_STUBS := [
-	["Система: добро пожаловать в ТОЧКУ СБРОСА: Королевская битва!",
+	["Система: 👋 добро пожаловать в ТОЧКУ СБРОСА: Королевская битва!",
 	 "Система: общий чат всех игроков появится в онлайн-режиме.",
-	 "Система: пока доступны тренировки 1×1, 2×2 и 4×4 против ботов."],
+	 "Система: пока доступны тренировки 1×1, 2×2 и 4×4 против ботов. 🎮👋"],
 	["Система: чат комнаты — для общения перед боем с командой.",
 	 "Система: появится в онлайн-режиме (комнаты/лобби матчей)."],
 	["Система: клановый чат. Создай клан или вступи в существующий —",
@@ -6223,7 +6223,7 @@ const MENU_CHAT_STUBS := [
 ]
 
 var _menu_chat_local := [[], [], []]  # локальные сообщения игрока (эхо до онлайна)
-const MENU_EMOJIS := [":)", ":D", ";)", ":P", "xD", "B)", ":(", ":'(", ":/", ":O", "o_O", ">:)", "<3", "*_*", ":|", ":-*"]
+const MENU_EMOJIS := ["😀", "😂", "😉", "😛", "😎", "🤔", "😢", "😡", "👍", "👎", "❤️", "🔥", "💀", "🎉", "😱", "💯"]
 
 func _render_menu_chat() -> void:
 	if not _ui.has("menu_chat_lines"):
@@ -6283,7 +6283,7 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 		var eb := Button.new()
 		eb.text = em
 		eb.custom_minimum_size = Vector2(40, 34)
-		eb.add_theme_font_size_override("font_size", 14)
+		eb.add_theme_font_size_override("font_size", 18)
 		var e: String = em
 		eb.pressed.connect(func():
 			inp.insert_text_at_caret(e)
