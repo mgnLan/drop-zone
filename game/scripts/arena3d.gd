@@ -6658,6 +6658,17 @@ func _build_menu() -> void:
 	chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(chips)
 	_ui.menu_chips = chips
+	# --- фиксированная «Назад» сверху слева: на подэкранах стоит над контентом,
+	# не прокручивается и не прячется за карточками (кнопки внизу списка убраны) ---
+	var backb := _menu_button("← Назад")
+	backb.offset_left = 14.0
+	backb.offset_top = 12.0
+	backb.offset_right = 14.0 + 118.0
+	backb.offset_bottom = 12.0 + 42.0
+	backb.visible = false
+	backb.pressed.connect(_show_menu_main)
+	layer.add_child(backb)
+	_ui.menu_back = backb
 	# --- центральная зона: скролл, чтобы меню влезало на любых экранах ---
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -7070,6 +7081,7 @@ func _style_locked_button(b: Button) -> void:
 	b.add_theme_color_override("font_disabled_color", Color(0.65, 0.7, 0.8))
 
 func _show_menu_main() -> void:
+	_menu_back_show(false)
 	_med_tick()   # офлайн-восстановление HP бойцов
 	if _slot_unlock_check() != "":
 		_save_profile()   # подхват слотов (уровень/ВИП открылись вне боя)
@@ -7243,7 +7255,16 @@ func _request_fullscreen() -> void:
 		else:
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
+# показ/скрытие фиксированной кнопки «Назад»: на подэкранах она занимает место лого
+func _menu_back_show(on: bool) -> void:
+	if not _ui.has("menu_back") or not is_instance_valid(_ui.menu_back):
+		return
+	_ui.menu_back.visible = on
+	if _ui.has("menu_logo") and is_instance_valid(_ui.menu_logo):
+		_ui.menu_logo.visible = not on
+
 func _show_menu_settings() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -7315,10 +7336,6 @@ func _show_menu_settings() -> void:
 		dlg.popup_centered()
 	)
 	vb.add_child(bfb)
-	var back := Button.new()
-	back.text = "← Назад"
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 # ---------- экран отряда: создание персонажа + слоты ----------
 var _squad_edit := 0            # какого бойца редактируем
@@ -7483,6 +7500,7 @@ const HEROES := [
 ]
 
 func _show_menu_squad() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -7527,10 +7545,6 @@ func _show_menu_squad() -> void:
 		lock.add_theme_font_size_override("font_size", 15)
 		lock.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vb.add_child(lock)
-		var back := Button.new()
-		back.text = "← Назад"
-		back.pressed.connect(_show_menu_main)
-		vb.add_child(back)
 		return
 	# --- никнейм ---
 	var nrow := HBoxContainer.new()
@@ -7997,10 +8011,6 @@ func _show_menu_squad() -> void:
 		_stat_hp(st), _stat_ap(st), _stat_carry(st), _stat_vision(st)]
 	sum.add_theme_font_size_override("font_size", 15)
 	vs.add_child(sum)
-	var back := Button.new()
-	back.text = "← Назад"
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 # ---------- личные настройки: аватар, город ----------
 # ---------- Battle Pass: сезон 1 ----------
@@ -8171,6 +8181,7 @@ func _bp_claim(lv: int, prem: bool) -> void:
 
 # ---------- экран «Медцентр»: лечение, реген, ротация с запасом ----------
 func _show_menu_med() -> void:
+	_menu_back_show(true)
 	_med_tick()
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
@@ -8341,11 +8352,6 @@ func _show_menu_med() -> void:
 		hire_note.add_theme_color_override("font_color", Color(0.65, 0.72, 0.78))
 		hire_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vb.add_child(hire_note)
-	var back := Button.new()
-	back.text = "← Назад"
-	_style_menu_button(back)
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 # обмен слота отряда с запасным бойцом (полный перенос прогресса)
 func _reserve_swap(ridx: int, sidx: int) -> void:
@@ -8388,6 +8394,7 @@ func _new_reserve_fighter() -> Dictionary:
 
 # ---------- экран «Прогрессия»: лестница уровней и тиров ----------
 func _show_menu_progress() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -8506,9 +8513,6 @@ func _show_menu_progress() -> void:
 	hint.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(hint)
-	var back := _menu_button("← Назад")
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 func _bp_season_sync() -> void:
 	# смена даты старта сезона = честный старт для всех: прогресс пропуска обнуляется.
@@ -8524,6 +8528,7 @@ func _bp_season_sync() -> void:
 	_save_profile()
 
 func _show_menu_bp() -> void:
+	_menu_back_show(true)
 	_bp_season_sync()
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
@@ -8545,10 +8550,6 @@ func _show_menu_bp() -> void:
 		vb.add_child(soon)
 		vb.add_child(_framed_label("Сезон 1 стартует, когда наберём игроков. Миссии дня и недели уже работают — опыт пропуска начнёт считаться со дня старта (у всех честно с нуля).", 13))
 		vb.add_child(_framed_label("50 уровней · 60 дней · две ленты наград\n• Бесплатно: аренды героев «Крот» и «Пёс», фрагменты «Вдова», герой «Призрак» навсегда, сундуки, монеты, осколки\n• Premium (399 руб): аренды «Следопыт», «Молот», «Жнец», телепорт «Шторм», рамка «Легенда», сундуки ×6", 13))
-		var back_soon := _menu_button("← Назад")
-		back_soon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		back_soon.pressed.connect(_show_menu_main)
-		vb.add_child(back_soon)
 		return
 	_maybe_auto_tip("bp")
 	var lvl := _bp_level()
@@ -8661,9 +8662,6 @@ func _show_menu_bp() -> void:
 	note.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
-	var back := _menu_button("← Назад")
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 # ---------- сундуки шоу ----------
 var _chest_last := ""           # текст последнего дропа
@@ -9013,6 +9011,7 @@ func _chest_exchange(kind: String, idx: int, price: int) -> void:
 		_save_profile()
 
 func _show_menu_chests() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -9157,12 +9156,10 @@ func _show_menu_chests() -> void:
 					_show_menu_chests()
 				)
 			row.add_child(eb)
-	var back := _menu_button("← Назад")
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 # ---------- герои: коллекция, наём, сборка ----------
 func _show_menu_heroes() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -9259,11 +9256,9 @@ func _show_menu_heroes() -> void:
 				_show_menu_heroes()
 			)
 			cv.add_child(bb)
-	var back := _menu_button("← Назад")
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 func _show_menu_shop() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -9414,11 +9409,9 @@ func _show_menu_shop() -> void:
 	note.text = "Скины бойца и подписка с призами — в онлайн-версии."
 	note.add_theme_font_size_override("font_size", 12)
 	vb.add_child(note)
-	var back := _menu_button("← Назад")
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 func _show_menu_profile() -> void:
+	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
@@ -9495,10 +9488,6 @@ func _show_menu_profile() -> void:
 	note.text = "Ники бойцов меняются на экране «Отряд»"
 	note.add_theme_font_size_override("font_size", 12)
 	vb.add_child(note)
-	var back := Button.new()
-	back.text = "← Назад"
-	back.pressed.connect(_show_menu_main)
-	vb.add_child(back)
 
 func _pick_avatar() -> void:
 	# выбор файла через системный диалог (в браузере — загрузка файла)
