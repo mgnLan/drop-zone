@@ -109,13 +109,13 @@ var _pinch := 0.0
 var _override_mouse := Vector2(-1, -1)  # для тач-кликов
 
 func _load_mode() -> void:
-	# режим матча: 1 = 1×1, 2 = 2×2, 4 = 4×4 (карта соразмерно меньше)
+	# режим матча: 1 = 1×1, 2 = 2×2, 3 = 3×3, 4 = 4×4 (карта соразмерно меньше)
 	var cfg := ConfigFile.new()
 	if cfg.load("user://mode.cfg") == OK:
 		_mode = int(cfg.get_value("game", "mode", 4))
-	if _mode not in [1, 2, 4]:
+	if _mode not in [1, 2, 3, 4]:
 		_mode = 4
-	_grid_n = {1: 22, 2: 28, 4: 40}[_mode]
+	_grid_n = {1: 22, 2: 28, 3: 34, 4: 40}[_mode]
 	_half_n = (_grid_n - 1) / 2.0
 	_size_n = _grid_n * CELL
 
@@ -1057,10 +1057,9 @@ const STAT_NAMES := {"str": "Сила", "agi": "Ловкость", "end": "Вы�
 	"per": "Восприятие", "int": "Интеллект", "lck": "Удача"}
 const STAT_HINTS := {"str": "+2 кг веса/очко; СИЛ 4+ для тяжёлого оружия",
 	"agi": "+1 ОД за 3 очка (макс +3); +0.5% уклонения/очко",
-	"end": "+15 HP за очко", "per": "+1 обзор за 2 очка",
+	"end": "+1 HP за очко", "per": "+1 обзор за 2 очка",
 	"int": "+2% точности (макс 20%) и +10% опыта/очко", "lck": "+0.1% к криту (база 5%, x1.5)/очко"}
 const STAT_POINTS := 5        # очков на распределение каждому бойцу
-const SLOT2_WINS := 15   # слот 2 — за 15 побед (открывает режим 2×2)
 const SLOT3_LVL := 35    # слот 3 — запасной, за 35 уровень любого бойца
 # слот 4 — ТОЛЬКО по подписке ВИП и после открытия слота 3 (на механику не влияем, открываем возможности)
 # таланты: ранг N стоит N очков (1/2/3); очко талантов — каждые 3 уровня бойца
@@ -1336,7 +1335,7 @@ func _load_profile() -> void:
 		"owned_outfits": [1, 0, 0, 0, 0],  # купленные камуфляжи (0 стандарт)
 		"frame": 0,               # рамка аватара: 0 стандарт, 1 неон, 2 золото (монетизация)
 		"nick_color": 0,          # цвет ника: 0 белый, 1 красный, 2 золото (монетизация)
-		"unlocked_slots": 1,      # стартовый игрок: 1 слот; остальные — заслуги/подписка
+		"unlocked_slots": 2,      # стартовый игрок: 2 бойца для смены; 3-й — заслуги, 4-й — ВИП
 		"onboarded": 0,           # 1 = обучение первого боя пройдено
 		"coins": 0,               # копилка монет (монетизация)
 		"stamina": 100.0,         # выносливость шоу (бой −15)
@@ -1402,7 +1401,7 @@ func _load_profile() -> void:
 	_profile.owned_outfits = cfg.get_value("player", "owned_outfits", [1, 0, 0, 0, 0])
 	_profile.frame = int(cfg.get_value("player", "frame", 0))
 	_profile.nick_color = int(cfg.get_value("player", "nick_color", 0))
-	_profile.unlocked_slots = int(cfg.get_value("player", "unlocked_slots", 1))
+	_profile.unlocked_slots = int(cfg.get_value("player", "unlocked_slots", 2))
 	_profile.onboarded = int(cfg.get_value("player", "onboarded", 0))
 	_profile.coins = int(cfg.get_value("player", "coins", 0))
 	_profile.stamina = float(cfg.get_value("player", "stamina", 100.0))
@@ -1547,7 +1546,7 @@ func _tal_buy(f: Dictionary, tid: String) -> bool:
 
 # производные характеристики бойца из распределённых очков
 func _stat_hp(st: Dictionary) -> int:
-	return 100 + 15 * int(st.get("end", 0))
+	return 100 + int(st.get("end", 0))
 
 func _stat_ap(st: Dictionary) -> int:
 	# +1 ОД за 3 очка ловкости, максимум +3
@@ -3389,12 +3388,11 @@ func _max_squad_lvl() -> int:
 		m = maxi(m, int(_profile.lvl[i]))
 	return m
 
-# разблокировка слотов: 2 — победы, 3 — уровень, 4 — только ВИП после слота 3
+# разблокировка слотов: 2 — с самого старта (миграция), 3 — уровень, 4 — только ВИП после слота 3
 func _slot_unlock_check() -> String:
 	var msg := ""
-	if _profile.unlocked_slots < 2 and int(_profile.get("wins", 0)) >= SLOT2_WINS:
-		_profile.unlocked_slots = 2
-		msg = "Открыт слот бойца №2 — режим 2×2!"
+	if _profile.unlocked_slots < 2:
+		_profile.unlocked_slots = 2   # слот №2 теперь выдаётся с самого начала
 	if _profile.unlocked_slots < 3 and _max_squad_lvl() >= SLOT3_LVL:
 		_profile.unlocked_slots = 3
 		msg = "Открыт слот бойца №3 (запасной)!"
@@ -6409,6 +6407,34 @@ func _card_label(t: String, fsize: int, col: Color, bold := false) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
+func _opp_switch() -> Control:
+	# выбор противника: боты играбельны; онлайн против игроков — заглушка до запуска сезона
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	var bots := Button.new()
+	bots.text = "Против ботов"
+	bots.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var bs := _frame_box()
+	bs.border_color = Color(0.45, 0.8, 1.0, 0.9)
+	bs.bg_color = Color(0.10, 0.18, 0.26, 0.95)
+	bots.add_theme_stylebox_override("normal", bs)
+	bots.add_theme_stylebox_override("hover", bs)
+	bots.add_theme_stylebox_override("pressed", bs)
+	bots.add_theme_color_override("font_color", Color(0.75, 0.92, 1.0))
+	var ppl := Button.new()
+	ppl.text = "Против игроков · СКОРО"
+	ppl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ppl.disabled = true
+	var ps := _frame_box()
+	ps.bg_color = Color(0.05, 0.07, 0.10, 0.85)
+	ps.border_color = Color(0.45, 0.5, 0.6, 0.7)
+	ppl.add_theme_stylebox_override("disabled", ps)
+	ppl.add_theme_color_override("font_disabled_color", Color(0.65, 0.7, 0.8))
+	ppl.tooltip_text = "Онлайн-бои против других игроков появятся, когда наберём аудиторию. Пока — тренировки против ботов"
+	hb.add_child(bots)
+	hb.add_child(ppl)
+	return hb
+
 func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locked := false, glow := false) -> Button:
 	# карточка режима боя: иконка на подложке + название + подпись; компактная, без пустот
 	var b := Button.new()
@@ -7132,16 +7158,17 @@ func _show_menu_main() -> void:
 		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
 		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
 		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0))), "Энергия — под будущие онлайн-бои. Тренировки бесплатны"))
-		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — открывают слоты: 2-й боец на 15 победах, 3-й на 35 ур., 4-й — только ВИП"))
+		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — показатель мастерства. Слоты: 2 бойца с самого старта, 3-й на 35 ур., 4-й — только ВИП"))
 		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0)), "Всего противников уничтожено"))
-	# --- секция БОЙ: три карточки режимов (иконки-пиктограммы) ---
-	var wins: int = int(_profile.get("wins", 0))
+	# --- секция БОЙ: карточки режимов (иконки-пиктограммы) ---
 	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
 	m1.pressed.connect(func(): _start_mode(1))
-	var lock2: bool = _profile.unlocked_slots < 2
-	var m2 := _fight_card("fighter2", "2×2 · Пара", "Слот №2 — за %d побед (%d/%d)" % [SLOT2_WINS, wins, SLOT2_WINS], Color(1.0, 0.78, 0.28), lock2)
-	if not lock2:
-		m2.pressed.connect(func(): _start_mode(2))
+	var m2 := _fight_card("fighter2", "2×2 · Пара", "Ты и напарник против пары ботов", Color(1.0, 0.78, 0.28), false)
+	m2.pressed.connect(func(): _start_mode(2))
+	var lock3: bool = _profile.unlocked_slots < 3
+	var m3 := _fight_card("swords", "3×3 · Тройка", "Сначала слот №3 (35 ур. любого бойца)" if lock3 else "Трое против троих — командный бой", Color(1.0, 0.78, 0.28), lock3)
+	if not lock3:
+		m3.pressed.connect(func(): _start_mode(3))
 	var lock4: bool = _profile.unlocked_slots < 4
 	var s4 := "Только по подписке ВИП"
 	if int(_profile.get("vip", 0)) == 1:
@@ -7187,8 +7214,10 @@ func _show_menu_main() -> void:
 		col_l2.add_theme_constant_override("separation", 8)
 		two.add_child(col_l2)
 		col_l2.add_child(_section_title("БОЙ"))
+		col_l2.add_child(_opp_switch())
 		col_l2.add_child(m1)
 		col_l2.add_child(m2)
+		col_l2.add_child(m3)
 		col_l2.add_child(m4)
 		var col_r2 := VBoxContainer.new()
 		col_r2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -7214,8 +7243,10 @@ func _show_menu_main() -> void:
 			col_m2.add_child(dq)
 	else:
 		vb.add_child(_section_title("БОЙ"))
+		vb.add_child(_opp_switch())
 		vb.add_child(m1)
 		vb.add_child(m2)
+		vb.add_child(m3)
 		vb.add_child(m4)
 		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
 		var grid := GridContainer.new()
@@ -7534,8 +7565,6 @@ func _show_menu_squad() -> void:
 		# закрытый слот — условия открытия
 		var cond := ""
 		match _squad_edit + 1:
-			2:
-				cond = "Нужно побед: %d (у вас %d)." % [SLOT2_WINS, int(_profile.get("wins", 0))]
 			3:
 				cond = "Нужен %d уровень любого бойца (у вас макс. %d)." % [SLOT3_LVL, _max_squad_lvl()]
 			_:
@@ -8007,8 +8036,9 @@ func _show_menu_squad() -> void:
 		)
 		vs.add_child(rst)
 	var sum := Label.new()
-	sum.text = "Итог: HP %d · ОД %d · вес %.0f кг · обзор %d" % [
-		_stat_hp(st), _stat_ap(st), _stat_carry(st), _stat_vision(st)]
+	var lvl_bonus := 3 * (int(_profile.lvl[_squad_edit]) - 1)
+	sum.text = "Итог: HP %d (ур. +%d) · ОД %d · вес %.0f кг · обзор %d" % [
+		_stat_hp(st) + lvl_bonus, lvl_bonus, _stat_ap(st), _stat_carry(st), _stat_vision(st)]
 	sum.add_theme_font_size_override("font_size", 15)
 	vs.add_child(sum)
 
