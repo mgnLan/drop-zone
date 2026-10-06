@@ -2473,6 +2473,26 @@ func _apply_outfit(p: Node3D, idx: int) -> void:
 				_outfit_mats[ckey] = dm
 			mi.set_surface_override_material(si, _outfit_mats[ckey])
 
+func _tune_fighter_materials(node: Node) -> void:
+	# персонажи матовые: глянечный specular от прожекторов + bloom даёт белые блики
+	var meshes: Array = []
+	if node is MeshInstance3D:
+		meshes.append(node)
+	for mi2 in node.find_children("*", "MeshInstance3D", true, false):
+		meshes.append(mi2)
+	for mi in meshes:
+		var m3 := mi as MeshInstance3D
+		if m3.mesh == null:
+			continue
+		for si in m3.mesh.get_surface_count():
+			var m: Material = m3.get_active_material(si)
+			if m is StandardMaterial3D:
+				var dm: StandardMaterial3D = (m as StandardMaterial3D).duplicate()
+				dm.roughness = 0.8
+				dm.metallic = 0.0
+				dm.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+				m3.set_surface_override_material(si, dm)
+
 func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String, team: Color, team_idx: int, fname: String, st = {}, lvl := 1, xp := 0, talents = {}, tpts := 0, prof = {}, cls_idx := -1, slot := -1) -> void:
 	# отказоустойчивость: серверный профиль может прислать неверные типы
 	# (пустые объекты после PHP json_decode приходят как []) — параметры без типизации,
@@ -2495,6 +2515,7 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 		_apply_outfit(p, int(_profile.get("outfit", 0)))
 	else:
 		_apply_outfit(p, _rng.randi_range(1, OUTFIT_SKINS.size() - 1))
+	_tune_fighter_materials(p)
 	for wn in WEAPON_NODES:
 		var w := p.find_child(wn, true, false)
 		if w and w is Node3D:
@@ -5323,9 +5344,9 @@ func _apply_cinematic_env() -> void:
 	# пост-обработка
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.glow_enabled = true
-	env.glow_intensity = 0.55
-	env.glow_bloom = 0.12
-	env.glow_hdr_threshold = 0.9
+	env.glow_intensity = 0.4
+	env.glow_bloom = 0.1
+	env.glow_hdr_threshold = 1.0
 	env.ssao_enabled = true
 	env.ssao_radius = 1.6
 	env.ssao_intensity = 2.6
@@ -5337,10 +5358,11 @@ func _apply_cinematic_env() -> void:
 	env.adjustment_brightness = 1.03
 	env.adjustment_contrast = 1.07
 	env.adjustment_saturation = 1.14
-	# точки: сильнее, тёплый/холодный контраст по углам
+	# точки: сильнее, тёплый/холодный контраст по углам (энергия умеренная —
+	# иначе в пятне света пересвечивают бойцов)
 	for i in mini(4, _gfx.spots.size()):
 		var sp: SpotLight3D = _gfx.spots[i]
-		sp.light_energy = 9.5
+		sp.light_energy = 8.0
 		sp.spot_range = 80.0
 		if i % 2 == 0:
 			sp.light_color = Color(1.0, 0.72, 0.42)
