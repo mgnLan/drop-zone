@@ -501,7 +501,7 @@ func _ready() -> void:
 		_run_testplay()
 	elif args.has("--testbots"):
 		_build_ui()
-		_run_testbots()
+		_run_testbots(args.has("--testfire"))
 	elif args.has("--testmenu"):
 		_load_sfx()
 		_build_ui()
@@ -4456,6 +4456,30 @@ func _bot_act(i: int) -> void:
 	var guard := 0
 	while f.alive and f.ap > 0 and guard < 24 and not _game_over:
 		guard += 1
+		# стоим в огне (после Молотова и т.п.) — сначала выбираемся, всё остальное потом:
+		# иначе бот «встаёт» посреди выжженного квадрата и горит, не двигаясь
+		if _fire.has(f.cell):
+			var fled := false
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var nf: Vector2i = f.cell + d
+				if nf.x < 0 or nf.y < 0 or nf.x >= _grid_n or nf.y >= _grid_n:
+					continue
+				var kf := _key(nf)
+				if _unit_at.has(kf) or _fire.has(nf):
+					continue
+				if not _in_zone(nf) and _in_zone(f.cell):
+					continue
+				if _occupied.has(kf):
+					continue
+				f.ap -= 1
+				_move_fighter(i, nf)
+				_log("%s выбирается из огня!" % f.name)
+				fled = true
+				break
+			await get_tree().create_timer(0.25).timeout
+			if fled:
+				continue
+			return  # выхода нет — стоим и горим, ход кончен
 		var vis: int = f.get("vision", VISION)
 		var t := _bot_pick_target(f, vis)
 		if t < 0:
@@ -5510,7 +5534,7 @@ func _run_testplay() -> void:
 	get_tree().quit()
 
 # ---------- тест ботов: синие ходят и стреляют ----------
-func _run_testbots() -> void:
+func _run_testbots(with_fire := false) -> void:
 	await get_tree().process_frame
 	# телепорт: игрок 0 и все боты — в центр, ближний бой
 	var spots := [Vector2i(18, 20), Vector2i(22, 20), Vector2i(20, 18), Vector2i(20, 22)]
@@ -5528,6 +5552,9 @@ func _run_testbots() -> void:
 		b.node.position = gw(b.cell.x, b.cell.y)
 		b.pad.position = gw(b.cell.x, b.cell.y, 0.02)
 		b.ap = 8
+	if with_fire:
+		# боты стоят в выжженном квадрате — проверяем побег из огня
+		_ignite(Vector2i(20, 20), 2)
 	print("TESTBOTS: старт, HP игрока0 = ", p0.hp)
 	_end_turn()
 	while _busy:
