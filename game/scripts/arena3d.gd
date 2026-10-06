@@ -6822,7 +6822,7 @@ func _build_menu() -> void:
 		dzt.autostart = true
 		layer.add_child(dzt)
 		dzt.timeout.connect(func():
-			var d = JavaScriptBridge.eval("window.dzDiag?(function(q){return 'ih:'+q.ih+' rr:'+(q.rr||'-').slice(0,24)+' gc:'+(q.gc||'-')+' sc:'+(q.sc||'-')+' ac:'+q.ac+' pd:'+q.pd;})(window.dzDiag):'no-diag'", true)
+			var d = JavaScriptBridge.eval("window.dzDiag?(function(q){return 'ih:'+q.ih+' cw:'+q.cw+'x'+q.ch+' rr:'+(q.rr||'-').slice(0,24)+' ac:'+q.ac+' ctx:'+(q.ctx||'-')+' pd:'+q.pd;})(window.dzDiag):'no-diag'", true)
 			dzl.text = "%s | sfx:%d snd:%s" % [str(d), _sfx.size(), str(_settings.get("sound", true))]
 		)
 	_show_menu_main()
@@ -6860,21 +6860,21 @@ func _tip_overlay(tip_id: String, mark_seen := true) -> void:
 	ctr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ov.add_child(ctr)
 	var pc := PanelContainer.new()
-	pc.custom_minimum_size = Vector2(minf(430.0, _vw() * 0.9), 0)
+	pc.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
 	pc.add_theme_stylebox_override("panel", _frame_box())
 	ctr.add_child(pc)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
+	vb.add_theme_constant_override("separation", 14)
 	pc.add_child(vb)
 	var t: Array = TIP_TEXTS.get(tip_id, ["Подсказка", ""])
 	var tl := Label.new()
 	tl.text = str(t[0])
-	tl.add_theme_font_size_override("font_size", 20)
+	tl.add_theme_font_size_override("font_size", 26)
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(tl)
 	var bl := Label.new()
 	bl.text = str(t[1])
-	bl.add_theme_font_size_override("font_size", 14)
+	bl.add_theme_font_size_override("font_size", 18)
 	bl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	vb.add_child(bl)
 	var ok := _menu_button("Понятно")
@@ -6924,20 +6924,20 @@ func _welcome_overlay() -> void:
 	ctr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ov.add_child(ctr)
 	var pc := PanelContainer.new()
-	pc.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
+	pc.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
 	pc.add_theme_stylebox_override("panel", _frame_box())
 	ctr.add_child(pc)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
+	vb.add_theme_constant_override("separation", 14)
 	pc.add_child(vb)
 	var tl := Label.new()
 	tl.text = "Добро пожаловать в ТОЧКУ СБРОСА"
-	tl.add_theme_font_size_override("font_size", 20)
+	tl.add_theme_font_size_override("font_size", 26)
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(tl)
 	var bl := Label.new()
 	bl.text = "Шоу на выживание: бойцы, оружие и зона, которая сжимается.\n\n• Нажми «1×1 · Дуэль» — сразу в бой против бота\n• Монеты за бои трать в Магазине и на Сундуки\n• Миссии дня дают опыт Battle Pass"
-	bl.add_theme_font_size_override("font_size", 14)
+	bl.add_theme_font_size_override("font_size", 18)
 	bl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	vb.add_child(bl)
 	var row := HBoxContainer.new()
