@@ -7266,16 +7266,21 @@ func _request_fullscreen() -> void:
 		JavaScriptBridge.eval("""
 			(function(){
 				var el = document.documentElement;
+				var w, h;
 				if (!document.fullscreenElement) {
 					var p = el.requestFullscreen && el.requestFullscreen();
 					if (p && p.catch) { p.catch(function(){}); }
-				} else if (document.exitFullscreen) {
-					document.exitFullscreen();
+					w = window.screen.width;
+					h = window.screen.height;
+				} else {
+					if (document.exitFullscreen) { document.exitFullscreen(); }
+					/* стандартное окно ВК-приложения, не экран */
+					w = 1000;
+					h = 720;
 				}
 				try {
 					if (window.vkBridge) {
-						window.vkBridge.send('VKWebAppResizeWindow',
-							{width: window.screen.width, height: window.screen.height});
+						window.vkBridge.send('VKWebAppResizeWindow', {width: w, height: h});
 					}
 				} catch (e) {}
 			})()
