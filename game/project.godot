@@ -25,6 +25,10 @@ window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep_height"
 
+[gui]
+
+theme/custom="res://ui_theme.tres"
+
 [rendering]
 
 renderer/rendering_method.mobile="gl_compatibility"

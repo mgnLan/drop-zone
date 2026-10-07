@@ -654,6 +654,45 @@ func _ready() -> void:
 				_try_vk_login()
 			else:
 				_build_auth(false)
+	# dev-тур по экранам лобби для браузерных скриншот-тестов: ?uitest=1 в URL (только тест-сервер)
+	if OS.has_feature("web"):
+		var _utq = JavaScriptBridge.eval("window.location.search.indexOf('uitest') >= 0")
+		if _utq != null and bool(_utq):
+			call_deferred("_uitest_tour")
+
+func _uitest_tour() -> void:
+	# авто-вход гостем + цикл по всем экранам лобби (~3 с каждый) для скриншот-проверки иконок
+	await get_tree().create_timer(1.0).timeout
+	_profile.seen_welcome = 1   # не показывать приветствие — мешает скринам
+	_profile.onboarded = 1      # и обучение первого боя тоже
+	_profile.seen_tips = ["squad", "shop", "chests", "bp", "med", "heroes", "progress"]
+	_auth_close()
+	_build_menu()
+	var scr := ["squad", "progress", "bp", "chests", "heroes", "shop", "profile", "med", "settings"]
+	var from := 0
+	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
+	if fq != null and int(str(fq)) > 0:
+		from = clampi(int(str(fq)), 0, scr.size() - 1)
+	scr = scr.slice(from)
+	var t := 3.0
+	for s in scr:
+		# отдельный таймер на каждый экран — ошибка в одном не рвёт весь тур
+		get_tree().create_timer(t).timeout.connect(_uitest_show.bind(s))
+		t += 3.0
+	get_tree().create_timer(t).timeout.connect(_uitest_show.bind("main"))
+
+func _uitest_show(s: String) -> void:
+	match s:
+		"squad": _show_menu_squad()
+		"progress": _show_menu_progress()
+		"bp": _show_menu_bp()
+		"chests": _show_menu_chests()
+		"heroes": _show_menu_heroes()
+		"shop": _show_menu_shop()
+		"profile": _show_menu_profile()
+		"med": _show_menu_med()
+		"settings": _show_menu_settings()
+		"main": _show_menu_main()
 
 func _auth_watchdog() -> void:
 	# через 7 с в автовходе — если экран входа всё ещё висит, значит цепочка ВК
@@ -6185,7 +6224,7 @@ func _refresh_lvl_note() -> void:
 			total += int(f.get("pts", 0))
 	var nb: Button = _ui.lvl_note
 	if total > 0 and not _game_over:
-		nb.text = "✦ Новый уровень — навыки +%d ✦" % total
+		nb.text = "• Новый уровень — навыки +%d •" % total
 		nb.visible = true
 	else:
 		nb.visible = false
@@ -7565,7 +7604,7 @@ const TAUNT_PACK_LINES := {
 	2: ["Пустошь всё равно заберёт тебя.", "Мы все — лишь шум в эфире.", "Пули — это почтальоны судьбы.", "Твой страх я слышу отсюда."],
 	3: ["Смирно! Ты уже труп, солдат.", "Отставить дыхание, рядовой!", "Так держать — прямо в гроб!", "Убойная дисциплина, даже не начинал."],
 	4: ["Статистически ты уже мёртв.", "Гипотеза: ты бездарен. Доказано.", "Энтропия победит тебя раньше меня.", "Ошибка в расчётах? Нет, это ты."],
-	5: ["♪ Ты упал, упал, как осенний лист… ♪", "♪ Пуля тебя нашла, фальшивый артист… ♪", "Запомню этот момент. В песне.", "Твой прощальный вальс уже сочинен."],
+	5: ["«Ты упал, упал, как осенний лист…»", "«Пуля тебя нашла, фальшивый артист…»", "Запомню этот момент. В песне.", "Твой прощальный вальс уже сочинен."],
 	6: ["Свежее мясо прибыло!", "Я ем бойцов на завтрак.", "Твои кости — моя коллекция.", "Хрустно. Очень хрустно."],
 	7: ["Господь простит. Я — нет.", "Молись быстрее, время вышло.", "Твоя вера не остановила пулю.", "Я — оружие судьбы, смирись."],
 	8: ["Цель поражена. Следующая.", "Веду огонь по площадям — твоя очередь.", "Командование довольно. А ты?", "Контрольный выстрел — по уставу."],
@@ -8500,7 +8539,7 @@ func _show_menu_med() -> void:
 		rrow.add_child(rnm)
 		for si in int(_profile.get("unlocked_slots", 1)):
 			var sb := Button.new()
-			sb.text = "⇄ Слот %d" % (si + 1)
+			sb.text = "Слот %d" % (si + 1)
 			sb.tooltip_text = "Поменять местами с «%s»" % _profile.names[si]
 			var ridx: int = ri2
 			var sidx: int = si
@@ -9015,7 +9054,7 @@ func _hero_grant(rarity: int, is_rent: bool, amount: int) -> Dictionary:
 		_profile.hero_owned = ho
 		frags.erase(str(hid))
 		_profile.hero_frags = frags
-		return {"text": "★ %s СОБРАН НАВСЕГДА (%d/45) ★" % [h["name"], total], "shards": 0}
+		return {"text": "• %s СОБРАН НАВСЕГДА (%d/45) •" % [h["name"], total], "shards": 0}
 	_profile.hero_frags = frags
 	return {"text": "Фрагменты: %s +%d (всего %d/45)" % [h["name"], amount, total], "shards": 0}
 
@@ -9085,7 +9124,7 @@ func _chest_roll() -> void:
 					if was_dup:
 						_profile.craft_dups = int(_profile.get("craft_dups", 0)) + 1
 						if int(_profile.craft_dups) >= 3:
-							extra = "  ★ КРАФТ (3 дубля): " + _craft_roll(rarity)
+							extra = "  • КРАФТ (3 дубля): " + _craft_roll(rarity)
 							_profile.craft_dups = 0
 					else:
 						_profile.craft_dups = 0
@@ -10054,7 +10093,7 @@ func _show_inventory() -> void:
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		rowbox.add_child(b)
 		var db := Button.new()
-		db.text = "✕"
+		db.text = "×"
 		db.custom_minimum_size = Vector2(30, 56)
 		db.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
 		var dbs := _inv_ghost_style()
@@ -10171,7 +10210,7 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		rowbox2.add_child(b2)
 		var db2 := Button.new()
-		db2.text = "✕"
+		db2.text = "×"
 		db2.custom_minimum_size = Vector2(30, 50)
 		db2.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
 		var dbs2 := _inv_ghost_style()
