@@ -1058,7 +1058,7 @@ const STAT_NAMES := {"str": "Сила", "agi": "Ловкость", "end": "Вы�
 const STAT_HINTS := {"str": "+2 кг веса/очко; СИЛ 4+ для тяжёлого оружия",
 	"agi": "+1 ОД за 3 очка (макс +3); +0.5% уклонения/очко",
 	"end": "+1 HP за очко", "per": "+1 обзор за 2 очка",
-	"int": "+2% точности (макс 20%) и +10% опыта/очко", "lck": "+0.1% к криту (база 5%, x1.5)/очко"}
+	"int": "+0.1% точности за очко", "lck": "+0.1% к криту за очко (база 5%, x1.5 урон)"}
 const STAT_POINTS := 5        # очков на распределение каждому бойцу
 const SLOT3_LVL := 35    # слот 3 — запасной, за 35 уровень любого бойца
 # слот 4 — ТОЛЬКО по подписке ВИП и после открытия слота 3 (на механику не влияем, открываем возможности)
@@ -1563,12 +1563,12 @@ func _stat_dodge(st: Dictionary) -> float:
 	return minf(0.15, 0.005 * int(st.get("agi", 0)))
 
 func _stat_acc(st: Dictionary) -> float:
-	# точность от интеллекта: +2%/очко, макс +20%
-	return minf(0.20, 0.02 * int(st.get("int", 0)))
+	# точность от интеллекта: +0.1%/очко
+	return 0.001 * int(st.get("int", 0))
 
 func _stat_crit(st: Dictionary) -> float:
-	# крит: база 5% + 1% за очко удачи (макс 35%) — удача снова живой стат
-	return minf(0.35, 0.05 + 0.01 * int(st.get("lck", 0)))
+	# крит: база 5% + 0.1% за очко удачи, крит бьёт x1.5
+	return 0.05 + 0.001 * int(st.get("lck", 0))
 
 func _armor_ap_penalty(f: Dictionary) -> int:
 	var p := 0
@@ -3850,7 +3850,7 @@ func _gain_xp(i: int, amount: int) -> void:
 	var f = _fighters[i]
 	if not f.alive:
 		return
-	var bonus := 1.0 + 0.1 * int(f.stats.get("int", 0))
+	var bonus := 1.0
 	f.xp = int(f.xp) + int(round(amount * bonus))
 	var leveled := false
 	var old_lvl := int(f.lvl)
