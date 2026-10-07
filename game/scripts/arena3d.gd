@@ -32,6 +32,84 @@ const HOUSE_MODELS := ["House_1Story.fbx", "House_1Story_Gable.fbx",
 const HOUSE_PALETTES := ["Texture_Grey", "Texture_DarkBlue", "Texture_Red", "Texture_Dark"]
 const COVER_MODELS := ["AC_Stacked.gltf", "Computer_Large.gltf", "Pipe_1.gltf", "Platform_2x2.gltf"]
 
+# === СКИНЫ БОЙЦОВ (визуал отряда игрока; KayKit CC0) ===
+# src: "free" — доступен сразу, "bp" — награда Battle Pass (пока СКОРО)
+const SKINS := [
+	{"id": "soldier", "name": "Солдат", "model": "Character_Soldier", "src": "free"},
+	{"id": "hazmat", "name": "Хазмат", "model": "Character_Hazmat", "src": "free"},
+	{"id": "enemy", "name": "Красный шлем", "model": "Character_Enemy", "src": "free"},
+	{"id": "knight", "name": "Рыцарь", "model": "Knight", "src": "bp"},
+	{"id": "mage", "name": "Маг", "model": "Mage", "src": "bp"},
+	{"id": "rogue", "name": "Разбойник", "model": "Rogue", "src": "bp"},
+]
+const FREE_SKINS := ["soldier", "hazmat", "enemy"]
+
+# KayKit-модели: встроенного огнестрела нет — ствол цепляем к кости руки
+func _human_model_path(model: String) -> String:
+	if ResourceLoader.exists(H + model + ".glb"):
+		return H + model + ".glb"
+	return H + model + ".gltf"
+
+const ANIM_ALIAS := {"Idle_Shoot": "1H_Ranged_Aiming", "Run_Gun": "Running_A",
+	"Run": "Running_A", "Walk": "Walking_A", "Death": "Death_A", "HitReact": "Hit_A"}
+
+func _anim_pick(ap: AnimationPlayer, want: String) -> String:
+	if ap.has_animation(want):
+		return want
+	if ANIM_ALIAS.has(want) and ap.has_animation(ANIM_ALIAS[want]):
+		return ANIM_ALIAS[want]
+	if ap.has_animation("Idle"):
+		return "Idle"
+	return ""
+
+func _hide_builtin_weapons(node: Node) -> void:
+	var keys := ["sword", "shield", "axe", "dagger", "wand", "staff", "crossbow",
+		"quiver", "knife", "hammer", "spear", "mace", "scythe", "mug", "spellbook", "throwable"]
+	for ch in node.get_children():
+		_hide_builtin_weapons(ch)
+	var n := node.name.to_lower()
+	for k in keys:
+		if n.contains(k):
+			if node is Node3D:
+				node.visible = false
+			return
+
+func _attach_gun(p: Node3D, weapon: String) -> void:
+	# KayKit-модели: цепляем ствол к кости правой руки
+	var node_name: String = ICON_ALIAS.get(weapon, weapon)
+	var gp := GUNS + node_name + ".gltf"
+	if not ResourceLoader.exists(gp):
+		gp = GUNS + weapon + ".gltf"
+	if not ResourceLoader.exists(gp):
+		return
+	var skels := p.find_children("*", "Skeleton3D", true, false)
+	if skels.is_empty():
+		return
+	var skel := skels[0] as Skeleton3D
+	var bone := "handslot.r"
+	if skel.find_bone(bone) < 0:
+		return
+	var ba := BoneAttachment3D.new()
+	skel.add_child(ba)
+	ba.bone_name = bone
+	var g: Node3D = load(gp).instantiate()
+	ba.add_child(g)
+	g.scale = Vector3.ONE * 1.4
+	g.rotation_degrees = Vector3(15, 90, 0)
+
+# модель выбранного скина; "" — без скина (как раньше)
+func _skin_model() -> String:
+	var sid := str(_profile.get("fighter_skin", "soldier"))
+	for s in SKINS:
+		if s["id"] == sid and _skin_owned(sid):
+			return str(s["model"])
+	return ""
+
+func _skin_owned(sid: String) -> bool:
+	var owned: Array = _profile.get("owned_skins", FREE_SKINS)
+	return owned.has(sid)
+
+
 var _rng := RandomNumberGenerator.new()
 var _items := {}
 var _occupied := {}          # "x,z" -> true (статика: дома, укрытия, ящики)
@@ -475,6 +553,10 @@ func _ready() -> void:
 	_load_mode()
 	_load_items()
 	_load_profile()
+	var sk_i := args.find("--testskin")
+	if sk_i >= 0 and sk_i + 1 < args.size():
+		_profile.fighter_skin = str(args[sk_i + 1])
+		_profile.owned_skins = ["soldier", "hazmat", "enemy", "knight", "mage", "rogue"]
 	_build_ground()
 	_build_neon_ring()
 	_generate_houses()
@@ -1331,6 +1413,8 @@ func _load_profile() -> void:
 		"gender": "m",            # m/f — мужчина/женщина
 		"skin": 0,                # 0..3 — оттенок кожи
 		"outfit": 0,              # камуфляж отряда (индекс OUTFIT_SKINS)
+		"fighter_skin": "soldier",   # скин бойцов (id из SKINS)
+		"owned_skins": ["soldier", "hazmat", "enemy"],  # скины в собственности
 		"title": "",              # титул за вход в тир (Ветеран/Элита/Легенда)
 		"owned_outfits": [1, 0, 0, 0, 0],  # купленные камуфляжи (0 стандарт)
 		"frame": 0,               # рамка аватара: 0 стандарт, 1 неон, 2 золото (монетизация)
@@ -1397,6 +1481,8 @@ func _load_profile() -> void:
 	_profile.gender = cfg.get_value("player", "gender", "m")
 	_profile.skin = int(cfg.get_value("player", "skin", 0))
 	_profile.outfit = int(cfg.get_value("player", "outfit", 0))
+	_profile.fighter_skin = str(cfg.get_value("player", "fighter_skin", "soldier"))
+	_profile.owned_skins = cfg.get_value("player", "owned_skins", ["soldier", "hazmat", "enemy"])
 	_profile.title = str(cfg.get_value("player", "title", ""))
 	_profile.owned_outfits = cfg.get_value("player", "owned_outfits", [1, 0, 0, 0, 0])
 	_profile.frame = int(cfg.get_value("player", "frame", 0))
@@ -1455,6 +1541,8 @@ func _save_profile() -> void:
 	cfg.set_value("player", "gender", _profile.gender)
 	cfg.set_value("player", "skin", _profile.skin)
 	cfg.set_value("player", "outfit", int(_profile.get("outfit", 0)))
+	cfg.set_value("player", "fighter_skin", str(_profile.get("fighter_skin", "soldier")))
+	cfg.set_value("player", "owned_skins", _profile.get("owned_skins", ["soldier", "hazmat", "enemy"]))
 	cfg.set_value("player", "title", str(_profile.get("title", "")))
 	cfg.set_value("player", "owned_outfits", _profile.get("owned_outfits", [1, 0, 0, 0, 0]))
 	cfg.set_value("player", "frame", _profile.frame)
@@ -2426,6 +2514,10 @@ func _spawn_teams() -> void:
 			for mk in STAT_KEYS:
 				st_f[mk] = int(st_f.get(mk, 0)) + int((hd.get("mods", {}) as Dictionary).get(mk, 0))
 			_log("СПАВН герой[%d]: %s (%s), модель=%s, оружие=%s" % [i, str(_profile.names[i]), hd["name"], model_c, sidearm])
+		# скин отряда игрока (визуал): применяется ко всем красным, включая героев
+		var sk_m := _skin_model()
+		if sk_m != "":
+			model_c = sk_m
 		_log("СПАВН красный[%d]: %s, модель=%s, пистолет=%s" % [i, str(_profile.names[i]), model_c, sidearm])
 		_spawn_human(model_c, cell.x, cell.y, _rng.randf_range(-30, 90),
 			sidearm, Color("#ff4757"), 0, _profile.names[i], st_f.duplicate(), _profile.lvl[i], _profile.xp[i],
@@ -2509,7 +2601,7 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 		if not (sv is int or sv is float):
 			sv = int(str(sv)) if str(sv).is_valid_int() else 0
 		st[k] = int(sv)
-	var p: Node3D = _place(H + model + ".gltf", gw(gx, gz), rot_y, HUMAN_SCALE)
+	var p: Node3D = _place(_human_model_path(model), gw(gx, gz), rot_y, HUMAN_SCALE)
 	if team_idx == 0:
 		_apply_outfit(p, int(_profile.get("outfit", 0)))
 	else:
@@ -2519,6 +2611,10 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 		var w := p.find_child(wn, true, false)
 		if w and w is Node3D:
 			w.visible = (wn == weapon)
+	# KayKit-модели (.glb): встроенного оружия нет — прячем холодное из рук и цепляем ствол к кости
+	if _human_model_path(model).ends_with(".glb"):
+		_hide_builtin_weapons(p)
+		_attach_gun(p, weapon)
 	# луч телепорта показываем только своим: эффект врага выдаёт позицию до тумана войны
 	_teleport_in(p, Vector2i(gx, gz), team_idx == 0)
 	var pad := MeshInstance3D.new()
@@ -2550,10 +2646,10 @@ func _spawn_human(model: String, gx: int, gz: int, rot_y: float, weapon: String,
 	hp_bg.no_depth_test = true
 	p.add_child(hp_fg)
 	var ap := p.find_child("AnimationPlayer", true, false)
-	if ap and ap.has_animation("Idle_Shoot"):
-		ap.play("Idle_Shoot")
-	elif ap and ap.has_animation("Idle"):
-		ap.play("Idle")
+	if ap:
+		var pick := _anim_pick(ap, "Idle_Shoot")
+		if pick != "":
+			ap.play(pick)
 	# регистрация бойца в игровом состоянии (характеристики — из очков навыков профиля)
 	var gun := _weapon_by_id(weapon)
 	var hp_max := _stat_hp(st) + 3 * (lvl - 1)
@@ -3345,8 +3441,10 @@ func _face_cell(f: Dictionary, target: Vector2i) -> void:
 
 func _play_anim(f: Dictionary, anim: String) -> void:
 	var ap = f.node.find_child("AnimationPlayer", true, false)
-	if ap and ap.has_animation(anim):
-		ap.play(anim)
+	if ap:
+		var pick := _anim_pick(ap, anim)
+		if pick != "":
+			ap.play(pick)
 
 func _path_to(from: Vector2i, to: Vector2i) -> Array:
 	# восстановление пути по BFS-стоимостям _reach (от цели назад к старту)
@@ -7808,6 +7906,55 @@ func _show_menu_squad() -> void:
 					_show_menu_squad()
 				)
 			orow.add_child(ob)
+		# СКИНЫ БОЙЦОВ: 3 базовых + 3 из Battle Pass (закрыты до запуска сезона)
+		var skin_row: Control
+		if _mob():
+			vb.add_child(_mk_label("Скин:", 14))
+			var sg := GridContainer.new()
+			sg.columns = 3
+			sg.add_theme_constant_override("h_separation", 4)
+			sg.add_theme_constant_override("v_separation", 4)
+			skin_row = sg
+		else:
+			var sh := HBoxContainer.new()
+			sh.add_theme_constant_override("separation", 4)
+			skin_row = sh
+		vb.add_child(skin_row)
+		if not _mob():
+			var skin_lbl := Label.new()
+			skin_lbl.text = "Скин:"
+			skin_row.add_child(skin_lbl)
+		for ski in SKINS.size():
+			var skd: Dictionary = SKINS[ski]
+			var skb := Button.new()
+			skb.custom_minimum_size = Vector2(34, 30)
+			var owned_si: bool = _skin_owned(str(skd["id"]))
+			skb.text = str(skd["name"]) if owned_si else "🔒 " + str(skd["name"])
+			skb.modulate = Color(1, 1, 1) if owned_si else Color(0.4, 0.4, 0.45)
+			skb.tooltip_text = str(skd["name"]) if owned_si else (str(skd["name"]) + " — награда Battle Pass (скоро)")
+			var skss: StyleBoxFlat = StyleBoxFlat.new()
+			skss.bg_color = Color(0.25, 0.35, 0.25) if owned_si else Color(0.10, 0.11, 0.14, 0.9)
+			if not owned_si:
+				skb.add_theme_color_override("font_color", Color(0.45, 0.5, 0.58))
+			skss.set_corner_radius_all(6)
+			if str(_profile.get("fighter_skin", "soldier")) == str(skd["id"]):
+				skss.border_color = Color(1, 1, 1)
+				skss.set_border_width_all(2)
+			else:
+				skss.border_color = Color(1, 1, 1, 0.3)
+				skss.set_border_width_all(1)
+			skb.add_theme_stylebox_override("normal", skss)
+			skb.add_theme_stylebox_override("hover", skss)
+			skb.add_theme_stylebox_override("pressed", skss)
+			skb.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+			if owned_si:
+				var skv := str(skd["id"])
+				skb.pressed.connect(func():
+					_profile.fighter_skin = skv
+					_save_profile()
+					_show_menu_squad()
+				)
+			skin_row.add_child(skb)
 		# цвет ника (монетизация) — 9 цветных квадратов (переносятся на узких экранах)
 		var crow := FlowContainer.new()
 		crow.add_theme_constant_override("h_separation", 4)
@@ -8063,6 +8210,7 @@ const BP_TABLE_FREE := {
 	18: {"kind": "chest", "name": "Сундук удачи"},
 	21: {"kind": "coins", "n": 130, "name": "130 монет"},
 	24: {"kind": "frame", "idx": 3, "name": "Рамка «Камуфляж»"},
+	25: {"kind": "skin", "sid": "knight", "name": "Скин «Рыцарь»"},
 	27: {"kind": "shards", "n": 40, "name": "Осколки ×40"},
 	30: {"kind": "hero_frag", "hid": 7, "n": 10, "name": "Фрагменты «Вдова» ×10"},
 	33: {"kind": "hero_rent", "hid": 8, "days": 5, "name": "Аренда «Пёс» 5 дн"},
@@ -8079,12 +8227,14 @@ const BP_TABLE_PREM := {
 	9: {"kind": "hero_rent", "hid": 5, "days": 7, "name": "Аренда «Следопыт» 7 дн"},
 	12: {"kind": "chest", "n": 2, "name": "Сундуки ×2"},
 	15: {"kind": "taunt", "idx": 1, "name": "Насмешки «Дерзкие»"},
+	16: {"kind": "skin", "sid": "mage", "name": "Скин «Маг»"},
 	18: {"kind": "outfit", "idx": 3, "name": "Камуфляж «Тень» (экскл.)"},
 	21: {"kind": "hero_rent", "hid": 6, "days": 7, "name": "Аренда «Молот» 7 дн"},
 	24: {"kind": "coins", "n": 140, "name": "140 монет"},
 	27: {"kind": "shards", "n": 50, "name": "Осколки ×50"},
 	30: {"kind": "hero_rent", "hid": 10, "days": 7, "name": "Аренда «Жнец» 7 дн"},
 	33: {"kind": "taunt", "idx": 2, "name": "Насмешки «Военные»"},
+	34: {"kind": "skin", "sid": "rogue", "name": "Скин «Разбойник»"},
 	36: {"kind": "frame", "idx": 2, "name": "Рамка «Золото»"},
 	39: {"kind": "coins", "n": 220, "name": "220 монет"},
 	42: {"kind": "shards", "n": 60, "name": "Осколки ×60"},
@@ -8150,6 +8300,14 @@ func _bp_claim(lv: int, prem: bool) -> void:
 		"outfit":
 			if _owned_grant("outfit", int(rw["idx"])):
 				_profile.shards = int(_profile.get("shards", 0)) + 60
+		"skin":
+			var skin_id := str(rw.get("sid", ""))
+			var osk: Array = _profile.get("owned_skins", FREE_SKINS).duplicate()
+			if skin_id != "" and not osk.has(skin_id):
+				osk.append(skin_id)
+				_profile.owned_skins = osk
+			else:
+				_profile.shards = int(_profile.get("shards", 0)) + 60   # дубликат → осколки
 		"teleport":
 			var ots: Array = _profile.get("owned_teleports", [1, 1, 0]).duplicate()
 			while ots.size() < 3:
@@ -9596,17 +9754,21 @@ func _refresh_card() -> void:
 	var pv: SubViewport = _ui.card_view
 	for c in pv.get_children():
 		c.queue_free()
-	var model: Node3D = load(H + f.model + ".gltf").instantiate()
+	var model: Node3D = load(_human_model_path(f.model)).instantiate()
 	# в портрете оружие не нужно — только голова
 	for wname in WEAPON_NODES:
 		var wn := model.find_child(wname, true, false)
 		if wn and wn is Node3D:
 			wn.visible = false
+	if _human_model_path(f.model).ends_with(".glb"):
+		_hide_builtin_weapons(model)
 	pv.add_child(model)
 	_make_lit(model)
 	var ap = model.find_child("AnimationPlayer", true, false)
-	if ap and ap.has_animation("Idle_Shoot"):
-		ap.play("Idle_Shoot")
+	if ap:
+		var pick2 := _anim_pick(ap, "Idle_Shoot")
+		if pick2 != "":
+			ap.play(pick2)
 	var l := OmniLight3D.new()
 	l.position = Vector3(0.6, 2.0, 1.4)
 	l.light_energy = 1.6
