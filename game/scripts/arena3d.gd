@@ -6859,7 +6859,7 @@ func _build_menu() -> void:
 		dzt.autostart = true
 		layer.add_child(dzt)
 		dzt.timeout.connect(func():
-			var d = JavaScriptBridge.eval("window.dzDiag?(function(q){return 'ih:'+q.ih+' cw:'+q.cw+'x'+q.ch+' rr:'+(q.rr||'-').slice(0,24)+' ac:'+q.ac+' ctx:'+(q.ctx||'-')+' pd:'+q.pd;})(window.dzDiag):'no-diag'", true)
+			var d = JavaScriptBridge.eval("window.dzDiag?(function(q){return 'ih:'+q.ih+' cw:'+q.cw+'x'+q.ch+' rr:'+(q.rr||'-').slice(0,24)+' ac:'+q.ac+' gb:'+(q.gb||'-')+' gt:'+(q.gt||'-')+' gs:'+(q.gs===undefined?'?':q.gs)+' ctx:'+(q.ctx||'-')+' pd:'+q.pd;})(window.dzDiag):'no-diag'", true)
 			dzl.text = "%s | sfx:%d snd:%s" % [str(d), _sfx.size(), str(_settings.get("sound", true))]
 		)
 	_show_menu_main()
