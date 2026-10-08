@@ -677,7 +677,7 @@ func _uitest_tour() -> void:
 	# сообщение с эмодзи в чат — скрин-гейт цветных эмодзи (тикет #7)
 	_menu_chat_local[0].append("Вы: проверка 😀 🔥 💀 👍 ❤️")
 	_render_menu_chat()
-	var scr := ["squad", "progress", "bp", "chests", "heroes", "shop", "profile", "med", "settings"]
+	var scr := ["lobby", "squad", "progress", "bp", "chests", "heroes", "shop", "profile", "med", "settings"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -701,7 +701,7 @@ func _uitest_show(s: String) -> void:
 		"profile": _show_menu_profile()
 		"med": _show_menu_med()
 		"settings": _show_menu_settings()
-		"main": _show_menu_main()
+		"lobby", "main": _show_menu_main()
 
 func _auth_watchdog() -> void:
 	# через 7 с в автовходе — если экран входа всё ещё висит, значит цепочка ВК
@@ -6540,8 +6540,8 @@ func _section_title(t: String) -> HBoxContainer:
 const COIN_COLOR := Color(1.0, 0.82, 0.25)
 const SHARD_COLOR := Color(0.55, 0.75, 1.0)
 
-func _screen_title(icon: String, txt: String) -> HBoxContainer:
-	# заголовок экрана: пиктограмма в подложке + крупный текст
+func _screen_title(icon: String, txt: String, tip_id := "") -> HBoxContainer:
+	# заголовок экрана: пиктограмма в подложке + крупный текст; справа — кнопка «?»
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
 	var chip := _icon_chip(icon, 22)
@@ -6553,6 +6553,12 @@ func _screen_title(icon: String, txt: String) -> HBoxContainer:
 	if hf != null:
 		l.add_theme_font_override("font", hf)
 	hb.add_child(l)
+	if tip_id != "":
+		# растяжка прижимает «?» к правому краю строки заголовка (единое правило №1)
+		var sp := Control.new()
+		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hb.add_child(sp)
+		hb.add_child(_help_button(tip_id))
 	return hb
 
 func _currency_chip(icon: String, col: Color, txt: String) -> PanelContainer:
@@ -6960,7 +6966,10 @@ func _build_menu() -> void:
 	scroll.offset_left = 12.0 if mob_w else 24.0
 	scroll.offset_right = -12.0 if mob_w else -24.0
 	scroll.offset_top = 90.0
-	scroll.offset_bottom = -140.0
+	# нижний край меню — под развёрнутый чат (180px + запас); свёрнутый чат поднимает
+	# край до -110 в _toggle_menu_chat — контент никогда не прячется под рамкой чата
+	scroll.offset_bottom = -200.0
+	_ui.menu_scroll = scroll
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	# тикет #5: градиентный стиль кнопок ПО УМОЛЧАНИЮ для всего меню — переопределения
 	# темы на родителе достаются всем потомкам; у кого свои stylebox-переопределения
@@ -7284,6 +7293,9 @@ func _toggle_menu_chat() -> void:
 	p.offset_top = -82.0 if _menu_chat_collapsed else -180.0
 	if not _mob():
 		p.offset_right = 210.0 if _menu_chat_collapsed else 246.0
+	# нижний край меню едет вслед за чатом: свёрнутый — край -110, развёрнутый — -200
+	if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
+		_ui.menu_scroll.offset_bottom = -110.0 if _menu_chat_collapsed else -200.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
@@ -7815,11 +7827,7 @@ func _show_menu_squad() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
-	vb.add_child(_screen_title("squad", "Отряд — создание бойцов"))
-	var hrow_squad := HBoxContainer.new()
-	hrow_squad.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_squad)
-	hrow_squad.add_child(_help_button("squad"))
+	vb.add_child(_screen_title("squad", "Отряд — создание бойцов", "squad"))
 	_maybe_auto_tip("squad")
 	# вкладки 4 слотов: открыт только первый, остальные — заслуги/подписка
 	var tabs := HBoxContainer.new()
@@ -7830,8 +7838,20 @@ func _show_menu_squad() -> void:
 		var b := Button.new()
 		if i < _profile.unlocked_slots:
 			b.text = _sel(_profile.names[i], i == _squad_edit)
+			if i == _squad_edit:
+				# активный слот: акцентная заливка + белый текст — отличен от закрытых (аудит, ч.3)
+				var asb := StyleBoxFlat.new()
+				asb.bg_color = Color(0.16, 0.42, 0.62)
+				asb.border_color = Color(0.45, 0.85, 1.0)
+				asb.set_border_width_all(1)
+				asb.set_corner_radius_all(6)
+				b.add_theme_stylebox_override("normal", asb)
+				b.add_theme_stylebox_override("hover", asb)
+				b.add_theme_color_override("font_color", Color(1, 1, 1))
 		else:
-			b.text = "Слот %d" % (i + 1)
+			b.text = "🔒 %d" % (i + 1)
+			b.tooltip_text = ("Нужен %d уровень любого бойца" % SLOT3_LVL) if i == 2 else "Только по месячной подписке ВИП — появится в магазине"
+			b.add_theme_color_override("font_color", Color(0.55, 0.6, 0.68))
 		b.custom_minimum_size = Vector2(slot_w, 34)
 		b.add_theme_font_size_override("font_size", 12 if _mob() else 14)
 		var fi: int = i
@@ -7953,7 +7973,20 @@ func _show_menu_squad() -> void:
 		var md := int(hmods.get(mk, 0))
 		if md != 0:
 			mod_parts.append("%s %+d" % [STAT_NAMES[mk], md])
-	hb.text = _sel("— базовый боец —" if hid0 < 0 else str(HEROES[hid0]["name"]), hid0 >= 0)
+	hb.text = _sel("— базовый боец — ▾" if hid0 < 0 else str(HEROES[hid0]["name"]) + " ▾", hid0 >= 0)
+	# селектор, а не надпись: рамка-чип; выбранный герой — акцентная подсветка (аудит, ч.3)
+	var hbs := StyleBoxFlat.new()
+	if hid0 >= 0:
+		hbs.bg_color = Color(0.12, 0.30, 0.44)
+		hbs.border_color = Color(0.45, 0.85, 1.0)
+	else:
+		hbs.bg_color = Color(0.08, 0.14, 0.24)
+		hbs.border_color = Color(0.30, 0.55, 0.72)
+	hbs.set_border_width_all(1)
+	hbs.set_corner_radius_all(6)
+	hb.add_theme_stylebox_override("normal", hbs)
+	hb.add_theme_stylebox_override("hover", hbs)
+	hb.add_theme_stylebox_override("pressed", hbs)
 	hb.tooltip_text = ("В бою выходит базовый боец слота (класс, оружие и статы из этого экрана)." if hid0 < 0
 		else "%s\n%s\nМоды: %s\nВ бою заменяет класс, оружие и статы слота." % [
 			HEROES[hid0]["perk"], FIGHTER_CLASSES[int(HEROES[hid0]["cls"])]["desc"],
@@ -8209,7 +8242,7 @@ func _show_menu_squad() -> void:
 		vb.add_child(body)
 		# тикет #1: на невысоком окне ВК колонки отряда переполнялись — каждая в своём
 		# ScrollContainer фиксированной высоты под окно; внешний скролл не трогаем
-		var area_h: float = maxf(280.0, _vh() - 250.0)
+		var area_h: float = clampf(_vh() - 300.0, 230.0, 700.0)
 		var col_l := VBoxContainer.new()
 		col_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		col_l.add_theme_constant_override("separation", sep)
@@ -8317,18 +8350,24 @@ func _show_menu_squad() -> void:
 	var tprof: Dictionary = _profile.talents[_squad_edit]
 	for tal in TALENTS:
 		var cur := int(tprof.get(tal["id"], 0))
+		# два ряда на талант: иконка+имя+кнопка, ниже — описание с отступом (аудит, ч.3)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", 2)
+		vs.add_child(tv)
 		var trow := HBoxContainer.new()
-		vs.add_child(trow)
+		trow.add_theme_constant_override("separation", 8)
+		tv.add_child(trow)
 		var tico := TextureRect.new()
 		tico.texture = _icon_tex(str(tal["icon"]))
 		tico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tico.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		tico.custom_minimum_size = Vector2(22, 22)
 		tico.tooltip_text = str(tal["desc"])
+		tico.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		trow.add_child(tico)
 		var tnl := Label.new()
 		tnl.text = "%s — %d/%d" % [tal["name"], cur, int(tal["max"])]
-		tnl.custom_minimum_size = Vector2(150 if _mob() else 210, 0)
+		tnl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tnl.add_theme_font_size_override("font_size", 13 if _mob() else 12)
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
@@ -8355,13 +8394,18 @@ func _show_menu_squad() -> void:
 					_show_menu_squad()
 			)
 		trow.add_child(tb)
+		var dind := HBoxContainer.new()
+		tv.add_child(dind)
+		var dsp := Control.new()
+		dsp.custom_minimum_size = Vector2(30, 0)
+		dind.add_child(dsp)
 		var tdesc2 := Label.new()
-		tdesc2.text = "  " + str(tal["desc"])
+		tdesc2.text = str(tal["desc"])
 		tdesc2.add_theme_font_size_override("font_size", 10 if _mob() else 11)
 		tdesc2.add_theme_color_override("font_color", Color(0.65, 0.7, 0.75))
 		tdesc2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tdesc2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		trow.add_child(tdesc2)
+		dind.add_child(tdesc2)
 	var spent := 0
 	for k3 in tprof.keys():
 		var r3 := int(tprof[k3])
@@ -8577,11 +8621,7 @@ func _show_menu_med() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
-	vb.add_child(_screen_title("shield", "Медцентр"))
-	var hrow_med := HBoxContainer.new()
-	hrow_med.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_med)
-	hrow_med.add_child(_help_button("med"))
+	vb.add_child(_screen_title("shield", "Медцентр", "med"))
 	_maybe_auto_tip("med")
 	var info := Label.new()
 	var vip_txt := " · ВИП: реген ×2" if int(_profile.get("vip", 0)) == 1 else ""
@@ -8789,11 +8829,7 @@ func _show_menu_progress() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.95), 0)
-	vb.add_child(_screen_title("trophy", "Прогрессия"))
-	var hrow_progress := HBoxContainer.new()
-	hrow_progress.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_progress)
-	hrow_progress.add_child(_help_button("progress"))
+	vb.add_child(_screen_title("trophy", "Прогрессия", "progress"))
 	_maybe_auto_tip("progress")
 	# текущее состояние главного бойца (самого прокачанного)
 	var bi := 0
@@ -8924,11 +8960,7 @@ func _show_menu_bp() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
-	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1" if _mob() else "Battle Pass — сезон 1 «Первый сброс»"))
-	var hrow_bp := HBoxContainer.new()
-	hrow_bp.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_bp)
-	hrow_bp.add_child(_help_button("bp"))
+	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1" if _mob() else "Battle Pass — сезон 1 «Первый сброс»", "bp"))
 	# ЗАГЛУШКА: сезон запустим, когда наберём игроков. Покупка пропуска закрыта до старта.
 	if not BP_SEASON_LIVE:
 		_maybe_auto_tip("bp")
@@ -9406,15 +9438,11 @@ func _show_menu_chests() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(520.0, _vw() * 0.94), 0)
-	var trow := _screen_title("chest", "Сундуки удачи")
+	var trow := _screen_title("chest", "Сундуки удачи", "chests")
 	for tch in trow.get_children():
 		if tch is Label:
 			(tch as Label).add_theme_color_override("font_color", Color(1.0, 0.82, 0.35))
 	vb.add_child(trow)
-	var hrow_chests := HBoxContainer.new()
-	hrow_chests.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_chests)
-	hrow_chests.add_child(_help_button("chests"))
 	_maybe_auto_tip("chests")
 	var bal := HBoxContainer.new()
 	bal.add_theme_constant_override("separation", 8)
@@ -9554,11 +9582,7 @@ func _show_menu_heroes() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.94), 0)
-	vb.add_child(_screen_title("swords", "Герои — наём и сборка"))
-	var hrow_heroes := HBoxContainer.new()
-	hrow_heroes.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_heroes)
-	hrow_heroes.add_child(_help_button("heroes"))
+	vb.add_child(_screen_title("swords", "Герои — наём и сборка", "heroes"))
 	_maybe_auto_tip("heroes")
 	var bal := HBoxContainer.new()
 	bal.add_theme_constant_override("separation", 8)
@@ -9680,11 +9704,7 @@ func _show_menu_shop() -> void:
 	for c in vb.get_children():
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
-	vb.add_child(_screen_title("shop", "Магазин"))
-	var hrow_shop := HBoxContainer.new()
-	hrow_shop.alignment = BoxContainer.ALIGNMENT_END
-	vb.add_child(hrow_shop)
-	hrow_shop.add_child(_help_button("shop"))
+	vb.add_child(_screen_title("shop", "Магазин", "shop"))
 	_maybe_auto_tip("shop")
 	var bal2 := HBoxContainer.new()
 	bal2.add_theme_constant_override("separation", 8)
