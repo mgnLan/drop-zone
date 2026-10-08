@@ -1214,7 +1214,7 @@ const FIGHTER_CLASSES := [
 	{"id": "gunner", "name": "Оружейник", "model": "Character_Soldier",
 		"desc": "Перезарядка бесплатно (раз за ход); трофеи — с двойным запасом патронов"},
 ]
-const RETRAIN_STATS_COST := 300  # монет за переподготовку: сброс очков статов
+const RETRAIN_STATS_COST := 600  # монет за переподготовку: сброс очков статов
 const CLASS_NAMES := {"pistols": "Пистолеты", "smg": "ПП", "rifles": "Винтовки",
 	"shotguns": "Дробовики", "sniper": "Снайперское", "heavy": "Тяжёлое", "melee": "Ближний бой"}
 # ---------- миссии сезона: основной источник XP Battle Pass ----------
@@ -5195,7 +5195,7 @@ func _build_ui() -> void:
 	emtr2.set_anchors_preset(Control.PRESET_CENTER)
 	emtr2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	emb2.add_child(emtr2)
-	emb2.pressed.connect(func(): _toggle_emoji_panel(inp, chat))
+	emb2.pressed.connect(func(): _toggle_emoji_panel(inp, chat, _battle_chat_send))
 	inrow_b.add_child(emb2)
 	var sendb2 := Button.new()
 	sendb2.text = "»"
@@ -5354,7 +5354,7 @@ func _render_chat() -> void:
 	for line in data:
 		var l := Label.new()
 		l.text = line
-		l.add_theme_font_size_override("font_size", 11)
+		l.add_theme_font_size_override("font_size", 12)
 		l.add_theme_color_override("font_color", col)
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_ui.chat_lines.add_child(l)
@@ -5403,7 +5403,7 @@ func _refresh_fighter_panel() -> void:
 	box.add_child(w)
 	var lv := Label.new()
 	lv.text = "Ур. %d · Опыт %d/%d · Убийств: %d" % [int(f.lvl), int(f.xp), _xp_need(int(f.lvl)), int(f.kills)]
-	lv.add_theme_font_size_override("font_size", 11)
+	lv.add_theme_font_size_override("font_size", 12)
 	box.add_child(lv)
 	var cls3 := _weapon_class(f.weapon)
 	if cls3 != "":
@@ -5412,12 +5412,12 @@ func _refresh_fighter_panel() -> void:
 		var next_txt := "МАКС" if plv >= 3 else "%d/%d" % [px, PROF_XP[plv]]
 		var pl2 := Label.new()
 		pl2.text = "Владение «%s»: ур. %d (%s)" % [CLASS_NAMES[cls3], plv, next_txt]
-		pl2.add_theme_font_size_override("font_size", 11)
+		pl2.add_theme_font_size_override("font_size", 12)
 		pl2.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
 		box.add_child(pl2)
 	var d := Label.new()
 	d.text = "Защита: %d   Вес: %.1f/%.1f кг" % [_defense(f), _load_weight(f), _carry_limit(f)]
-	d.add_theme_font_size_override("font_size", 11)
+	d.add_theme_font_size_override("font_size", 12)
 	box.add_child(d)
 	var row := GridContainer.new()
 	row.columns = 3
@@ -5931,6 +5931,10 @@ func _ambient_start() -> void:
 	# зацикленный ветер пустоши, тихо на фоне
 	if not _settings.get("sound", true):
 		return
+	# в вебе Godot-аудио молчит (контекст не поднимается в iframe ВК) — играем через JS-мост
+	if OS.has_feature("web") and bool(JavaScriptBridge.eval("typeof window!=='undefined'&&typeof window.dzLoop==='function'", true)):
+		JavaScriptBridge.eval("window.dzStop('wind');window.dzLoop('wind',0.15)", true)
+		return
 	if not ResourceLoader.exists("res://assets/sfx/wind.wav"):
 		return
 	var ws: AudioStreamWAV = load("res://assets/sfx/wind.wav")
@@ -5946,6 +5950,10 @@ func _ambient_start() -> void:
 func _sfx_play(n: String) -> void:
 	if not _settings.get("sound", true) or not _sfx.has(n):
 		return
+	# в вебе звук идёт через JS-мост (свой AudioContext), Godot-плеер — запасной путь
+	if OS.has_feature("web") and bool(JavaScriptBridge.eval("typeof window!=='undefined'&&typeof window.dzPlay==='function'", true)):
+		if bool(JavaScriptBridge.eval("window.dzPlay('" + n + "',1.0)", true)):
+			return
 	var a := AudioStreamPlayer.new()
 	a.stream = _sfx[n]
 	a.volume_db = 4.0
@@ -6465,7 +6473,10 @@ func _screen_title(icon: String, txt: String) -> HBoxContainer:
 	hb.add_child(chip)
 	var l := Label.new()
 	l.text = txt
-	l.add_theme_font_size_override("font_size", 20 if _mob() else 26)
+	l.add_theme_font_size_override("font_size", 20 if _mob() else 28)
+	var hf := _font_head()
+	if hf != null:
+		l.add_theme_font_override("font", hf)
 	hb.add_child(l)
 	return hb
 
@@ -6485,6 +6496,9 @@ func _currency_chip(icon: String, col: Color, txt: String) -> PanelContainer:
 	var l := Label.new()
 	l.text = txt
 	l.add_theme_font_size_override("font_size", 14)
+	var mf := _font_mono()
+	if mf != null:
+		l.add_theme_font_override("font", mf)
 	h.add_child(l)
 	pc.add_child(h)
 	return pc
@@ -6527,18 +6541,48 @@ func _mk_label(t: String, fsize := 14) -> Label:
 	l.add_theme_font_size_override("font_size", fsize)
 	return l
 
+# ---------- шрифтовая тройка: заголовки / моноширинные цифры / полужирный ----------
+# Russo One — дисплейный шрифт заголовков (только кириллица/латиница, без символов);
+# JetBrains Mono — все числа и цены (табличные цифры, «RPG-ковыряние»); Manrope wght 700 — жирный текст.
+var _font_cache := {}
+
+func _font_head() -> Font:
+	if _font_cache.has("head"):
+		return _font_cache["head"]
+	var f: Font = null
+	if ResourceLoader.exists("res://assets/fonts/RussoOne.ttf"):
+		f = load("res://assets/fonts/RussoOne.ttf")
+	_font_cache["head"] = f
+	return f
+
+func _font_mono() -> Font:
+	if _font_cache.has("mono"):
+		return _font_cache["mono"]
+	var f: Font = null
+	if ResourceLoader.exists("res://assets/fonts/JetBrainsMono.ttf"):
+		var fv := FontVariation.new()
+		fv.base_font = load("res://assets/fonts/JetBrainsMono.ttf")
+		fv.variation_opentype = {"wght": 600}
+		f = fv
+	_font_cache["mono"] = f
+	return f
+
+func _font_bold() -> Font:
+	if _font_cache.has("bold"):
+		return _font_cache["bold"]
+	var fv := FontVariation.new()
+	fv.base_font = ThemeDB.fallback_font   # Manrope из темы проекта ui_theme.tres
+	fv.variation_opentype = {"wght": 700}
+	_font_cache["bold"] = fv
+	return fv
+
 func _card_label(t: String, fsize: int, col: Color, bold := false) -> Label:
 	var l := Label.new()
 	l.text = t
 	l.add_theme_font_size_override("font_size", fsize)
 	l.add_theme_color_override("font_color", col)
 	if bold:
-		var fb: FontVariation = _ui.get("font_bold_var")
-		if fb == null and ThemeDB.fallback_font != null:
-			fb = FontVariation.new()
-			fb.base_font = ThemeDB.fallback_font
-			fb.variation_embolden = 0.7
-			_ui.font_bold_var = fb
+		var fb: Font = _font_bold()
 		if fb != null:
 			l.add_theme_font_override("font", fb)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -6684,7 +6728,7 @@ func _menu_chat_send(inp: LineEdit) -> void:
 		_menu_chat_local[_menu_chat_tab].pop_front()
 	_render_menu_chat()
 
-func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
+func _toggle_emoji_panel(inp: LineEdit, host: Control, send_fn: Callable) -> void:
 	# панель эмодзи над панелью чата (host); одна на каждый чат
 	var key := "emoji_panel_%d" % host.get_instance_id()
 	if _ui.has(key):
@@ -6712,6 +6756,9 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 		eb.pressed.connect(func():
 			inp.insert_text_at_caret(e)
 			inp.grab_focus()
+			# клик по эмодзи сразу отправляет его в чат — иначе игроки не понимают,
+			# «куда нажимать дальше» (жалоба: эмодзи не отправляются)
+			send_fn.call(inp)
 		)
 		grid.add_child(eb)
 	# над чатом: родитель — слой UI (нельзя в PanelContainer — он перезапишет геометрию)
@@ -6777,11 +6824,11 @@ func _build_menu() -> void:
 	if ResourceLoader.exists("res://assets/ui/menu_bg.jpg"):
 		bg.texture = load("res://assets/ui/menu_bg.jpg")
 	layer.add_child(bg)
-	# тёмный градиент поверх арта: тёмно-синий сверху → снизу чуть темнее, но прозрачный,
-	# арена просвечивает по всей высоте (без «чёрной полосы» снизу)
+	# тёмный градиент поверх арта: затемнение ослаблено (0.68/0.58) — арена читается,
+	# тексты держатся на плашках карточек; раньше 0.88 давало «плёнку» поверх всего лобби
 	var grad := Gradient.new()
-	grad.set_color(0, Color(0.04, 0.07, 0.14, 0.88))
-	grad.set_color(1, Color(0.03, 0.05, 0.10, 0.82))
+	grad.set_color(0, Color(0.04, 0.07, 0.14, 0.68))
+	grad.set_color(1, Color(0.03, 0.05, 0.10, 0.58))
 	var gtex := GradientTexture2D.new()
 	gtex.gradient = grad
 	gtex.fill_from = Vector2(0.5, 0.0)
@@ -6934,7 +6981,7 @@ func _build_menu() -> void:
 	emtr.set_anchors_preset(Control.PRESET_CENTER)
 	emtr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	emb.add_child(emtr)
-	emb.pressed.connect(func(): _toggle_emoji_panel(inp, _ui.menu_chat_panel))
+	emb.pressed.connect(func(): _toggle_emoji_panel(inp, _ui.menu_chat_panel, _menu_chat_send))
 	inrow.add_child(emb)
 	var sendb := Button.new()
 	sendb.text = "»"
@@ -6943,7 +6990,8 @@ func _build_menu() -> void:
 	sendb.pressed.connect(func(): _menu_chat_send(inp))
 	inrow.add_child(sendb)
 	var env := HBoxContainer.new()
-	env.add_theme_constant_override("separation", 8)
+	env.add_theme_constant_override("separation", 6)
+	env.alignment = BoxContainer.ALIGNMENT_CENTER
 	env.visible = false
 	chat_v.add_child(env)
 	_ui.menu_chat_env = env
@@ -6951,12 +6999,13 @@ func _build_menu() -> void:
 	var env_tips := ["Общий чат", "Чат комнаты", "Чат с кланом"]
 	for ei in 3:
 		var eb := Button.new()
-		eb.custom_minimum_size = Vector2(48, 40)
+		eb.custom_minimum_size = Vector2(44, 34)
+		eb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var etr := TextureRect.new()
 		etr.texture = _icon_tex(env_icons[ei])
 		etr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		etr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		etr.custom_minimum_size = Vector2(24, 24)
+		etr.custom_minimum_size = Vector2(18, 18)
 		etr.set_anchors_preset(Control.PRESET_CENTER)
 		etr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		eb.add_child(etr)
@@ -6979,7 +7028,7 @@ func _build_menu() -> void:
 	# временная диагностика v6.108: причины чёрных полос и молчания звука в ВК (убрать после разбора)
 	if OS.has_feature("web"):
 		var dzl := Label.new()
-		dzl.add_theme_font_size_override("font_size", 11)
+		dzl.add_theme_font_size_override("font_size", 12)
 		dzl.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0, 0.65))
 		dzl.anchor_left = 1.0
 		dzl.anchor_right = 1.0
@@ -7141,10 +7190,10 @@ func _toggle_menu_chat() -> void:
 		for ek in _ui.keys():
 			if str(ek).begins_with("emoji_panel_"):
 				_ui[ek].visible = false
-	# свёрнутый: заголовок 26 + конверты 40 + отступы рамки ~20 = ~86px. Ширина — по
+	# свёрнутый: заголовок 26 + ряд иконок 34 + отступы рамки ~18 = ~80px. Ширина — по
 	# содержимому (узкая полоса), развёрнутый — полная. Область сообщений развёрнутого —
 	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
-	p.offset_top = -88.0 if _menu_chat_collapsed else -180.0
+	p.offset_top = -82.0 if _menu_chat_collapsed else -180.0
 	if not _mob():
 		p.offset_right = 210.0 if _menu_chat_collapsed else 246.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
@@ -7546,7 +7595,7 @@ const NICK_COLOR_NAMES := ["Белый", "Красный", "Золотой", "И
 
 # ---- сундуки шоу: редкости, гаранты (pity), осколки ----
 const CHEST_PRICE := 150
-const RARITY_NAMES := ["Обычный", "Редкий", "Эпический", "Легендарный", "Мифический", "СИРЕНЕВЫЙ"]
+const RARITY_NAMES := ["Обычный", "Редкий", "Эпический", "Легендарный", "Мифический", "Алмазный"]
 const RARITY_COLORS := [Color(0.72, 0.72, 0.78), Color(0.3, 0.55, 1.0), Color(0.72, 0.35, 1.0), Color(1.0, 0.8, 0.25), Color(1.0, 0.25, 0.3), Color(1.0, 0.5, 1.0)]
 const RARITY_SHARD_DUP := [5, 15, 40, 100, 300, 1000]     # осколки за дубликат
 const RARITY_EXCHANGE := [80, 200, 500, 1200, 3000, 0]     # цена обмена осколков (сиреневый — только удача)
@@ -7840,7 +7889,7 @@ func _show_menu_squad() -> void:
 	if hid0 >= 0:
 		var hfl := Label.new()
 		hfl.text = " фрагменты %d/45" % hid0_fr
-		hfl.add_theme_font_size_override("font_size", 11)
+		hfl.add_theme_font_size_override("font_size", 12)
 		hfl.add_theme_color_override("font_color", Color(0.65, 0.7, 0.8))
 		hrow.add_child(hfl)
 	# --- пол и внешность (только для основного бойца, слот 0) ---
@@ -8041,7 +8090,7 @@ func _show_menu_squad() -> void:
 			var fb := Button.new()
 			var frame_locked := fi2 > 0 and not _shop_owned("frame", fi2)
 			fb.text = _sel(FRAME_NAMES[fi2], _profile.frame == fi2)
-			fb.add_theme_font_size_override("font_size", 11)
+			fb.add_theme_font_size_override("font_size", 12)
 			fb.custom_minimum_size = Vector2(84, 30) if _mob() else Vector2(70, 28)
 			if frame_locked:
 				fb.modulate = Color(0.55, 0.55, 0.62)   # закрытая рамка — тусклая
@@ -8093,6 +8142,9 @@ func _show_menu_squad() -> void:
 	var pl := Label.new()
 	pl.text = "Уровень %d (опыт %d/%d) · Свободно очков: %d" % [_profile.lvl[_squad_edit], _profile.xp[_squad_edit], _xp_need(_profile.lvl[_squad_edit]), left]
 	pl.add_theme_font_size_override("font_size", 17 if _mob() else 15)
+	var plf := _font_mono()
+	if plf != null:
+		pl.add_theme_font_override("font", plf)
 	vs.add_child(pl)
 	for k in STAT_KEYS:
 		var row := HBoxContainer.new()
@@ -8869,7 +8921,7 @@ func _show_menu_bp() -> void:
 			var claimed: Array = claimed_p if prem else claimed_f
 			var got: bool = lv < claimed.size() and int(claimed[lv]) == 1
 			var rb := Button.new()
-			rb.add_theme_font_size_override("font_size", 11)
+			rb.add_theme_font_size_override("font_size", 12)
 			rb.custom_minimum_size = Vector2(96, 26)
 			rb.text = str(rw.get("name", ""))
 			if prem:
@@ -9337,7 +9389,7 @@ func _show_menu_chests() -> void:
 	)
 	vb.add_child(ob)
 	var leg := Label.new()
-	leg.text = "Шансы: обычный 55% · редкий 25% · эпик 13% · лега 5% · мифик 1.9% · СИРЕНЕВЫЙ 0.1%"
+	leg.text = "Шансы: обычный 55% · редкий 25% · эпик 13% · лега 5% · мифик 1.9% · алмазный 0.1%"
 	leg.add_theme_font_size_override("font_size", 12)
 	leg.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	vb.add_child(leg)
@@ -9444,19 +9496,19 @@ func _show_menu_heroes() -> void:
 		cv.add_child(nl)
 		var dl := Label.new()
 		dl.text = str(h["weapon"]) + " · " + str(FIGHTER_CLASSES[clampi(int(h["cls"]), 0, FIGHTER_CLASSES.size() - 1)]["name"])
-		dl.add_theme_font_size_override("font_size", 11)
+		dl.add_theme_font_size_override("font_size", 12)
 		dl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
 		cv.add_child(dl)
 		var pl := Label.new()
 		pl.text = str(h["perk"])
-		pl.add_theme_font_size_override("font_size", 11)
+		pl.add_theme_font_size_override("font_size", 12)
 		pl.add_theme_color_override("font_color", Color(0.62, 0.67, 0.75))
 		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		pl.custom_minimum_size = Vector2(minf(300.0, _vw() * 0.4), 0)
 		cv.add_child(pl)
 		var sl := Label.new()
 		sl.text = _hero_status(hid)
-		sl.add_theme_font_size_override("font_size", 11)
+		sl.add_theme_font_size_override("font_size", 12)
 		var rentals: Dictionary = _profile.get("hero_rentals", {})
 		if hid < (_profile.get("hero_owned", []) as Array).size() and int((_profile.get("hero_owned", []) as Array)[hid]) == 1:
 			sl.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
@@ -9914,7 +9966,7 @@ func _inv_stat_chip(cap: String, val: String, vcol: Color) -> PanelContainer:
 	pc.add_child(hb)
 	var c := Label.new()
 	c.text = cap
-	c.add_theme_font_size_override("font_size", 11)
+	c.add_theme_font_size_override("font_size", 12)
 	c.add_theme_color_override("font_color", Color(0.55, 0.65, 0.75))
 	hb.add_child(c)
 	var v := Label.new()
@@ -10132,7 +10184,7 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 	for sd in slots:
 		var b := Button.new()
 		b.custom_minimum_size = Vector2(62, 60)
-		b.add_theme_font_size_override("font_size", 10)
+		b.add_theme_font_size_override("font_size", 13)
 		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
 		b.expand_icon = true
@@ -10190,7 +10242,7 @@ func _show_inventory_mobile(f: Dictionary, box: VBoxContainer) -> void:
 			b2.expand_icon = true
 			b2.add_theme_constant_override("icon_max_width", 26)
 		b2.custom_minimum_size = Vector2(126, 50)
-		b2.add_theme_font_size_override("font_size", 11)
+		b2.add_theme_font_size_override("font_size", 12)
 		b2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		b2.tooltip_text = _item_tooltip(f.backpack[idx])
 		var kind: String = f.backpack[idx]["kind"]

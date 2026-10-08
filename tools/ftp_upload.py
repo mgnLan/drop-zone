@@ -54,18 +54,33 @@ def main() -> int:
     except Exception:
         pass
 
+    def upload_dir(local_dir: str) -> None:
+        nonlocal ok, fail
+        for name in sorted(os.listdir(local_dir)):
+            src = os.path.join(local_dir, name)
+            if os.path.isdir(src):
+                # вложенная папка (например sfx) — создаём на сервере и заходим
+                try:
+                    ftp.mkd(name)
+                except Exception:
+                    pass  # уже существует
+                keep = ftp.pwd()
+                ftp.cwd(name)
+                upload_dir(src)
+                ftp.cwd(keep)
+                continue
+            try:
+                with open(src, "rb") as fh:
+                    ftp.storbinary("STOR " + name, fh)
+                print(f"  OK  {os.path.relpath(src, BUILD)} ({os.path.getsize(src)} байт)")
+                ok += 1
+            except Exception as e:
+                print(f"  FAIL {name}: {e}")
+                fail += 1
+
     files = [f for f in os.listdir(BUILD) if os.path.isfile(os.path.join(BUILD, f))]
     ok, fail = 0, 0
-    for name in sorted(files):
-        src = os.path.join(BUILD, name)
-        try:
-            with open(src, "rb") as fh:
-                ftp.storbinary("STOR " + name, fh)
-            print(f"  OK  {name} ({os.path.getsize(src)} байт)")
-            ok += 1
-        except Exception as e:
-            print(f"  FAIL {name}: {e}")
-            fail += 1
+    upload_dir(BUILD)
 
     if os.path.isfile(HTACCESS):
         with open(HTACCESS, "rb") as fh:

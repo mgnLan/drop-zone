@@ -76,6 +76,22 @@ def main() -> int:
             os.remove(os.path.join(BUILD, name))
 
     meta = {"tag": tag, "stamp": stamp, "sizes": sizes}
+
+    # wav-звуки для JS-моста (dzPlay) — копируем в web_build/sfx,
+    # движок их не пакует в pck, мост тянет по HTTP
+    sfx_src = os.path.join(ROOT, "game", "assets", "sfx")
+    sfx_dst = os.path.join(BUILD, "sfx")
+    os.makedirs(sfx_dst, exist_ok=True)
+    n_sfx = 0
+    for name in os.listdir(sfx_src):
+        if name.endswith(".wav"):
+            with open(os.path.join(sfx_src, name), "rb") as fh_in, \
+                 open(os.path.join(sfx_dst, name), "wb") as fh_out:
+                fh_out.write(fh_in.read())
+            n_sfx += 1
+    meta["sfx"] = n_sfx
+    print(f"sfx: {n_sfx} wav -> web_build/sfx")
+
     json.dump(meta, open(os.path.join(BUILD, "build.json"), "w", encoding="utf-8"))
     print(f"OK: {tag} (pck {sizes['pck']} байт, wasm {sizes['wasm']} байт)")
     return 0
