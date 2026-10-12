@@ -181,25 +181,41 @@
         "id": "helm_1",
         "name": "Кепка оператора",
         "defense": 2,
-        "weight": 0.25
+        "weight": 0.25,
+        "grade": 1,
+        "dur": 12
       },
       {
         "id": "helm_2",
         "name": "Шлем штурмовика",
         "defense": 5,
-        "weight": 0.75
+        "weight": 0.75,
+        "grade": 2,
+        "dur": 20
       },
       {
         "id": "helm_3",
         "name": "Тактический шлем",
         "defense": 9,
-        "weight": 1.5
+        "weight": 1.5,
+        "grade": 3,
+        "dur": 30
       },
       {
         "id": "helm_4",
         "name": "Тяжёлый шлем «Бастион»",
         "defense": 14,
-        "weight": 2.5
+        "weight": 2.5,
+        "grade": 4,
+        "dur": 44
+      },
+      {
+        "id": "helm_5",
+        "name": "Шлем «Сфинкс»",
+        "defense": 18,
+        "weight": 2.0,
+        "grade": 5,
+        "dur": 50
       }
     ],
     "body": [
@@ -208,7 +224,9 @@
         "name": "Куртка зрителя",
         "defense": 3,
         "weight": 0.5,
-        "carry_bonus": 0
+        "carry_bonus": 0,
+        "grade": 1,
+        "dur": 12
       },
       {
         "id": "body_2",
@@ -216,14 +234,18 @@
         "defense": 8,
         "weight": 2.0,
         "carry_bonus": 10,
-        "note": "Прибавляет носимый вес"
+        "note": "Прибавляет носимый вес",
+        "grade": 2,
+        "dur": 20
       },
       {
         "id": "body_3",
         "name": "Комбинезон спецназа",
         "defense": 14,
         "weight": 3.0,
-        "carry_bonus": 5
+        "carry_bonus": 5,
+        "grade": 3,
+        "dur": 30
       },
       {
         "id": "body_4",
@@ -231,7 +253,30 @@
         "defense": 22,
         "weight": 6.0,
         "carry_bonus": 0,
-        "ap_penalty": 1
+        "ap_penalty": 1,
+        "grade": 4,
+        "dur": 44
+      },
+      {
+        "id": "body_kevlar",
+        "name": "Кевларовый панцирь",
+        "defense": 57,
+        "weight": 3.5,
+        "carry_bonus": 0,
+        "note": "Пули почти не берёт — спасает от пробития только в упор",
+        "grade": 5,
+        "dur": 60
+      },
+      {
+        "id": "body_slon",
+        "name": "Броня «Слон»",
+        "defense": 70,
+        "weight": 10.0,
+        "carry_bonus": 0,
+        "ap_penalty": 2,
+        "note": "Шаговая крепость: топор всё равно пробьёт на минимум",
+        "grade": 5,
+        "dur": 80
       }
     ],
     "pants": [
@@ -239,27 +284,43 @@
         "id": "pants_1",
         "name": "Джинсы",
         "defense": 1,
-        "weight": 0.25
+        "weight": 0.25,
+        "grade": 1,
+        "dur": 12
       },
       {
         "id": "pants_2",
         "name": "Карго штурмовика",
         "defense": 4,
         "weight": 0.75,
-        "carry_bonus": 5
+        "carry_bonus": 5,
+        "grade": 2,
+        "dur": 20
       },
       {
         "id": "pants_3",
         "name": "Усиленные штаны",
         "defense": 7,
-        "weight": 1.5
+        "weight": 1.5,
+        "grade": 3,
+        "dur": 30
       },
       {
         "id": "pants_4",
         "name": "Экзо-набедренники",
         "defense": 11,
         "weight": 3.0,
-        "carry_bonus": 15
+        "carry_bonus": 15,
+        "grade": 4,
+        "dur": 44
+      },
+      {
+        "id": "pants_5",
+        "name": "Панцирные поножи",
+        "defense": 14,
+        "weight": 3.5,
+        "grade": 5,
+        "dur": 50
       }
     ]
   },
@@ -269,6 +330,14 @@
       "name": "Аптечка",
       "heal": 50,
       "ap_cost": 2
+    },
+    {
+      "id": "bandage",
+      "name": "Бинт",
+      "hot_per": 5,
+      "hot_turns": 3,
+      "ap_cost": 2,
+      "note": "Лечит +5 HP в начале хода, 3 хода; останавливается на максимуме"
     },
     {
       "id": "ap_battery",
