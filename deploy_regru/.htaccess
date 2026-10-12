@@ -7,6 +7,11 @@ AddType application/wasm .wasm
   AddOutputFilterByType DEFLATE text/html application/javascript application/json
   AddOutputFilterByType DEFLATE application/wasm application/octet-stream
 </IfModule>
+# Brotli жмёт на ~15-20% плотнее gzip (пак 1.1: цель <15 сек загрузки на 4G)
+<IfModule mod_brotli.c>
+  AddOutputFilterByType BROTLI_COMPRESS text/html application/javascript application/json
+  AddOutputFilterByType BROTLI_COMPRESS application/wasm application/octet-stream
+</IfModule>
 
 # Кэш: index.html — всегда свежий; тяжёлые файлы — 1 сутки (иначе wasm ~10 МБ качается заново каждый визит)
 <IfModule mod_headers.c>

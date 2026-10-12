@@ -223,7 +223,7 @@ const ONBOARD_TXT := [
 ]
 
 func _onboard_start() -> void:
-	if _menu_open or int(_profile.get("onboarded", 0)) == 1:
+	if _menu_open or int(_profile.get("onboarded", 0)) == 1 or _tutorial_active():
 		return
 	_onboard_step = 0
 	var hb := PanelContainer.new()
@@ -288,6 +288,139 @@ func _onboard_finish() -> void:
 	_profile.onboarded = 1
 	_save_profile()
 	_log("Обучение завершено — в бой!")
+
+# ---------- ОБУЧЕНИЕ (пак 1.1): первые 3 боя — сценарии с подсказками ----------
+const TUTORIAL_SCENARIOS := [
+	{"title": "Бой 1 · Правила арены", "steps": [
+		"Движение: кликни по своему бойцу, затем по подсвеченной клетке. Шаги тратят ОД (очки действия).",
+		"Выстрел: кликни по врагу в радиусе оружия. Укрытия на линии огня снижают точность.",
+		"Цель боя — убить врага. Когда ОД кончились — жми «Конец хода» (или Пробел).",
+	]},
+	{"title": "Бой 2 · Добыча", "steps": [
+		"Ящики: подойди вплотную (соседняя клетка) и открой — там оружие, броня и расходники.",
+		"Броня: нажми [I] — надень шлем, бронежилет и штаны, они гасят урон, пока не износились.",
+		"Бинты и аптечки лечат. Вступай в бой подготовленным!",
+	]},
+	{"title": "Бой 3 · Шоу", "steps": [
+		"Шоу-карты: 1 раз за ход. Тень — невидимость, Софит — подсвет врага всем.",
+		"Триумфы зала: первая кровь и подвиги дают карту в руку на следующий бой.",
+		"Веди себя ярко — толпа любит зрелище!",
+	]},
+]
+var _tutorial_bar: PanelContainer = null
+var _tutorial_lbl: Label = null
+var _tutorial_step_i := 0
+
+const FEEDBACK_URL := "https://podvezu.online/dropzone/api/feedback.php"
+
+func _feedback_send(subject: String, body: String, status_lbl: Label) -> void:
+	# обратная связь (пак 1.1): POST на api/feedback.php; ответ — в статусную строку
+	var req := HTTPRequest.new()
+	req.timeout = 12.0
+	add_child(req)
+	req.request_completed.connect(func(_res, code, _hdrs, resp):
+		var ok: bool = code == 200 and str(resp.get_string_from_utf8()).find("ok") >= 0
+		if is_instance_valid(status_lbl):
+			status_lbl.text = "Спасибо, передано!" if ok else "Не дошло — напиши в сообщения: vk.ru/dropzone_game"
+		req.queue_free()
+	)
+	var who := _auth_email
+	if who == "":
+		who = _vk_name if _vk_name != "" else "guest"
+	var payload := JSON.stringify({"subject": subject, "text": body, "user": who, "token": _auth_token})
+	req.request(FEEDBACK_URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, payload)
+
+func _tutorial_active() -> bool:
+	# обучение идёт, пока tutorial_step < 3 (профиль); в тестах отключено
+	return not _test_run() and int(_profile.get("tutorial_step", 0)) < 3
+
+func _tutorial_start_bubbles() -> void:
+	# бабблы-подсказки сценария текущего обучающего боя (показываются один раз)
+	if not _ui.has("layer"):
+		return
+	_tutorial_step_i = 0
+	var hb := PanelContainer.new()
+	hb.anchor_left = 0.5
+	hb.anchor_right = 0.5
+	var ow: float = min(340.0, _vw() * 0.5)
+	hb.offset_left = -ow
+	hb.offset_right = ow
+	hb.offset_top = 8.0
+	hb.offset_bottom = 96.0
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.02, 0.05, 0.10, 0.90)
+	sb.border_color = Color(0.3, 0.85, 1.0, 0.9)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(8)
+	hb.add_theme_stylebox_override("panel", sb)
+	var vb2 := VBoxContainer.new()
+	vb2.add_theme_constant_override("separation", 4)
+	hb.add_child(vb2)
+	var l := Label.new()
+	l.add_theme_font_size_override("font_size", 14)
+	l.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb2.add_child(l)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 8)
+	vb2.add_child(row)
+	var bnext := Button.new()
+	bnext.text = "Далее"
+	bnext.custom_minimum_size = Vector2(90, 26)
+	bnext.pressed.connect(_tutorial_bubble_next)
+	row.add_child(bnext)
+	var bskip := Button.new()
+	bskip.text = "Пропустить обучение"
+	bskip.custom_minimum_size = Vector2(150, 26)
+	bskip.pressed.connect(_tutorial_skip)
+	row.add_child(bskip)
+	_ui.layer.add_child(hb)
+	_tutorial_bar = hb
+	_tutorial_lbl = l
+	_tutorial_bubble_refresh()
+
+func _tutorial_bubble_refresh() -> void:
+	if _tutorial_lbl == null or not is_instance_valid(_tutorial_lbl):
+		return
+	var step := clampi(int(_profile.get("tutorial_step", 0)), 0, TUTORIAL_SCENARIOS.size() - 1)
+	var sc: Dictionary = TUTORIAL_SCENARIOS[step]
+	var steps: Array = sc["steps"]
+	_tutorial_lbl.text = "%s — %d/%d\n%s" % [str(sc["title"]), _tutorial_step_i + 1, steps.size(), str(steps[_tutorial_step_i])]
+
+func _tutorial_bubble_next() -> void:
+	var step := clampi(int(_profile.get("tutorial_step", 0)), 0, TUTORIAL_SCENARIOS.size() - 1)
+	var steps: Array = TUTORIAL_SCENARIOS[step]["steps"]
+	_tutorial_step_i += 1
+	if _tutorial_step_i >= steps.size():
+		_tutorial_bubble_close()
+	else:
+		_tutorial_bubble_refresh()
+
+func _tutorial_bubble_close() -> void:
+	if _tutorial_bar != null and is_instance_valid(_tutorial_bar):
+		_tutorial_bar.queue_free()
+	_tutorial_bar = null
+	_tutorial_lbl = null
+
+func _tutorial_skip() -> void:
+	_profile.tutorial_step = 3
+	_profile.onboarded = 1
+	_save_profile()
+	_tutorial_bubble_close()
+	_log("Обучение пропущено — все режимы открыты")
+
+func _tutorial_on_win() -> void:
+	# победа в обучающем бою: шаг +1; награда монеты ×2 (в _check_end)
+	var stp := int(_profile.get("tutorial_step", 0))
+	if stp < 3:
+		_profile.tutorial_step = stp + 1
+		if int(_profile.get("tutorial_step", 0)) >= 3:
+			_profile.onboarded = 1
+			_log("Обучение пройдено — арена в твоём распоряжении!")
+		_save_profile()
 
 # ---------- мобильный UI: масштаб через stretch (project.godot: canvas_items) ----------
 func _apply_display_scale() -> void:
@@ -570,6 +703,7 @@ func _ready() -> void:
 	_scatter_decor()
 	_build_perimeter()
 	_spawn_teams()
+	_login_stash_to_backpacks()   # призы ежедневного входа — в рюкзаки отряда
 	_zone_min = Vector2i(0, 0)
 	_zone_max = Vector2i(_grid_n - 1, _grid_n - 1)
 	_update_zone_walls()
@@ -647,6 +781,8 @@ func _ready() -> void:
 			_log("Тренировка %d×%d — ваш ход! ЛКМ — бойцы, ПКМ-тянуть — обзор." % [_mode, _mode])
 			_log("Биом: %s" % ("Индустриальная зона" if _biome == 1 else "Бетонная арена"))
 			_onboard_start()
+			if _tutorial_active():
+				_tutorial_start_bubbles()
 		else:
 			_auth_cfg_load()
 			_boot_done = true
@@ -671,7 +807,12 @@ func _uitest_tour() -> void:
 	_profile.seen_welcome = 1   # не показывать приветствие — мешает скринам
 	_profile.welcome_n = 99    # счётчик заходов: приветствие только первые 3 (тикет владельца)
 	_profile.onboarded = 1      # и обучение первого боя тоже
+	_profile.tutorial_step = 3  # обучение (3 боя) в туре не нужно
 	_profile.seen_tips = ["squad", "shop", "chests", "bp", "med", "heroes", "progress"]
+	_login_reward_txt = ""      # попап награды входа — не мешать скрин-туру
+	var today_u := Time.get_date_string_from_system()
+	_profile.login_streak = {"last": today_u, "n": 1}
+	_profile.daily = {"daily_reset": today_u, "prog": {}, "done": {}}
 	_auth_close()
 	_build_menu()
 	# сообщение с эмодзи в чат — скрин-гейт цветных эмодзи (тикет #7)
@@ -1424,7 +1565,109 @@ func _mq_flush_battle(win: bool, p_kills: int) -> Array:
 	msgs.append_array(_mq_event("battles", 1))
 	if win:
 		msgs.append_array(_mq_event("wins", 1))
+	# ежедневные задания (пак 1.1): те же события, свои награды
+	msgs.append_array(_daily_event("dmg200", int(_mq_acc.get("damage", 0))))
+	msgs.append_array(_daily_event("crates5", _chests_opened))
+	if win:
+		msgs.append_array(_daily_event("wins2", 1))
 	return msgs
+
+# ---------- ЕЖЕДНЕВНЫЙ ЦИКЛ (пак 1.1): задания дня + серия входов ----------
+var _login_reward_txt := ""   # текст награды входа — попап в лобби
+
+func _daily_check() -> void:
+	# сброс заданий в 00:00 (поле daily_reset = дата); заодно тикаем серию входа
+	var today := Time.get_date_string_from_system()
+	var d: Dictionary = _profile.get("daily", {})
+	if str(d.get("daily_reset", "")) != today or not (d.get("prog", {}) is Dictionary):
+		_profile.daily = {"daily_reset": today, "prog": {}, "done": {}}
+		_login_streak_tick(today)
+
+func _daily_event(eid: String, n: int) -> Array:
+	# прогресс ежедневного задания; награда — монеты + XP (в опыт Battle Pass)
+	var granted: Array = []
+	if n <= 0:
+		return granted
+	_daily_check()
+	var d: Dictionary = _profile.daily
+	var prog: Dictionary = d.get("prog", {}).duplicate()
+	var done: Dictionary = d.get("done", {}).duplicate()
+	var changed := false
+	for qid in DAILY_QUESTS.keys():
+		if qid != eid or int(done.get(qid, 0)) == 1:
+			continue
+		var q: Dictionary = DAILY_QUESTS[qid]
+		var nv: int = mini(int(prog.get(qid, 0)) + n, int(q["target"]))
+		if nv != int(prog.get(qid, 0)):
+			prog[qid] = nv
+			changed = true
+		if nv >= int(q["target"]):
+			done[qid] = 1
+			_profile.coins = int(_profile.get("coins", 0)) + int(q["coins"])
+			_profile.bp_xp = int(_profile.get("bp_xp", 0)) + int(q["xp"])
+			_sfx_play("cash")
+			granted.append("«%s» — +%d монет, +%d XP" % [str(q["name"]), int(q["coins"]), int(q["xp"])])
+	if changed or not done.is_empty():
+		d["prog"] = prog
+		d["done"] = done
+		_profile.daily = d
+	if not granted.is_empty():
+		_save_profile()
+	return granted
+
+func _login_streak_tick(today: String) -> void:
+	# серия входов 7 дней; пропуск дня сжигает серию
+	var st: Dictionary = _profile.get("login_streak", {})
+	if str(st.get("last", "")) == today:
+		return
+	var yd := Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) - 86400)
+	var n := int(st.get("n", 0)) + 1 if str(st.get("last", "")) == yd else 1
+	_profile.login_streak = {"last": today, "n": n}
+	_login_reward_txt = ""
+	if n >= 1 and n <= LOGIN_STREAK_REWARDS.size():
+		var r: Dictionary = LOGIN_STREAK_REWARDS[n - 1]
+		match str(r["kind"]):
+			"coins":
+				_profile.coins = int(_profile.get("coins", 0)) + int(r["amount"])
+			"item":
+				var stash: Array = _profile.get("login_stash", []).duplicate()
+				stash.append({"id": str(r["item"]), "count": int(r["count"])})
+				_profile.login_stash = stash
+			"card_hand":
+				if not _profile.has("show_next"):
+					_profile.show_next = []
+				_profile.show_next.append(_random_card_rarity(str(r["rarity"])))
+			"card_deck":
+				var dk: Array = _profile.get("show_deck", []).duplicate()
+				dk.append(_random_card_rarity(str(r["rarity"])))
+				_profile.show_deck = dk
+		_login_reward_txt = "День %d серии входа: %s" % [n, str(r["label"])]
+	_save_profile()
+
+func _consumable_by_id(cid: String) -> Dictionary:
+	for c in _items["consumables"]:
+		if str(c.get("id", "")) == cid:
+			return (c as Dictionary).duplicate()
+	return {}
+
+func _login_stash_to_backpacks() -> void:
+	# призы входа (бинты/аптечки) — в рюкзаки отряда на старте боя
+	var stash: Array = _profile.get("login_stash", [])
+	if stash.is_empty():
+		return
+	for pf in _fighters:
+		if int(pf.team) != 0:
+			continue
+		for se in stash:
+			var item := _consumable_by_id(str(se.get("id", "")))
+			if item.is_empty():
+				continue
+			for _i in int(se.get("count", 1)):
+				pf.backpack.append({"kind": "consumable", "item": item})
+		break   # всё первому бойцу отряда
+	_profile.login_stash = []
+	_log("Призы входа выданы бойцам (бинты/аптечки)")
+
 
 func _mq_season_days_left() -> int:
 	return maxi(0, int((SEASON_START_UTC + SEASON_DAYS * 86400 - Time.get_unix_time_from_system()) / 86400.0))
@@ -2466,8 +2709,8 @@ func _roll_chest_contents() -> Array:
 		# броня под уровень бойца — раскрывается при открытии ящика (armor_lazy)
 		contents.append({"kind": "armor_lazy", "cat": cat})
 	if _rng.randf() < 0.25:
-		# шоу-карта: сгорает после боя (не уходит в профиль)
-		var cid_r: String = SHOW_CARDS.keys()[_rng.randi() % SHOW_CARDS.size()]
+		# шоу-карта: сгорает после боя (не уходит в профиль); ролл по тирам редкости
+		var cid_r: String = _random_card()
 		contents.append({"kind": "card", "item": {"id": cid_r, "name": SHOW_CARDS[cid_r]["name"], "weight": 0.2}})
 	var c: Array = _items["consumables"]
 	contents.append({"kind": "consumable", "item": c[_rng.randi() % c.size()]})
@@ -2616,6 +2859,15 @@ func _spawn_teams() -> void:
 		var cell := _free_cell_sector(mid + 4, hi, lo, mid - 4)
 		_spawn_human(m[0], cell.x, cell.y, _rng.randf_range(90, 210), m[1], Color("#3498ff"), 1, m[2])
 	_log("СПАВН готов: красных=%d, синих=%d" % [_alive_count(0), _alive_count(1)])
+	if _mode == 1 and _tutorial_active():
+		# обучающий бот ослаблен: уровень на 2 ниже игрока
+		for bi in _fighters.size():
+			if int(_fighters[bi].team) == 1 and _fighters[bi].alive:
+				var bot = _fighters[bi]
+				bot.lvl = maxi(1, int(_fighters[0].lvl) - 2)
+				_recalc_derived(bot, true)
+				_log("ОБУЧЕНИЕ: бот «%s» ослаблен до %d уровня" % [bot.name, int(bot.lvl)])
+				break
 
 func _free_cell_sector(x0: int, x1: int, z0: int, z1: int) -> Vector2i:
 	for attempt in 40:
@@ -3436,6 +3688,8 @@ func _item_weight(entry: Dictionary) -> float:
 			return 3.0 if entry["item"].get("tier", 1) == 1 else 5.0
 		"armor":
 			return entry["item"].get("weight", 1.0)
+		"coins":
+			return 0.0   # монеты не занимают вес
 		_:
 			return 1.0
 
@@ -3864,7 +4118,7 @@ func _cover_on_line(a: Vector2i, b: Vector2i) -> int:
 			y += sy
 	return n
 
-func _hit_chance(a: Vector2i, b: Vector2i, w_range := 0) -> float:
+func _hit_chance(a: Vector2i, b: Vector2i, w_range := 0, flash := false) -> float:
 	# база 80% − 15% за каждое лёгкое укрытие на линии;
 	# дальность теперь важна: за половиной дальности ствола −5% за клетку
 	var ch := HIT_CHANCE - 0.15 * _cover_on_line(a, b)
@@ -3873,6 +4127,9 @@ func _hit_chance(a: Vector2i, b: Vector2i, w_range := 0) -> float:
 		var over := dist - w_range * 0.5
 		if over > 0.0:
 			ch -= 0.05 * over
+		if flash and dist > 3.0:
+			# Пиротехника: ослеплённый стрелок дальше 3 клеток промахивается чаще
+			ch -= 0.10 * (dist - 3.0)
 	return clampf(ch, 0.15, 0.95)
 
 func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist := -1.0, pierce := 0.0) -> int:
@@ -3893,6 +4150,8 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 		# ТОЛПА ТРЕБУЕТ КРОВИ: урон всех +25%
 		real = maxi(1, int(round(real * 1.25)))
 	d.hp = maxi(0, d.hp - real)
+	if int(d.team) == 0:
+		_dmg_taken += real   # триумф 1×1 «победа без урона / на последнем издыхании»
 	if _mode == 6 and d.get("boss", false) and d.alive and int(d.hp) > 0:
 		# фазы Жнеца: на 66%/33% HP — карта в руку игрока
 		var frac := float(d.hp) / maxf(1.0, float(d.max_hp))
@@ -3918,6 +4177,9 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 	_log("%s -> %s: %d урона%s (HP %d)" % [src_name, d.name, real, arm_txt, d.hp])
 	if d.hp <= 0:
 		_kill(victim)
+		if int(d.team) == 1 and src_idx >= 0 and src_idx < _fighters.size():
+			# учёт вайпа: кто убил вражеского бойца в этом ходу
+			_turn_killers[src_idx] = int(_turn_killers.get(src_idx, 0)) + 1
 		if src_idx >= 0 and src_idx < _fighters.size():
 			var k = _fighters[src_idx]
 			k.kills = int(k.kills) + 1
@@ -4016,7 +4278,7 @@ func _shoot(att: int, def: int) -> void:
 		return
 	var cls := _weapon_class(w)
 	var pl := _prof_lvl(a, cls)
-	var chance := clampf(_hit_chance(a.cell, d.cell, int(w.get("range", 1))) + _stat_acc(a.stats) + 0.03 * pl + _sniper_focus(a) - _stat_dodge(d.stats), 0.1, 0.95)
+	var chance := clampf(_hit_chance(a.cell, d.cell, int(w.get("range", 1)), int(a.get("flash", 0)) > 0) + _stat_acc(a.stats) + 0.03 * pl + _sniper_focus(a) - _stat_dodge(d.stats), 0.1, 0.95)
 	var total := 0
 	var crit := false
 	for i in burst:
@@ -4054,16 +4316,9 @@ func _shoot(att: int, def: int) -> void:
 func _kill(i: int) -> void:
 	var f = _fighters[i]
 	if not _first_blood:
-		# триумф шоу: первая кровь — карта в руку на следующий бой
+		# триумф шоу: первая кровь — во всех режимах
 		_first_blood = true
-		_log("ВЕДУЩИЙ: Первая кровь! Триумф шоу — %s выбывает!" % f.name)
-		if not _test_run():
-			var cid := _random_card()
-			if not _profile.has("show_next"):
-				_profile.show_next = []
-			_profile.show_next.append(cid)
-			_save_profile()
-			_log("Триумф: карта «%s» — в руке на следующий бой!" % SHOW_CARDS[cid]["name"])
+		_triumph("Первая кровь! %s выбывает — и это только начало шоу!" % f.name)
 	f.alive = false
 	_unit_at.erase(_key(f.cell))
 	f.pad.material_override = _mat(Color(0.2, 0.2, 0.2), 0.0, 0.9)
@@ -4107,6 +4362,43 @@ func _kill(i: int) -> void:
 	if _selected == i:
 		_deselect()
 	_check_end()
+
+func _triumph(host_line: String) -> void:
+	# ТРИУМФ ЗАЛА (пак 1.1): максимум 1 за бой; награда — случайная ЧАСТАЯ карта
+	# в руку на следующий бой + реплика ведущего
+	if _triumph_given:
+		return
+	_triumph_given = true
+	_log("ВЕДУЩИЙ: %s" % host_line)
+	if not _test_run():
+		var cid := _random_common_card()
+		if not _profile.has("show_next"):
+			_profile.show_next = []
+		_profile.show_next.append(cid)
+		_save_profile()
+		_log("Триумф: карта «%s» — в руке на следующий бой!" % SHOW_CARDS[cid]["name"])
+
+func _check_triumphs_win() -> void:
+	# условия триумфа победы: вайп за 1 ход (2×2+) или идеальная/героическая дуэль 1×1
+	if _triumph_given:
+		return
+	if _mode in [2, 3, 4]:
+		# вайп вражеской команды за 1 ход ОДНИМ бойцом (режимы 2×2 и больше)
+		var killers0 := 0
+		var kills0 := 0
+		for ki in _turn_killers.keys():
+			if int(_fighters[int(ki)].team) == 0:
+				killers0 += 1
+				kills0 += int(_turn_killers[ki])
+		if _turn_start_blue >= 2 and killers0 == 1 and kills0 >= _turn_start_blue:
+			_triumph("ВАЙП ЗА ОДИН ХОД! Один боец смёл всю команду — зал встаёт!")
+	elif _mode == 1:
+		# дуэль 1×1: победа без единого полученного урона ИЛИ на последнем издыхании (HP ≤ 20%)
+		var hero: Dictionary = _fighters[0]
+		if _dmg_taken == 0:
+			_triumph("ИДЕАЛЬНАЯ ДУЭЛЬ! Ни царапины — %s даже не вспотел!" % hero.name)
+		elif float(hero.hp) <= 0.2 * float(hero.max_hp):
+			_triumph("НА ПОСЛЕДНЕМ ИЗДЫХАНИИ! %s держался одной левой — и победил!" % hero.name)
 
 # ---------- опыт и уровни ----------
 var _lvl_open := false
@@ -4413,11 +4705,13 @@ func _open_chest(fi: int, cell: Vector2i) -> void:
 	var ent: Array = _chests.get(k, [])
 	for ei in ent.size():
 		if str(ent[ei].get("kind", "")) == "armor_lazy":
-			ent[ei] = {"kind": "armor", "cat": ent[ei]["cat"], "item": _roll_armor_for(int(f.get("lvl", 1)), ent[ei]["cat"])}
+			# уровень брони: у груза аирдропа свой (отряд +1 тир), иначе — по открывшему
+			var a_lvl: int = int(ent[ei].get("lvl", int(f.get("lvl", 1))))
+			ent[ei] = {"kind": "armor", "cat": ent[ei]["cat"], "item": _roll_armor_for(a_lvl, ent[ei]["cat"])}
 	_show_chest_panel(k)
 
 func _entry_name(entry: Dictionary) -> String:
-	var s: String = entry["item"].get("name", "?")
+	var s: String = "💰 %d монет" % int(entry.get("amount", 0)) if str(entry.get("kind", "")) == "coins" else entry["item"].get("name", "?")
 	match entry["kind"]:
 		"weapon":
 			s += " (урон %d)" % entry["item"].get("damage", 0)
@@ -4430,6 +4724,8 @@ func _entry_name(entry: Dictionary) -> String:
 				s += " (+%d AP)" % entry["item"].get("ap_restore", 0)
 		"card":
 			s += " (шоу-карта — сгорит после боя)"
+		"coins":
+			s = "💰 %d монет (сразу в кассу)" % int(entry.get("amount", 0))
 	return s
 
 func _show_chest_panel(k: String) -> void:
@@ -4485,6 +4781,22 @@ func _take_one(k: String, idx: int) -> void:
 	if idx < 0 or idx >= entries.size():
 		return
 	var entry = entries[idx]
+	if str(entry.get("kind", "")) == "coins":
+		# монеты — сразу в кассу, веса не занимают
+		_profile.coins = int(_profile.get("coins", 0)) + int(entry.get("amount", 0))
+		_sfx_play("cash")
+		_log("%s: +%d монет из спонсорского ящика" % [f.name, int(entry.get("amount", 0))])
+		entries.remove_at(idx)
+		_mq_acc["loot"] = int(_mq_acc.get("loot", 0)) + 1
+		if entries.is_empty():
+			_chests.erase(k)
+			if _chest_pads.has(k):
+				_chest_pads[k].material_override = _mat(Color.BLACK, 0.0, 1.0, Color(0.3, 0.3, 0.3), 0.8)
+			_ui.chest_panel.visible = false
+		else:
+			_show_chest_panel(k)
+		_refresh_fighter_panel()
+		return
 	if _load_weight(f) + _item_weight(entry) > _carry_limit(f):
 		_log("Не влезает — перегруз по весу")
 		return
@@ -4509,7 +4821,13 @@ func _take_all(k: String) -> void:
 	var taken := 0
 	var left := []
 	for entry in _chests[k]:
-		if _load_weight(f) + _item_weight(entry) <= _carry_limit(f):
+		if str(entry.get("kind", "")) == "coins":
+			# монеты — сразу в кассу, веса не занимают
+			_profile.coins = int(_profile.get("coins", 0)) + int(entry.get("amount", 0))
+			_sfx_play("cash")
+			_log("%s: +%d монет из спонсорского ящика" % [f.name, int(entry.get("amount", 0))])
+			taken += 1
+		elif _load_weight(f) + _item_weight(entry) <= _carry_limit(f):
 			f.backpack.append(entry)
 			taken += 1
 		else:
@@ -4768,14 +5086,26 @@ func _after_action() -> void:
 
 # ---------- ходы и боты ----------
 # ---------- ШОУ-КАРТЫ ----------
+# пул 12 карт (пак 1.1): у каждой карты rarity — веса ролла по тирам
 const SHOW_CARDS := {
-	"sofit": {"name": "Софит", "desc": "Подсвет цели: все видят её 1 ход", "target": "enemy"},
-	"ten": {"name": "Тень", "desc": "Невидимость: движение запрещено, выстрел снимает", "target": ""},
-	"molot": {"name": "Молот Рекса", "desc": "3×3: 60 урона в след. ход, броня слетает", "target": "cell"},
-	"rezerv": {"name": "Резерв", "desc": "Союзник-резерв на краю арены с 50% HP", "target": ""},
-	"reklama": {"name": "Рекламная пауза", "desc": "Все бойцы +10 HP (не выше макс.)", "target": ""},
-	"teleport": {"name": "Телепорт-подиум", "desc": "Обмен местами с выбранным врагом", "target": "enemy"},
+	# частые (common)
+	"sofit": {"name": "Софит", "desc": "Подсвет цели: все видят её 1 ход", "target": "enemy", "rarity": "common"},
+	"reklama": {"name": "Рекламная пауза", "desc": "Все бойцы +10 HP (не выше макс.)", "target": "", "rarity": "common"},
+	"teleport": {"name": "Телепорт-подиум", "desc": "Обмен местами с выбранным врагом", "target": "enemy", "rarity": "common"},
+	"ukazka": {"name": "Указка зала", "desc": "Случайный враг виден всем 1 ход", "target": "", "rarity": "common"},
+	"radar": {"name": "Радар", "desc": "Туман войны снят со всей карты на 2 хода", "target": "", "rarity": "common"},
+	"piro": {"name": "Пиротехника", "desc": "Фейерверк 3×3: попавшие 1 ход видят ≤3 кл., Тень снимается", "target": "cell", "rarity": "common"},
+	# средние (medium)
+	"ten": {"name": "Тень", "desc": "Невидимость: движение запрещено, выстрел снимает", "target": "", "rarity": "medium"},
+	"airdrop": {"name": "Аирдроп", "desc": "Ящик лутом +1 тир к уровню упадёт на клетку через 1 ход (видят все!)", "target": "cell", "rarity": "medium"},
+	"sponsor": {"name": "Спонсорский ящик", "desc": "На центр падает ящик с монетами (сумма по уровню)", "target": "", "rarity": "medium"},
+	# редкие (rare)
+	"molot": {"name": "Молот Рекса", "desc": "3×3: 60 урона в след. ход, броня слетает", "target": "cell", "rarity": "rare"},
+	"rezerv": {"name": "Резерв", "desc": "Союзник-резерв на краю арены с 50% HP", "target": "", "rarity": "rare"},
+	"stavka": {"name": "Ставка", "desc": "Ставка букмекера бесплатно: победа ×2, поражение ×0.5", "target": "", "rarity": "rare"},
 }
+# веса тиров ролла (пак 1.1): частые 45 / средние 30 / редкие 18 / легендарные 7 (резерв — не падают)
+const CARD_RARITY_W := {"common": 45, "medium": 30, "rare": 18, "legendary": 7}
 var _hand: Array = []            # рука на бой: колода + «на след. бой» + дроп из ящиков (макс 3)
 var _card_played := false        # 1 карта/ход на отряд
 var _card_targeting := ""        # карта ждёт клика по цели/клетке
@@ -4783,27 +5113,91 @@ var _crowd_fury := false         # 13-й раунд: урон всех +25%
 var _first_blood := false
 var _book_bet := false           # ставка букмекера: победа ×2, поражение ×0.5
 var _molot_pending: Array = []   # [{cell}] — красная зона ударит в начале след. хода
+var _radar_ttl := 0              # Радар: ходов без тумана войны (видит игрок)
+var _airdrop_pending: Array = [] # [{cell, lvl}] — аирдроп приземлится в начале след. хода игрока
+
+# ---------- пак 1.1: сезоны шоу (6 недель), дейлики, ежедневный вход, обучение ----------
+const SPONSOR_COINS_BASE := 40        # спонсорский ящик: база + за уровень отряда
+const SPONSOR_COINS_PER_LVL := 12
+# сезон шоу = 6 недель от даты старта (константа); лестница очков за место 1..16
+const SHOW_SEASON_WEEKS := 6
+const SHOW_SEASON_START_UTC := 1790985600   # 2026-10-03 00:00 UTC — старт первого сезона шоу
+const SEASON_LADDER := [25, 18, 12, 8, 7, 6, 5, 4, 3, 3, 2, 2, 2, 2, 1, 1]
+# ежедневные задания (сброс в 00:00, поле daily_reset): id -> [название, цель, монеты, XP]
+const DAILY_QUESTS := {
+	"wins2": {"name": "Победи 2 боя", "target": 2, "coins": 50, "xp": 200},
+	"crates5": {"name": "Открой 5 ящиков", "target": 5, "coins": 40, "xp": 200},
+	"dmg200": {"name": "Нанеси 200 урона", "target": 200, "coins": 60, "xp": 200},
+}
+# ежедневный вход: цепочка 7 дней (пропуск дня — серия сгорает)
+const LOGIN_STREAK_REWARDS := [
+	{"kind": "coins", "amount": 100, "label": "100 монет"},
+	{"kind": "item", "item": "bandage", "count": 2, "label": "Бинт ×2"},
+	{"kind": "coins", "amount": 150, "label": "150 монет"},
+	{"kind": "item", "item": "medkit", "count": 1, "label": "Аптечка"},
+	{"kind": "coins", "amount": 200, "label": "200 монет"},
+	{"kind": "card_hand", "rarity": "common", "label": "Частая карта в руку"},
+	{"kind": "card_deck", "rarity": "medium", "label": "Средняя карта в колоду"},
+]
 
 func _show_reset() -> void:
 	# старт боя: рука = колода (3 слота профиля) + карты «на следующий бой»
 	_hand = []
-	var deck: Array = _profile.get("show_deck", [])
-	for i in mini(3, deck.size()):
-		_hand.append(str(deck[i]))
-	for cid in _profile.get("show_next", []):
-		if _hand.size() < 3:
-			_hand.append(str(cid))
-	_profile.show_next = []
+	if not _tutorial_active():
+		var deck: Array = _profile.get("show_deck", [])
+		for i in mini(3, deck.size()):
+			_hand.append(str(deck[i]))
+		for cid in _profile.get("show_next", []):
+			if _hand.size() < 3:
+				_hand.append(str(cid))
+		_profile.show_next = []
+	else:
+		# обучение: бои без карт; в 3-м (сценарий «Шоу») — Софит и Тень в руку
+		_profile.show_next = []
+		if int(_profile.get("tutorial_step", 0)) == 2:
+			_hand = ["sofit", "ten"]
 	_card_played = false
 	_card_targeting = ""
 	_crowd_fury = false
 	_first_blood = false
 	_book_bet = false
 	_molot_pending = []
+	_radar_ttl = 0
+	_airdrop_pending = []
+	_triumph_given = false
+	_dmg_taken = 0
+	_turn_start_blue = _alive_count(1)
+	_turn_killers = {}
+
+func _random_card_rarity(rar: String) -> String:
+	# равновероятный выбор карты внутри тира редкости
+	var pool: Array = []
+	for ck in SHOW_CARDS.keys():
+		if str(SHOW_CARDS[ck].get("rarity", "common")) == rar:
+			pool.append(ck)
+	if pool.is_empty():
+		pool = SHOW_CARDS.keys()
+	return str(pool[_rng.randi() % pool.size()])
 
 func _random_card() -> String:
-	var keys := SHOW_CARDS.keys()
-	return str(keys[_rng.randi() % keys.size()])
+	# взвешенный ролл по тирам (пак 1.1): 45/30/18/7; легендарный резерв → редкий тир
+	var total := 0
+	for rk in CARD_RARITY_W.keys():
+		total += int(CARD_RARITY_W[rk])
+	var roll := _rng.randi() % maxi(1, total)
+	var acc := 0
+	var tier := "rare"
+	for rk in ["common", "medium", "rare", "legendary"]:
+		acc += int(CARD_RARITY_W[rk])
+		if roll < acc:
+			tier = rk
+			break
+	if tier == "legendary":
+		tier = "rare"   # легендарные — резерв: пока не падают
+	return _random_card_rarity(tier)
+
+func _random_common_card() -> String:
+	return _random_card_rarity("common")
 
 func _card_grant(cid: String) -> void:
 	if not _profile.has("show_cards"):
@@ -4859,8 +5253,123 @@ func _card_resolve(cid: String, tgt: int, cell: Vector2i) -> void:
 			if cell.x >= 0:
 				_molot_pending.append({"cell": cell})
 				_log("МОЛОТ РЕКСА: красная зона 3×3 — ударит в начале вашего след. хода!")
+		"ukazka":
+			# случайный живой враг — подсвет на 1 ход (как Софит, но цель выбирает зал)
+			var foes: Array = []
+			for fi2 in _fighters.size():
+				if _fighters[fi2].team == 1 and _fighters[fi2].alive:
+					foes.append(fi2)
+			if foes.is_empty():
+				_hand.append(cid)   # целей нет — карта вернулась в руку
+				_card_played = false
+				return
+			var pick: int = foes[_rng.randi() % foes.size()]
+			_fighters[pick]["marked"] = 2
+			_update_fog()
+			_log("ВЕДУЩИЙ: а в вот этого героя зал смотрит особенно внимательно! %s — на виду у всех!" % _fighters[pick].name)
+		"radar":
+			_radar_ttl = 2
+			_update_fog()
+			_log("РАДАР: туман войны снят со всей арены на 2 хода!")
+		"piro":
+			if cell.x >= 0:
+				_card_piro(cell)
+		"airdrop":
+			if cell.x >= 0:
+				_airdrop_pending.append({"cell": cell, "lvl": _max_squad_lvl() + 1})
+				_place_airdrop_marker(cell)
+				_log("АИРДРОП: груз +1 тир падает на %s через 1 ход — телеграф виден ВСЕМ, успей перехватить!" % cell)
+		"sponsor":
+			_card_sponsor()
+		"stavka":
+			if _book_bet:
+				_hand.append(cid)   # ставка уже стоит — карта вернулась в руку
+				_card_played = false
+				return
+			_book_bet = true
+			_log("СТАВКА принята букмекером: победа ×2, поражение ×0.5!")
 	_sfx_play("click")
 	_after_action()
+
+func _card_piro(cell: Vector2i) -> void:
+	# Пиротехника: вспышка 3×3 — 1 ход видят не дальше 3 клеток, Тень снимается
+	_explode_at(cell, 0)
+	var hit_any := false
+	for vi in _fighters.size():
+		var v = _fighters[vi]
+		if not v.alive:
+			continue
+		if maxi(absi(v.cell.x - cell.x), absi(v.cell.y - cell.y)) <= 1:
+			v["flash"] = 2
+			if int(v.get("stealth", 0)) > 0:
+				v.erase("stealth")
+				_log("%s: вспышка выдала его из Тени!" % v.name)
+			hit_any = true
+	_update_fog()
+	_log("ПИРОТЕХНИКА: ослепляющая вспышка на %s%s" % [cell, " — пострадавшие 1 ход видят не дальше 3 клеток" if hit_any else " (никто не пострадал)"])
+
+func _place_airdrop_marker(cell: Vector2i) -> void:
+	# телеграф аирдропа: оранжевая мишень на клетке (видна всем — честный риск)
+	var mk := MeshInstance3D.new()
+	var rm := TorusMesh.new()
+	rm.inner_radius = 0.34
+	rm.outer_radius = 0.5
+	mk.mesh = rm
+	mk.material_override = _mat(Color.BLACK, 0.0, 1.0, Color(1.0, 0.55, 0.1), 2.5)
+	mk.position = gw(cell.x, cell.y, 0.06)
+	add_child(mk)
+	var k2 := _key(cell)
+	if _airdrop_marks.has(k2):
+		_airdrop_marks[k2].queue_free()
+	_airdrop_marks[k2] = mk
+
+var _airdrop_marks := {}   # ключ клетки -> мишень телеграфа
+# триумфы зала (пак 1.1): макс 1 за бой; учёт вайпа и урона по игроку
+var _triumph_given := false     # триумф уже выдан в этом бою
+var _dmg_taken := 0             # урон, полученный отрядом игрока за бой
+var _turn_start_blue := 0       # врагов было на старте текущего хода (вайп за 1 ход)
+var _turn_killers := {}         # {индекс бойца: число убийств в этом ходу}
+
+func _airdrop_land() -> void:
+	for p in _airdrop_pending:
+		var c: Vector2i = p["cell"]
+		var alvl: int = int(p.get("lvl", _max_squad_lvl()))
+		var contents: Array = _roll_chest_contents()
+		for ei in contents.size():
+			# лут аирдропа: броня раскроется на уровень груза (+1 тир к уровню отряда)
+			if str(contents[ei].get("kind", "")) == "armor_lazy":
+				contents[ei] = {"kind": "armor_lazy", "cat": contents[ei]["cat"], "lvl": alvl}
+		_place_chest_at(c, contents)
+		_log("АИРДРОП приземлился на %s — лут %d-го уровня!" % [c, alvl])
+	_airdrop_pending = []
+	for mk2 in _airdrop_marks.values():
+		if is_instance_valid(mk2):
+			mk2.queue_free()
+	_airdrop_marks = {}
+
+func _place_chest_at(cell: Vector2i, contents: Array) -> void:
+	# универсальный спавн ящика на клетке (трупный лут, аирдроп, спонсор)
+	var k := _key(cell)
+	_place(C + "Lootbox.gltf", gw(cell.x, cell.y), _rng.randf() * 360.0, 1.0)
+	var pad := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.55
+	cyl.bottom_radius = 0.55
+	cyl.height = 0.04
+	pad.mesh = cyl
+	pad.material_override = _mat(Color.BLACK, 0.0, 1.0, Color(1.0, 0.8, 0.2), 3.0)
+	pad.position = gw(cell.x, cell.y, 0.03)
+	add_child(pad)
+	_chest_pads[k] = pad
+	_chests[k] = contents
+
+func _card_sponsor() -> void:
+	# Спонсорский ящик: монеты на случайную центральную клетку (сумма по уровню отряда)
+	var mid := _grid_n / 2
+	var cell := _free_cell_sector(maxi(2, mid - 4), mini(_grid_n - 3, mid + 4), maxi(2, mid - 4), mini(_grid_n - 3, mid + 4))
+	var amount := SPONSOR_COINS_BASE + SPONSOR_COINS_PER_LVL * _max_squad_lvl()
+	_place_chest_at(cell, [{"kind": "coins", "amount": amount}])
+	_log("СПОНСОРСКИЙ ЯЩИК с %d монетами падает на %s — забирать любому!" % [amount, cell])
 
 func _card_rezerv() -> void:
 	var cell := _free_cell_sector(2, _grid_n - 3, 2, _grid_n - 3)
@@ -4953,13 +5462,19 @@ func _end_turn() -> void:
 		_tick_fire()
 	if not _game_over and not _molot_pending.is_empty():
 		_molot_strike()
+	if not _game_over and not _airdrop_pending.is_empty():
+		_airdrop_land()
 	if not _game_over:
 		_turn += 1
+		if _radar_ttl > 0:
+			_radar_ttl -= 1   # Радар: минус ход тишины тумана
 		if _turn == 13 and not _crowd_fury:
 			_crowd_fury = true
 			_log("ВЕДУЩИЙ: ТОЛПА ТРЕБУЕТ КРОВИ! Урон всех +25%!")
 		_turn_time_left = TURN_TIME   # новый ход — лимит времени снова полный
 		_card_played = false          # шоу-карта: 1 раз за ход
+		_turn_start_blue = _alive_count(1)   # учёт вайпа: сколько врагов было на старте хода
+		_turn_killers = {}                   # и кто их убил в этом ходу
 		for f in _fighters:
 			if f.alive:
 				f.ap = f.max_ap
@@ -4972,6 +5487,8 @@ func _end_turn() -> void:
 					f["stealth"] = int(f.stealth) - 1
 				if int(f.get("marked", 0)) > 0:
 					f["marked"] = int(f.marked) - 1
+				if int(f.get("flash", 0)) > 0:
+					f["flash"] = int(f.flash) - 1
 		_log("Ход %d — ваши бойцы готовы" % _turn)
 	if not _game_over:
 		_tick_zone()
@@ -5038,6 +5555,8 @@ func _bot_act(i: int) -> void:
 				continue
 			return  # выхода нет — стоим и горим, ход кончен
 		var vis: int = f.get("vision", VISION)
+		if int(f.get("flash", 0)) > 0:
+			vis = mini(vis, 3)   # Пиротехника: ослеплённый бот тоже видит не дальше 3 клеток
 		var t := _bot_pick_target(f, vis)
 		if t < 0:
 			# никого не видно — идём к центру арены (подиум)
@@ -5129,6 +5648,9 @@ func _check_end() -> void:
 		_profile.hp_ts = Time.get_unix_time_from_system()
 		# --- награды за бой: монеты, XP Battle Pass, миссии ---
 		var win := blue == 0
+		# ТРИУМФЫ ЗАЛА (пак 1.1): не больше 1 за бой (первая кровь могла уже выдать)
+		if win:
+			_check_triumphs_win()
 		var p_kills := 0
 		for fk in _fighters:
 			if fk.team == 0:
@@ -5136,6 +5658,8 @@ func _check_end() -> void:
 		var bp_gain := 3 + 3 * p_kills + (10 if win else 0)
 		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + bp_gain
 		var reward := 2 + 1 * p_kills  # +2 за бой, +1 за убийство
+		if _tutorial_active():
+			reward *= 2   # обучающий бой: монеты ×2
 		if _mode == 5:
 			reward *= 3   # арена лидеров: 16 врагов — награда выше
 		elif _mode == 6:
@@ -5147,10 +5671,15 @@ func _check_end() -> void:
 		if _mode == 6:
 			# Жнец: после боя — таймер 3 дня до следующего захода
 			_profile.reaper_ts = Time.get_unix_time_from_system() + 3.0 * 86400.0
+			if win:
+				# сезон шоу: рейд-босс — боевое достижение, очки за 1-е место лестницы
+				_season_add_place(1)
 		_sfx_play("cash")
 		_profile.total_kills = int(_profile.get("total_kills", 0)) + p_kills
 		if win:
 			_profile.wins = int(_profile.get("wins", 0)) + 1
+		if win and _tutorial_active():
+			_tutorial_on_win()   # шаг обучения +1 (3-й шаг = обучение пройдено)
 		var unlock_msg := _slot_unlock_check()
 		var daily_msgs: Array = _mq_flush_battle(win, p_kills)
 		if _book_bet:
@@ -6339,6 +6868,147 @@ func _run_testplay() -> void:
 	print("BP_HERO_TEST free-50: «Призрак» owned=", int(bp_own[11]) if bp_own.size() > 11 else 0, " (ожидается 1)")
 	print("BP_HERO_TEST «Вдова» фрагменты=", int(bp_fr.get("7", 0)), "/45 (ожидается 30)")
 	print("BP_HERO_TEST аренды: Крот=", bp_rent.has("0"), " Следопыт=", bp_rent.has("5"), " Жнец=", bp_rent.has("10"), " (все true)")
+	# --- пак 1.1: SHOW_TEST-дополнение (5 новых карт, тиры, веса) ---
+	print("SHOW_TEST: пак 1.1 — 5 новых карт")
+	var rar_cnt := {"common": 0, "medium": 0, "rare": 0}
+	for ck2 in SHOW_CARDS.keys():
+		var rar_k: String = str(SHOW_CARDS[ck2].get("rarity", "common"))
+		rar_cnt[rar_k] = int(rar_cnt.get(rar_k, 0)) + 1
+	print("SHOW_TEST пул: всего=", SHOW_CARDS.size(), " частых=", rar_cnt["common"], " средних=", rar_cnt["medium"], " редких=", rar_cnt["rare"], " (ожидается 12/6/3/3)")
+	var roll_ok := true
+	var roll_common := 0
+	for _ri in 600:
+		var rc := _random_card()
+		if not SHOW_CARDS.has(rc):
+			roll_ok = false
+		elif str(SHOW_CARDS[rc].get("rarity", "")) == "common":
+			roll_common += 1
+	print("SHOW_TEST ролл: все-в-пуле=", roll_ok, " частых-из-600=", roll_common, " (ожидается true, 200..400)")
+	# Пиротехника: СНИМАЕТ Тень с попавших (обязательный кейс), вешает вспышку
+	f0["stealth"] = 2
+	_hand = ["piro"]
+	_card_played = false
+	_card_resolve("piro", -1, Vector2i(f0.cell.x, f0.cell.y))
+	var piro_st := int(f0.get("stealth", 0)) == 0
+	var piro_fl := int(f0.get("flash", 0)) > 0
+	print("SHOW_TEST пиротехника: сняла-Тень=", piro_st, " вспышка=", piro_fl, " (ожидается true/true)")
+	# Указка зала: случайный враг подсвечен
+	_hand = ["ukazka"]
+	_card_played = false
+	_card_resolve("ukazka", -1, Vector2i(-1, -1))
+	var uk_mark := false
+	for fe2 in _fighters:
+		if int(fe2.team) == 1 and int(fe2.get("marked", 0)) > 0:
+			uk_mark = true
+			break
+	print("SHOW_TEST указка: враг-подсвечен=", uk_mark, " (ожидается true)")
+	# Радар: 2 хода без тумана войны
+	_hand = ["radar"]
+	_card_played = false
+	_card_resolve("radar", -1, Vector2i(-1, -1))
+	print("SHOW_TEST радар: ttl=", _radar_ttl, " (ожидается 2)")
+	# Аирдроп: телеграф -> приземление -> ящик с лутом уровня отряда +1
+	_hand = ["airdrop"]
+	_card_played = false
+	var acell := Vector2i(3, 3)
+	_card_resolve("airdrop", -1, acell)
+	var ad_tel := _airdrop_pending.size() == 1
+	_airdrop_land()
+	var ad_chest := _chests.has(_key(acell))
+	var ad_lvl_ok := true
+	if ad_chest:
+		for e2 in _chests[_key(acell)]:
+			if str(e2.get("kind", "")) == "armor_lazy" and int(e2.get("lvl", 0)) != _max_squad_lvl() + 1:
+				ad_lvl_ok = false
+	print("SHOW_TEST аирдроп: телеграф=", ad_tel, " ящик=", ad_chest, " лут-на-ур+1=", ad_lvl_ok, " (все true)")
+	# Спонсорский ящик: монеты на центральной клетке, виден всем
+	_hand = ["sponsor"]
+	_card_played = false
+	_card_resolve("sponsor", -1, Vector2i(-1, -1))
+	var sp_found := false
+	for cv in _chests.values():
+		for e3 in cv:
+			if str(e3.get("kind", "")) == "coins":
+				sp_found = true
+	print("SHOW_TEST спонсор: ящик-с-монетами=", sp_found, " (ожидается true)")
+	# Ставка: букмекер бесплатно
+	_book_bet = false
+	_hand = ["stavka"]
+	_card_played = false
+	_card_resolve("stavka", -1, Vector2i(-1, -1))
+	print("SHOW_TEST ставка: bet=", _book_bet, " (ожидается true)")
+	# --- TRIUMPH_TEST: все 3 условия ---
+	print("TRIUMPH_TEST: старт")
+	var mode0b := _mode
+	_mode = 2
+	_turn_start_blue = 2
+	_turn_killers = {0: 2}
+	_triumph_given = false
+	_check_triumphs_win()
+	var tw := _triumph_given
+	_mode = 1
+	_dmg_taken = 0
+	_triumph_given = false
+	_check_triumphs_win()
+	var td := _triumph_given
+	_dmg_taken = 50
+	_fighters[0].hp = maxi(1, int(float(_fighters[0].max_hp) * 0.15))
+	_triumph_given = false
+	_check_triumphs_win()
+	var th := _triumph_given
+	_fighters[0].hp = int(_fighters[0].max_hp)
+	_mode = mode0b
+	_dmg_taken = 0
+	_triumph_given = false
+	print("TRIUMPH_TEST вайп-за-ход=", tw, " дуэль-без-урона=", td, " дуэль-HP20%=", th, " (все true)")
+	# --- SEASON_TEST: начисление очков, сброс по константе ---
+	print("SEASON_TEST: старт")
+	_profile.show_season_id = 0
+	_profile.season_pts = 0
+	_season_add_place(1)
+	var sp1 := int(_profile.get("season_pts", 0))
+	_season_add_place(4)
+	var sp2 := int(_profile.get("season_pts", 0))
+	_profile.show_season_id = 0
+	_profile.season_pts = 40
+	_show_season_sync()
+	print("SEASON_TEST очки: 1место=", sp1, " +4место=", sp2, " (ожидается 25/33) сброс=", int(_profile.get("season_pts", 0)) == 0, " id-стоит=", int(_profile.get("show_season_id", 0)) == SHOW_SEASON_START_UTC, " (true/true)")
+	# --- TUTORIAL_TEST: 3 шага проходятся, пропуск работает ---
+	print("TUTORIAL_TEST: старт")
+	_profile.tutorial_step = 0
+	_tutorial_skip()
+	var ts_skip := int(_profile.get("tutorial_step", 0)) == 3
+	_profile.tutorial_step = 1
+	_tutorial_on_win()
+	var tw1 := int(_profile.get("tutorial_step", 0)) == 2
+	_tutorial_on_win()
+	var tw2 := int(_profile.get("tutorial_step", 0)) == 3 and int(_profile.get("onboarded", 0)) == 1
+	_profile.tutorial_step = 3
+	print("TUTORIAL_TEST пропуск=", ts_skip, " шаг-1->2=", tw1, " шаг-2->3-и-onboarded=", tw2, " (все true)")
+	# --- DAILY_TEST: сброс по дате, серия входов ---
+	print("DAILY_TEST: старт")
+	var today_t := Time.get_date_string_from_system()
+	_profile.daily = {"daily_reset": "2000-01-01", "prog": {}, "done": {}}
+	_daily_check()
+	var dr := str((_profile.daily as Dictionary).get("daily_reset", "")) == today_t
+	var coins0 := int(_profile.get("coins", 0))
+	_daily_event("dmg200", 150)
+	var dg1: Array = _daily_event("dmg200", 60)
+	var d_done := int(((_profile.daily as Dictionary).get("done", {}) as Dictionary).get("dmg200", 0)) == 1
+	var d_pay := int(_profile.get("coins", 0)) == coins0 + 60
+	var yd_t := Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) - 86400)
+	_profile.login_streak = {"last": yd_t, "n": 2}
+	var coins1 := int(_profile.get("coins", 0))
+	_login_streak_tick(today_t)
+	var st_n := int((_profile.login_streak as Dictionary).get("n", 0))
+	var st_pay := int(_profile.get("coins", 0)) == coins1 + 150
+	var old_t := Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) - 3 * 86400)
+	_profile.login_streak = {"last": old_t, "n": 5}
+	_login_streak_tick(today_t)
+	var st_reset := int((_profile.login_streak as Dictionary).get("n", 0)) == 1
+	print("DAILY_TEST сброс-даты=", dr, " цель-достигнута=", d_done, " выплата-60=", d_pay, " гранд=", dg1.size() == 1, " (все true)")
+	print("DAILY_TEST серия: день3=", st_n == 3, " +150=", st_pay, " пропуск->день1=", st_reset, " (все true)")
+	_profile.login_streak = {"last": today_t, "n": 1}
 	print("TESTPLAY_SAVED")
 	get_tree().quit()
 
@@ -6418,6 +7088,10 @@ func _run_testmenu(mobile := false, sfx := "") -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_med%s.png" % sfx)
+	_show_menu_settings()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_settings%s.png" % sfx)
 	print("TESTMENU_SAVED")
 	get_tree().quit()
 
@@ -6806,6 +7480,8 @@ func _run_rendericons() -> void:
 	get_tree().quit()
 
 func _item_icon(entry: Dictionary) -> Texture2D:
+	if not entry.has("item"):
+		return null
 	var iid: String = entry["item"].get("id", "")
 	if iid == "":
 		return null
@@ -6823,6 +7499,8 @@ func _icon_rect(tex: Texture2D, px := 36) -> TextureRect:
 	return tr
 
 func _item_tooltip(entry: Dictionary) -> String:
+	if not entry.has("item"):
+		return "Монеты: сразу в кассу при взятии" if str(entry.get("kind", "")) == "coins" else "?"
 	var it: Dictionary = entry["item"]
 	match entry["kind"]:
 		"weapon":
@@ -7490,6 +8168,9 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control, send_fn: Callable) -> voi
 	_ui[key] = p
 
 func _start_mode(m: int) -> void:
+	# обучение (пак 1.1): первые 3 боя — только 1×1 против ослабленного бота
+	if _tutorial_active():
+		m = 1
 	# погибший приходит в себя в медцентре с 1 HP и регенерирует; раненых — предупреждаем
 	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
 	var low: Array[String] = []
@@ -7529,6 +8210,8 @@ func _start_mode_go(m: int) -> void:
 
 func _build_menu() -> void:
 	_bp_season_sync()
+	_show_season_sync()
+	_daily_check()
 	_menu_open = true
 	_busy = true
 	var layer := CanvasLayer.new()
@@ -8198,6 +8881,49 @@ func _show_menu_main() -> void:
 		ch.add_child(_chip("bolt", "%d/100" % int(float(_profile.get("stamina", 100.0))), "Энергия — под будущие онлайн-бои. Тренировки бесплатны"))
 		ch.add_child(_chip("trophy", "%d" % int(_profile.get("wins", 0)), "Победы — показатель мастерства. Слоты: 2 бойца с самого старта, 3-й на 35 ур., 4-й — только ВИП"))
 		ch.add_child(_chip("skull", "%d" % int(_profile.get("total_kills", 0)), "Всего противников уничтожено"))
+	# --- пак 1.1: сезон шоу + ежедневные задания (компактная строка над боем) ---
+	_daily_check()
+	var season_lbl := Label.new()
+	season_lbl.text = _season_ui_text()
+	season_lbl.add_theme_font_size_override("font_size", 12)
+	season_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	season_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(season_lbl)
+	var dq_row := HBoxContainer.new()
+	dq_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	dq_row.add_theme_constant_override("separation", 10)
+	var dd: Dictionary = _profile.get("daily", {})
+	var dprog: Dictionary = dd.get("prog", {})
+	var ddone: Dictionary = dd.get("done", {})
+	for qid2 in ["wins2", "crates5", "dmg200"]:
+		var q2: Dictionary = DAILY_QUESTS[qid2]
+		var ql := Label.new()
+		if int(ddone.get(qid2, 0)) == 1:
+			ql.text = "✔ %s" % str(q2["name"])
+			ql.add_theme_color_override("font_color", Color(0.4, 0.95, 0.5))
+		else:
+			ql.text = "%s: %d/%d" % [str(q2["name"]), int(dprog.get(qid2, 0)), int(q2["target"])]
+			ql.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
+		ql.add_theme_font_size_override("font_size", 12)
+		ql.tooltip_text = "Награда: %d монет + %d XP (ежедневно, сброс в 00:00)" % [int(q2["coins"]), int(q2["xp"])]
+		dq_row.add_child(ql)
+	var st2: Dictionary = _profile.get("login_streak", {})
+	var sl := Label.new()
+	sl.text = "🔥 вход: день %d/7" % int(st2.get("n", 0))
+	sl.add_theme_font_size_override("font_size", 12)
+	sl.add_theme_color_override("font_color", Color(1.0, 0.7, 0.3))
+	sl.tooltip_text = "Серия входов: пропустишь день — серия сгорит. День 7 — средняя карта в колоду!"
+	dq_row.add_child(sl)
+	vb.add_child(dq_row)
+	# попап награды ежедневного входа (один раз за день)
+	if _login_reward_txt != "" and not _test_run():
+		var lr := _login_reward_txt
+		_login_reward_txt = ""
+		var dlg := AcceptDialog.new()
+		dlg.title = "Ежедневный вход"
+		dlg.dialog_text = lr + "\nЗаходи каждый день — награды растут!"
+		_ui.menu_layer.add_child(dlg)
+		dlg.popup_centered()
 	# --- секция БОЙ: карточки режимов (иконки-пиктограммы) ---
 	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
 	m1.pressed.connect(func(): _start_mode(1))
@@ -8418,17 +9144,32 @@ func _show_menu_settings() -> void:
 	var note := Label.new()
 	note.text = "(звуки: выстрел, попадание, шаги, вскрытие ящика)"
 	vb.add_child(note)
-	# бета-фидбек: канал для тестировщиков (боевое тестирование)
-	var bfb := _menu_button("Бета: сообщить об ошибке")
-	bfb.icon = _icon_tex("squad")
-	bfb.pressed.connect(func():
-		var dlg := AcceptDialog.new()
-		dlg.title = "Бета-фидбек"
-		dlg.dialog_text = "Игра в боевом тестировании.\n\nНашёл баг или есть идея — напиши в сообщения сообщества:\nvk.ru/dropzone_game\n\nПрикрепи скриншот и укажи, что делал перед ошибкой. Каждый отклик читаем."
-		_ui.menu_layer.add_child(dlg)
-		dlg.popup_centered()
+	# пак 1.1: обратная связь — форма (тема + текст) шлёт POST на api/feedback.php
+	var fb_title := Label.new()
+	fb_title.text = "Нашёл ошибку? Расскажи — починим:"
+	vb.add_child(fb_title)
+	var fb_subj := LineEdit.new()
+	fb_subj.placeholder_text = "Тема (коротко, необязательно)"
+	vb.add_child(fb_subj)
+	var fb_txt := TextEdit.new()
+	fb_txt.custom_minimum_size = Vector2(0, 90)
+	fb_txt.placeholder_text = "Что случилось? Где? Что делал перед этим?"
+	vb.add_child(fb_txt)
+	var fb_status := Label.new()
+	fb_status.add_theme_font_size_override("font_size", 13)
+	var fb_row := HBoxContainer.new()
+	var fb_send := _menu_button("Отправить")
+	fb_send.pressed.connect(func():
+		if fb_txt.text.strip_edges().length() < 3:
+			fb_status.text = "Напиши хоть пару слов о проблеме"
+			return
+		fb_send.disabled = true
+		fb_status.text = "Отправляю..."
+		_feedback_send(fb_subj.text, fb_txt.text, fb_status)
 	)
-	vb.add_child(bfb)
+	fb_row.add_child(fb_send)
+	fb_row.add_child(fb_status)
+	vb.add_child(fb_row)
 
 # ---------- экран отряда: создание персонажа + слоты ----------
 var _squad_edit := 0            # какого бойца редактируем
@@ -9723,6 +10464,89 @@ func _bp_season_sync() -> void:
 	_profile.bp_claimed_prem = []
 	_profile.bp_owned = 0
 	_save_profile()
+
+func _show_season_sync() -> void:
+	# СЕЗОН ШОУ (пак 1.1): 6 недель от даты старта. Смена сезона = награды по очкам и сброс.
+	# Очки — за боевые достижения (пока: рейд Жнеца; с async PvP — дуэли). За ботов очков нет.
+	if int(_profile.get("show_season_id", 0)) == SHOW_SEASON_START_UTC:
+		return
+	var old_pts := int(_profile.get("season_pts", 0))
+	var reward_txt := ""
+	if int(_profile.get("show_season_id", 0)) != 0 and old_pts > 0:
+		reward_txt = _season_end_rewards(old_pts)
+	_profile.show_season_id = SHOW_SEASON_START_UTC
+	_profile.season_pts = 0
+	_save_profile()
+	if reward_txt != "":
+		_log("Сезон шоу завершён: %s" % reward_txt)
+
+func _season_add_place(place: int) -> void:
+	# очки сезона за боевое место (1..16 по лестнице констант)
+	var p := clampi(place, 1, SEASON_LADDER.size())
+	_profile.season_pts = int(_profile.get("season_pts", 0)) + int(SEASON_LADDER[p - 1])
+	_log("Сезон шоу: +%d очков (место %d)" % [int(SEASON_LADDER[p - 1]), p])
+	_save_profile()
+
+func _season_place_by_pts(pts: int) -> int:
+	# грубая прикидка «места» по очкам (серверной таблицы рейтинга ещё нет — она придёт с async PvP)
+	if pts >= 100:
+		return 1
+	if pts >= 75:
+		return 2
+	if pts >= 50:
+		return 3
+	if pts >= 20:
+		return 7
+	if pts >= 8:
+		return 15
+	return 0
+
+func _season_end_rewards(pts: int) -> String:
+	# награды косметикой из существующих пулов: 1–3 — рамки, 4–10 — цвета ника, 11–20 — насмешки
+	var place := _season_place_by_pts(pts)
+	if place <= 0:
+		return "очков маловато — в новом сезоне удачи!"
+	var got: Array = []
+	if place <= 3:
+		var frame_idx: int = int([11, 10, 9][place - 1])
+		var arr: Array = _profile.get("owned_frames", [1, 0, 0]).duplicate()
+		while arr.size() <= frame_idx:
+			arr.append(0)
+		if int(arr[frame_idx]) == 0:
+			arr[frame_idx] = 1
+			_profile.owned_frames = arr
+			got.append("рамка %d-го места" % place)
+		else:
+			_profile.coins = int(_profile.get("coins", 0)) + 300
+			got.append("рамка уже есть — компенсация 300 монет")
+	elif place <= 10:
+		var col_idx := 1 + ((place - 4) % 3)
+		var arr2: Array = _profile.get("owned_colors", [0, 0, 0]).duplicate()
+		while arr2.size() <= col_idx:
+			arr2.append(0)
+		if int(arr2[col_idx]) == 0:
+			arr2[col_idx] = 1
+			_profile.owned_colors = arr2
+			got.append("цвет ника за %d-е место" % place)
+		else:
+			_profile.coins = int(_profile.get("coins", 0)) + 150
+			got.append("цвет уже есть — компенсация 150 монет")
+	else:
+		var taunts: Array = _profile.get("season_taunts", []).duplicate()
+		var line: String = TAUNT_LINES[_rng.randi() % TAUNT_LINES.size()]
+		if line not in taunts:
+			taunts.append(line)
+			_profile.season_taunts = taunts
+		got.append("насмешка «%s»" % line)
+	return "%d очков → %d-е место: %s" % [pts, place, ", ".join(got)]
+
+func _season_ui_text() -> String:
+	# табличка в лобби: «сезон: N нед. D дн.» + очки
+	var left := maxi(0, int((SHOW_SEASON_START_UTC + SHOW_SEASON_WEEKS * 7 * 86400 - Time.get_unix_time_from_system()) / 86400.0))
+	var weeks := left / 7
+	var days := left % 7
+	return "Сезон шоу: %d нед. %d дн. · очки: %d" % [weeks, days, int(_profile.get("season_pts", 0))]
+
 
 func _show_menu_bp() -> void:
 	_menu_back_show(true)
@@ -11402,8 +12226,8 @@ func _update_fog() -> void:
 			continue
 		var vis := true
 		if ef.alive:
-			# Софит: подсвеченная цель видна всем; Тень: невидима даже в радиусе обзора
-			vis = int(ef.get("marked", 0)) > 0
+			# Софит/Указка: подсвеченная цель видна всем; Тень: невидима даже в радиусе обзора
+			vis = int(ef.get("marked", 0)) > 0 or _radar_ttl > 0   # Радар: всё видно
 			if int(ef.get("stealth", 0)) > 0:
 				vis = false
 			if not vis:
@@ -11412,6 +12236,8 @@ func _update_fog() -> void:
 						continue
 					var d := Vector2(pf.cell.x - ef.cell.x, pf.cell.y - ef.cell.y).length()
 					var vis_r: int = pf.get("vision", VISION)
+					if int(pf.get("flash", 0)) > 0:
+						vis_r = mini(vis_r, 3)   # Пиротехника: вспышка режет обзор до 3 клеток
 					if d <= vis_r and _los(pf.cell, ef.cell):
 						vis = true
 						break
