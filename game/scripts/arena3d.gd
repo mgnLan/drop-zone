@@ -2961,7 +2961,7 @@ func _setup_lighting() -> void:
 		var sp := SpotLight3D.new()
 		sp.position = corners[i]
 		sp.light_color = hues[i]
-		sp.light_energy = 8.0
+		sp.light_energy = 5.0
 		sp.spot_range = 70.0
 		sp.spot_angle = 55.0
 		sp.spot_attenuation = 0.8
@@ -2971,8 +2971,8 @@ func _setup_lighting() -> void:
 	var center_spot := SpotLight3D.new()
 	center_spot.position = Vector3(0, 14, 0)
 	center_spot.light_color = Color(1.0, 0.9, 0.75)
-	center_spot.light_energy = 10.0
-	center_spot.spot_range = 30.0
+	center_spot.light_energy = 4.5
+	center_spot.spot_range = 26.0
 	center_spot.spot_angle = 32.0
 	center_spot.shadow_enabled = true
 	add_child(center_spot)
@@ -2988,11 +2988,11 @@ func _setup_lighting() -> void:
 	env.background_color = Color(0.008, 0.01, 0.02)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.13, 0.13, 0.16)
-	env.ambient_light_energy = 0.75
+	env.ambient_light_energy = 0.95
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.glow_enabled = true
-	env.glow_intensity = 0.45
-	env.glow_bloom = 0.1
+	env.glow_intensity = 0.22
+	env.glow_bloom = 0.05
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.02, 0.03, 0.06)
 	env.fog_density = 0.005
@@ -3034,9 +3034,9 @@ func _reset_base_env() -> void:
 	moon.directional_shadow_max_distance = 120.0
 	env.background_color = Color(0.008, 0.01, 0.02)
 	env.ambient_light_color = Color(0.13, 0.13, 0.16)
-	env.ambient_light_energy = 0.75
-	env.glow_intensity = 0.45
-	env.glow_bloom = 0.1
+	env.ambient_light_energy = 0.95
+	env.glow_intensity = 0.22
+	env.glow_bloom = 0.05
 	env.glow_hdr_threshold = 1.0
 	env.ssao_enabled = false
 	env.fog_density = 0.005
@@ -3048,12 +3048,12 @@ func _reset_base_env() -> void:
 		var sp: SpotLight3D = _gfx.spots[i]
 		if i < 4:
 			sp.light_color = hues[i]
-			sp.light_energy = 8.0
+			sp.light_energy = 5.0
 			sp.spot_range = 70.0
 		else:
 			sp.light_color = Color(1.0, 0.9, 0.75)
-			sp.light_energy = 10.0
-			sp.spot_range = 30.0
+			sp.light_energy = 4.5
+			sp.spot_range = 26.0
 	var rim: DirectionalLight3D = _gfx.get("rim")
 	if rim != null:
 		rim.visible = false
@@ -6973,9 +6973,9 @@ func _build_menu() -> void:
 	scroll.offset_left = 12.0 if mob_w else 24.0
 	scroll.offset_right = -12.0 if mob_w else -24.0
 	scroll.offset_top = 90.0
-	# нижний край меню — под развёрнутый чат (180px + запас); свёрнутый чат поднимает
+	# нижний край меню — под развёрнутый чат (220px + запас); свёрнутый чат поднимает
 	# край до -110 в _toggle_menu_chat — контент никогда не прячется под рамкой чата
-	scroll.offset_bottom = -200.0
+	scroll.offset_bottom = -240.0
 	_ui.menu_scroll = scroll
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	# тикет #5: градиентный стиль кнопок ПО УМОЛЧАНИЮ для всего меню — переопределения
@@ -7008,7 +7008,7 @@ func _build_menu() -> void:
 		chat.offset_right = -16.0
 	else:
 		chat.offset_right = 246.0
-	chat.offset_top = -150.0
+	chat.offset_top = -220.0
 	chat.offset_bottom = -10.0
 	layer.add_child(chat)
 	_ui.menu_chat_panel = chat
@@ -7052,9 +7052,10 @@ func _build_menu() -> void:
 	var lines := VBoxContainer.new()
 	lines.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# область сообщений — прокручиваемая, фиксированной высоты: рамка не растёт,
-	# старые сообщения уходят вверх, новые появляются снизу (как в боевом чате)
+	# старые сообщения уходят вверх, новые появляются снизу (как в боевом чате).
+	# минимум 56px — ~2 строки видно сразу, не «полторы обрезанные»
 	var lines_scroll := ScrollContainer.new()
-	lines_scroll.custom_minimum_size = Vector2(0, 26)
+	lines_scroll.custom_minimum_size = Vector2(0, 56)
 	lines_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	lines_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	content.add_child(lines_scroll)
@@ -7120,15 +7121,8 @@ func _build_menu() -> void:
 	if mob_w:
 		# на телефоне чат стартует свёрнутым — не перекрывает меню
 		_toggle_menu_chat()
-	# превью для новых игроков: приветствие показываем первые 3 захода (вердикт владельца),
-	# потом больше не беспокоим — даже если флаг не сохранился на сервере
-	if not _test_run():
-		var wn := int(_profile.get("welcome_n", 0)) + 1
-		_profile.welcome_n = wn
-		_profile.seen_welcome = 1
-		_save_profile()
-		if wn <= 3:
-			_welcome_overlay()
+	# заставка-приветствие убрана по договорённости с владельцем (показывалась после каждого боя);
+	# новичков ведут контекстные подсказки «?» в заголовках экранов
 	# временная диагностика v6.108: только debug-сборки — в проде не показываем (тикет #9)
 	if OS.has_feature("web") and OS.is_debug_build():
 		var dzl := Label.new()
@@ -7297,12 +7291,12 @@ func _toggle_menu_chat() -> void:
 	# свёрнутый: заголовок 26 + ряд иконок 34 + отступы рамки ~18 = ~80px. Ширина — по
 	# содержимому (узкая полоса), развёрнутый — полная. Область сообщений развёрнутого —
 	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
-	p.offset_top = -82.0 if _menu_chat_collapsed else -180.0
+	p.offset_top = -82.0 if _menu_chat_collapsed else -220.0
 	if not _mob():
 		p.offset_right = 210.0 if _menu_chat_collapsed else 246.0
-	# нижний край меню едет вслед за чатом: свёрнутый — край -110, развёрнутый — -200
+	# нижний край меню едет вслед за чатом: свёрнутый — край -110, развёрнутый — -240
 	if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
-		_ui.menu_scroll.offset_bottom = -110.0 if _menu_chat_collapsed else -200.0
+		_ui.menu_scroll.offset_bottom = -110.0 if _menu_chat_collapsed else -240.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
@@ -8249,7 +8243,7 @@ func _show_menu_squad() -> void:
 		vb.add_child(body)
 		# тикет #1: на невысоком окне ВК колонки отряда переполнялись — каждая в своём
 		# ScrollContainer фиксированной высоты под окно; внешний скролл не трогаем
-		var area_h: float = clampf(_vh() - 300.0, 230.0, 700.0)
+		var area_h: float = clampf(_vh() - 340.0, 220.0, 700.0)
 		var col_l := VBoxContainer.new()
 		col_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		col_l.add_theme_constant_override("separation", sep)
@@ -10199,13 +10193,12 @@ func _show_inventory() -> void:
 	for sd in slots:
 		var b := Button.new()
 		var it = f.armor[sd[1]]
-		var nm: String = str(it["name"]) if it else "—"
-		if nm.length() > 12:
-			nm = nm.substr(0, 11) + "…"
-		b.text = "%s: %s" % [sd[0], nm]
+		# только имя предмета — «Корпус: Бронежилет «Стандарт»» не влезало и обрезалось;
+		# категория и так ясна из положения на силуэте, полное описание — в tooltip
+		b.text = str(it["name"]) if it else ""
 		b.position = sd[2]
-		b.custom_minimum_size = Vector2(140, 46)
-		b.size = Vector2(140, 46)   # жёсткий размер — не вылезает за колонку силуэта
+		b.custom_minimum_size = Vector2(160, 46)
+		b.add_theme_font_size_override("font_size", 11)
 		var cat: String = sd[1]
 		if it:
 			var sit := _item_icon({"kind": "armor", "cat": cat, "item": it})
@@ -10234,18 +10227,15 @@ func _show_inventory() -> void:
 		)
 		fig.add_child(b)
 	var hands := Button.new()
-	var wnm: String = str(f.weapon.get("name", "?"))
-	if wnm.length() > 12:
-		wnm = wnm.substr(0, 11) + "…"
-	hands.text = "Руки: %s" % wnm
+	hands.text = str(f.weapon.get("name", "?"))
 	var hic: Texture2D = _item_icon({"kind": "weapon", "item": f.weapon})
 	if hic != null:
 		hands.icon = hic
 		hands.expand_icon = true
 		hands.add_theme_constant_override("icon_max_width", 30)
 	hands.position = Vector2(50, 152)
-	hands.custom_minimum_size = Vector2(140, 52)
-	hands.size = Vector2(140, 52)
+	hands.custom_minimum_size = Vector2(160, 52)
+	hands.add_theme_font_size_override("font_size", 12)
 	hands.add_theme_stylebox_override("normal", _inv_card_style(Color(1.0, 0.38, 0.38, 0.9)))
 	hands.add_theme_stylebox_override("hover", _inv_card_style(Color(1.0, 0.55, 0.55, 1.0), Color(0.14, 0.09, 0.10, 0.98)))
 	hands.add_theme_color_override("font_color", Color(0.95, 0.9, 0.9))
@@ -10283,9 +10273,9 @@ func _show_inventory() -> void:
 		if bic != null:
 			b.icon = bic
 			b.expand_icon = true
-			b.add_theme_constant_override("icon_max_width", 40)
-		b.custom_minimum_size = Vector2(168, 56)
-		b.add_theme_font_size_override("font_size", 13)
+			b.add_theme_constant_override("icon_max_width", 34)
+		b.custom_minimum_size = Vector2(190, 56)
+		b.add_theme_font_size_override("font_size", 12)
 		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		b.tooltip_text = _item_tooltip(f.backpack[idx]) + "\n—\nКлик — надеть/использовать; перетащить — в слот"
 		var i: int = idx
@@ -10317,7 +10307,8 @@ func _show_inventory() -> void:
 		rowbox.add_child(b)
 		var db := Button.new()
 		db.text = "×"
-		db.custom_minimum_size = Vector2(30, 56)
+		db.custom_minimum_size = Vector2(30, 0)
+		db.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		db.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
 		var dbs := _inv_ghost_style()
 		dbs.border_color = Color(1.0, 0.4, 0.4, 0.35)
