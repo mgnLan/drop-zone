@@ -5307,10 +5307,11 @@ func _build_ui() -> void:
 	var iw := PanelContainer.new()
 	iw.set_anchors_preset(Control.PRESET_CENTER)
 	var iw2: float = min(430.0, _vw() * 0.47)
+	var iw_h: float = min(270.0, _vh() * 0.38)
 	iw.offset_left = -iw2
 	iw.offset_right = iw2
-	iw.offset_top = -270.0
-	iw.offset_bottom = 270.0
+	iw.offset_top = -iw_h
+	iw.offset_bottom = iw_h
 	var iws := StyleBoxFlat.new()
 	iws.bg_color = Color(0.025, 0.045, 0.085, 0.97)
 	iws.border_color = Color(0.30, 0.75, 1.0, 0.55)
@@ -5324,8 +5325,14 @@ func _build_ui() -> void:
 	iws.content_margin_bottom = 12.0
 	iw.add_theme_stylebox_override("panel", iws)
 	layer.add_child(iw)
+	# скролл: контент длиннее панели уходит в прокрутку, а не в переполнение
+	var isc := ScrollContainer.new()
+	isc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	isc.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	iw.add_child(isc)
 	var ivb := VBoxContainer.new()
-	iw.add_child(ivb)
+	ivb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	isc.add_child(ivb)
 	iw.visible = false
 	_ui.inv_panel = iw
 	_ui.inv_box = ivb
@@ -10192,9 +10199,13 @@ func _show_inventory() -> void:
 	for sd in slots:
 		var b := Button.new()
 		var it = f.armor[sd[1]]
-		b.text = "%s: %s" % [sd[0], it["name"] if it else "—"]
+		var nm: String = str(it["name"]) if it else "—"
+		if nm.length() > 12:
+			nm = nm.substr(0, 11) + "…"
+		b.text = "%s: %s" % [sd[0], nm]
 		b.position = sd[2]
 		b.custom_minimum_size = Vector2(140, 46)
+		b.size = Vector2(140, 46)   # жёсткий размер — не вылезает за колонку силуэта
 		var cat: String = sd[1]
 		if it:
 			var sit := _item_icon({"kind": "armor", "cat": cat, "item": it})
@@ -10223,14 +10234,18 @@ func _show_inventory() -> void:
 		)
 		fig.add_child(b)
 	var hands := Button.new()
-	hands.text = "Руки: %s" % f.weapon.get("name", "?")
+	var wnm: String = str(f.weapon.get("name", "?"))
+	if wnm.length() > 12:
+		wnm = wnm.substr(0, 11) + "…"
+	hands.text = "Руки: %s" % wnm
 	var hic: Texture2D = _item_icon({"kind": "weapon", "item": f.weapon})
 	if hic != null:
 		hands.icon = hic
 		hands.expand_icon = true
-		hands.add_theme_constant_override("icon_max_width", 44)
+		hands.add_theme_constant_override("icon_max_width", 30)
 	hands.position = Vector2(50, 152)
 	hands.custom_minimum_size = Vector2(140, 52)
+	hands.size = Vector2(140, 52)
 	hands.add_theme_stylebox_override("normal", _inv_card_style(Color(1.0, 0.38, 0.38, 0.9)))
 	hands.add_theme_stylebox_override("hover", _inv_card_style(Color(1.0, 0.55, 0.55, 1.0), Color(0.14, 0.09, 0.10, 0.98)))
 	hands.add_theme_color_override("font_color", Color(0.95, 0.9, 0.9))
