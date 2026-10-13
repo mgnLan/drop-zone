@@ -7657,19 +7657,27 @@ class DzPereliv:
 	# Кадры грузятся через load() — Godot отдаёт закэшированный ресурс, дублирования нет.
 	var selected := false
 	var priority := false
-	var _shine: TextureRect
+	var _shine_a: TextureRect
+	var _shine_b: TextureRect
+	var _shine_idx := -1
 
 	func _ready() -> void:
 		set_process(true)
 		_fit_text()
 		_apply_bg()
-		_shine = TextureRect.new()
-		_shine.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_shine.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		_shine.stretch_mode = TextureRect.STRETCH_SCALE
-		_shine.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_shine.texture = load("res://assets/ui/buttons/btn_shine_00.png")
-		add_child(_shine)
+		_shine_a = _make_shine()
+		_shine_b = _make_shine()
+		add_child(_shine_a)
+		add_child(_shine_b)
+
+	func _make_shine() -> TextureRect:
+		var tr := TextureRect.new()
+		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_SCALE
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tr.modulate = Color(1, 1, 1, 0)
+		return tr
 
 	func _bg(n: String) -> Texture2D:
 		var pth := "res://assets/ui/buttons/%s.png" % n
@@ -7709,13 +7717,24 @@ class DzPereliv:
 		custom_minimum_size.x = maxf(custom_minimum_size.x, tw + 44.0)
 
 	func _process(_delta: float) -> void:
-		if _shine == null or not is_instance_valid(_shine):
+		if _shine_a == null or not is_instance_valid(_shine_a):
 			return
 		var want := (not disabled) and (not selected)
-		_shine.visible = want
-		if want:
-			var fr := int(Time.get_ticks_msec() / 200) % 12
-			_shine.texture = load("res://assets/ui/buttons/btn_shine_%02d.png" % fr)
+		_shine_a.visible = want
+		_shine_b.visible = want
+		if not want:
+			return
+		# плавный перелив: кроссфейд соседних кадров (12 кадров, окно 200 мс,
+		# цикл 2.4 с — как в спеке, но без рывков 5 fps)
+		var ms := Time.get_ticks_msec()
+		var idx := int(ms / 200) % 12
+		var t := float(ms % 200) / 200.0
+		if idx != _shine_idx:
+			_shine_idx = idx
+			_shine_a.texture = load("res://assets/ui/buttons/btn_shine_%02d.png" % idx)
+			_shine_b.texture = load("res://assets/ui/buttons/btn_shine_%02d.png" % ((idx + 1) % 12))
+		_shine_a.modulate = Color(1, 1, 1, 1.0 - t)
+		_shine_b.modulate = Color(1, 1, 1, t)
 
 	func _draw() -> void:
 		# «Выбрано» (docs/BUTTONS_V2.md): заливка #28d8ff33 + бордер #28d8ff, shine скрыт
