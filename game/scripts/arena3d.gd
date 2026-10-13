@@ -196,11 +196,154 @@ func _load_mode() -> void:
 	_grid_n = {1: 22, 2: 28, 3: 34, 4: 40, 5: 40, 6: 28}[_mode]
 	_half_n = (_grid_n - 1) / 2.0
 	_size_n = _grid_n * CELL
+	# PvP-дуэль: файл боя лежит рядом с mode.cfg (записан перед перезагрузкой сцены)
+	_pvp_fight = _pvp_load_fight()
 
 func _save_mode(m: int) -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("game", "mode", m)
 	cfg.save("user://mode.cfg")
+
+# ---------------- ASYNC PvP (Этап 1): снапшоты, матчмейкинг, рейтинг ----------------
+# Сервер: api/pvp_push.php (валидация), pvp_match.php (пул/претенденты),
+# pvp_result.php (ELO K=32 + анти-накрутка), pvp_top.php (топ-100 + история).
+const API_PVP_BASE := "https://podvezu.online/dropzone/api/"
+var _pvp_fight: Dictionary = {}      # активный PvP-бой (загружен из user://pvp_fight.json)
+var _pvp_calling := false            # анти-двойной клик: один сетевой цикл «пуш→матч»
+var _pvp_delta_lbl: Label = null     # метка дельты рейтинга на экране итогов боя
+
+func _pvp_active() -> bool:
+	return not _pvp_fight.is_empty() and str(_pvp_fight.get("fight_id", "")) != ""
+
+# «парадный» грейд брони бойца для снапшота: растёт с уровнем, не выше гейта
+func _pvp_armor_grade(lvl: int) -> int:
+	return clampi(1 + int(lvl / 6), 1, _armor_grade_cap(lvl))
+
+# универсальный вызов PvP-эндпоинтов: свой HTTPRequest на запрос, не трогает очередь аккаунта
+func _pvp_call(ep: String, data: Dictionary, cb: Callable) -> void:
+	var req := HTTPRequest.new()
+	add_child(req)
+	req.request_completed.connect(func(res: int, code: int, _h: PackedStringArray, body: PackedByteArray) -> void:
+		req.queue_free()
+		if res != HTTPRequest.RESULT_SUCCESS or code != 200:
+			cb.call({"ok": false, "error": "net %d/%d" % [res, code]})
+			return
+		var js := JSON.new()
+		if js.parse(body.get_string_from_utf8()) != OK or not (js.data is Dictionary):
+			cb.call({"ok": false, "error": "bad json"})
+			return
+		cb.call(js.data), CONNECT_ONE_SHOT)
+	var err := req.request(API_PVP_BASE + ep, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(data))
+	if err != OK:
+		req.queue_free()
+		cb.call({"ok": false, "error": "net error %d" % err})
+
+# снапшот отряда игрока для сервера: реальные статы/уровни/таланты/класс/оружие
+func _pvp_build_snapshot() -> Dictionary:
+	var fighters := []
+	var sh_sq: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+	var n := clampi(int(_profile.get("unlocked_slots", 1)), 1, 4)
+	for i in n:
+		var cls_i := clampi(int(_profile.cls[i]), 0, FIGHTER_CLASSES.size() - 1)
+		var wpn: String = SIDEARMS[clampi(int(_profile.sidearm[i]), 0, SIDEARMS.size() - 1)]
+		var st: Dictionary = (_profile.stats[i] as Dictionary).duplicate()
+		var tal = _profile.talents[i]
+		if not (tal is Dictionary):
+			tal = {}
+		var hid := int(sh_sq[i]) if i < sh_sq.size() else -1
+		if hid >= 0 and hid < HEROES.size() and _hero_available(hid):
+			# герой слота: модель/оружие/класс/моды статов — как в спавне отряда
+			var hd: Dictionary = HEROES[hid]
+			cls_i = clampi(int(hd["cls"]), 0, FIGHTER_CLASSES.size() - 1)
+			wpn = str(hd["weapon"])
+			st = _default_fighter_stats()
+			for mk in STAT_KEYS:
+				st[mk] = int(st.get(mk, 0)) + int((hd.get("mods", {}) as Dictionary).get(mk, 0))
+			tal = {}
+		var lvl := maxi(1, int(_profile.lvl[i]))
+		fighters.append({"name": str(_profile.names[i]).left(32), "cls": cls_i, "lvl": lvl,
+			"stats": st, "talents": (tal as Dictionary).duplicate(),
+			"weapon": wpn, "armor_grade": _pvp_armor_grade(lvl)})
+	return {"name": str(_profile.names[0]).left(32), "squad_lvl": _max_squad_lvl(), "fighters": fighters}
+
+# полный боевой комплект брони нужного грейда (для спавна вражеского отряда из снапшота)
+func _armor_item_by_grade(lvl: int, cat: String, grade: int) -> Dictionary:
+	var want := clampi(grade, 1, _armor_grade_cap(lvl))
+	var cat_items: Array = (_items.get("armor", {}) as Dictionary).get(cat, [])
+	var best: Dictionary = {}
+	for it in cat_items:
+		var g := _armor_grade(it)
+		if g == want:
+			best = (it as Dictionary).duplicate(true)
+			break
+		if best.is_empty() and g <= want:
+			best = (it as Dictionary).duplicate(true)
+	if best.is_empty() and cat_items.size() > 0:
+		best = (cat_items[0] as Dictionary).duplicate(true)
+	if not best.is_empty():
+		best["durmax"] = int(best.get("dur", 20))
+		best["dur"] = best["durmax"]
+	return best
+
+func _pvp_save_fight(d: Dictionary) -> void:
+	var f := FileAccess.open("user://pvp_fight.json", FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(d))
+
+# файл боя одноразовый: бой доигрывается в текущей сессии; перезагрузка страницы = бой сгорает
+func _pvp_load_fight() -> Dictionary:
+	if not FileAccess.file_exists("user://pvp_fight.json"):
+		return {}
+	var f := FileAccess.open("user://pvp_fight.json", FileAccess.READ)
+	if not f:
+		return {}
+	var txt := f.get_as_text()
+	f.close()   # хэндл закрыть ДО удаления: Windows не даёт удалить открытый файл
+	DirAccess.remove_absolute("user://pvp_fight.json")
+	var js := JSON.new()
+	if js.parse(txt) != OK or not (js.data is Dictionary):
+		return {}
+	return js.data
+
+func _run_testpvp() -> void:
+	# PVP_TEST: структура снапшота, потолки статов/брони, roundtrip файла боя
+	var fails := 0
+	var snap := _pvp_build_snapshot()
+	var fl: Array = snap.get("fighters", [])
+	if fl.size() != clampi(int(_profile.get("unlocked_slots", 1)), 1, 4):
+		print("PVP_TEST FAIL: fighters size ", fl.size()); fails += 1
+	for f2 in fl:
+		var sum := 0
+		for k in STAT_KEYS:
+			sum += int((f2["stats"] as Dictionary).get(k, 0))
+		if sum > 30 + 8 * int(f2["lvl"]):
+			print("PVP_TEST FAIL: stat cap"); fails += 1
+		var ag := int(f2["armor_grade"])
+		if ag < 1 or ag > _armor_grade_cap(int(f2["lvl"])):
+			print("PVP_TEST FAIL: armor grade"); fails += 1
+		if not (f2["talents"] is Dictionary) or not (f2["stats"] is Dictionary):
+			print("PVP_TEST FAIL: fighter dicts"); fails += 1
+		if str(f2["weapon"]) == "":
+			print("PVP_TEST FAIL: weapon empty"); fails += 1
+	# roundtrip файла боя: запись -> чтение -> файл удалён -> повторное чтение пусто
+	_pvp_save_fight({"fight_id": "abc123", "seed": 777, "bot": 1,
+		"opponent_name": "Претендент №1", "opponent_rating": 1000, "fighters": fl})
+	var back := _pvp_load_fight()
+	if str(back.get("fight_id", "")) != "abc123" or int(back.get("seed", 0)) != 777:
+		print("PVP_TEST FAIL: fight roundtrip"); fails += 1
+	if FileAccess.file_exists("user://pvp_fight.json"):
+		print("PVP_TEST FAIL: fight file not removed"); fails += 1
+	if _pvp_load_fight().size() != 0:
+		print("PVP_TEST FAIL: second load not empty"); fails += 1
+	# флаг активности боя
+	_pvp_fight = back
+	if not _pvp_active():
+		print("PVP_TEST FAIL: pvp_active"); fails += 1
+	_pvp_fight = {}
+	if _pvp_active():
+		print("PVP_TEST FAIL: pvp_active after clear"); fails += 1
+	print("PVP_TEST ", "OK" if fails == 0 else "FAILS: %d" % fails)
+	get_tree().quit()
 
 func gw(gx: float, gz: float, y := 0.0) -> Vector3:
 	return Vector3((gx - _half_n) * CELL, y, (gz - _half_n) * CELL)
@@ -723,6 +866,8 @@ func _ready() -> void:
 	elif args.has("--testbots"):
 		_build_ui()
 		_run_testbots(args.has("--testfire"))
+	elif args.has("--testpvp"):
+		_run_testpvp()
 	elif args.has("--testmenu"):
 		_load_sfx()
 		_build_ui()
@@ -818,7 +963,7 @@ func _uitest_tour() -> void:
 	# сообщение с эмодзи в чат — скрин-гейт цветных эмодзи (тикет #7)
 	_menu_chat_local[0].append("Вы: проверка 😀 🔥 💀 👍 ❤️")
 	_render_menu_chat()
-	var scr := ["lobby", "squad", "progress", "bp", "chests", "heroes", "shop", "profile", "med", "settings"]
+	var scr := ["lobby", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -838,6 +983,7 @@ func _uitest_show(s: String) -> void:
 		"bp": _show_menu_bp()
 		"chests": _show_menu_chests()
 		"heroes": _show_menu_heroes()
+		"rating": _show_menu_rating()
 		"shop": _show_menu_shop()
 		"profile": _show_menu_profile()
 		"med": _show_menu_med()
@@ -1749,6 +1895,8 @@ func _load_profile() -> void:
 		"hero_frags": {},             # фрагменты героев: id -> количество (45 = сборка)
 		"squad_heroes": [-1, -1, -1, -1],  # герой на слот отряда (-1 = базовый боец)
 		"craft_dups": 0,              # дублей косметики подряд (3 = крафт редкостью выше)
+		"pvp_rating": 1000,           # рейтинг ASYNC PvP (кэш отображения, источник правды — сервер)
+		"daily_pvp_win": "",          # дата первой PvP-победы дня (бонус +100 монет)
 	}
 	var cfg := ConfigFile.new()
 	if cfg.load("user://profile.cfg") != OK:
@@ -2829,6 +2977,30 @@ func _spawn_teams() -> void:
 			sidearm, Color("#ff4757"), 0, _profile.names[i], st_f.duplicate(), _profile.lvl[i], _profile.xp[i],
 			_profile.talents[i], int(_profile.tpts[i]), _profile.prof[i], cls_i, i)
 		_log("СПАВН красный[%d] на арене, всего бойцов=%d" % [i, _fighters.size()])
+	if _pvp_active():
+		# ASYNC PvP: синие — реальный отряд соперника из снапшота (ИИ играет его строго по статам)
+		_rng.seed = int(_pvp_fight.get("seed", 0)) % 2147483647
+		var opp_f: Array = _pvp_fight.get("fighters", [])
+		for oi in mini(opp_f.size(), _player_count()):
+			var of: Dictionary = opp_f[oi]
+			var oc := _free_cell_sector(mid + 4, hi, lo, mid - 4)
+			var ocls := clampi(int(of.get("cls", 0)), 0, FIGHTER_CLASSES.size() - 1)
+			var omdl: String = FIGHTER_CLASSES[ocls]["model"]
+			_spawn_human(omdl, oc.x, oc.y, _rng.randf_range(90, 210), str(of.get("weapon", "Pistol")),
+				Color("#3498ff"), 1, str(of.get("name", "Враг")), of.get("stats", {}),
+				int(of.get("lvl", 1)), 0, of.get("talents", {}), 0, {}, ocls, -1)
+			var ob: Dictionary = _fighters.back()
+			var oag := clampi(int(of.get("armor_grade", 0)), 0, _armor_grade_cap(int(of.get("lvl", 1))))
+			if oag >= 1:
+				# стартовая броня соперника — как заявлено в снапшоте (грейд валидирован сервером)
+				ob.armor["body"] = _armor_item_by_grade(int(of.get("lvl", 1)), "body", oag)
+				_recalc_derived(ob)
+		var opp_tag := "Противник: %s (%d)" % [str(_pvp_fight.get("opponent_name", "?")), int(_pvp_fight.get("opponent_rating", 1000))]
+		if int(_pvp_fight.get("bot", 0)) == 1:
+			opp_tag = str(_pvp_fight.get("opponent_name", "Претендент"))
+		_log(opp_tag + " — это дуэль рейтинга, бой идёт по очкам!")
+		_log("СПАВН готов: красных=%d, синих=%d (PvP)" % [_alive_count(0), _alive_count(1)])
+		return
 	if _mode == 6:
 		# ЖНЕЦ: рейд-босс (герой «Жнец», большой запас HP, двойной урон) + 2 стража
 		var boss_cell := _free_cell_sector(mid + 4, hi, lo, mid - 4)
@@ -5647,6 +5819,7 @@ func _check_end() -> void:
 				_profile.hp[pi] = int(pf.hp) if pf.alive else 0
 		_profile.hp_ts = Time.get_unix_time_from_system()
 		# --- награды за бой: монеты, XP Battle Pass, миссии ---
+		var pvp_fought := _pvp_active()   # флаг до отправки результата: _pvp_fight потом очищается
 		var win := blue == 0
 		# ТРИУМФЫ ЗАЛА (пак 1.1): не больше 1 за бой (первая кровь могла уже выдать)
 		if win:
@@ -5658,13 +5831,25 @@ func _check_end() -> void:
 		var bp_gain := 3 + 3 * p_kills + (10 if win else 0)
 		_profile.bp_xp = int(_profile.get("bp_xp", 0)) + bp_gain
 		var reward := 2 + 1 * p_kills  # +2 за бой, +1 за убийство
-		if _tutorial_active():
+		var pvp_first_win := false
+		if _pvp_active():
+			# ASYNC PvP: фиксированные награды — победа 30, поражение 10, первая победа дня +100
+			reward = 30 if win else 10
+			var today_u2 := Time.get_date_string_from_system()
+			if win and str(_profile.get("daily_pvp_win", "")) != today_u2:
+				pvp_first_win = true
+				_profile.daily_pvp_win = today_u2
+				reward += 100
+		elif _tutorial_active():
 			reward *= 2   # обучающий бой: монеты ×2
 		if _mode == 5:
 			reward *= 3   # арена лидеров: 16 врагов — награда выше
 		elif _mode == 6:
 			reward *= 5   # рейд Жнеца
-		if _book_bet:
+		elif _pvp_active() and win:
+			# сезон шоу: рейтинговая дуэль — боевое достижение (очки лестницы)
+			_season_add_place(1)
+		if _book_bet and not _pvp_active():
 			# ставка букмекера: победа ×2, поражение ×0.5
 			reward = reward * 2 if win else maxi(1, int(reward * 0.5))
 		_profile.coins = int(_profile.get("coins", 0)) + reward
@@ -5691,6 +5876,32 @@ func _check_end() -> void:
 		if int(_profile.total_battles) <= 3:
 			_log("Тренировочный бой: бойцы восстановлены мгновенно")
 		_battle_reward = {"coins": reward, "kills": p_kills, "win": win, "unlock": unlock_msg, "daily": daily_msgs}
+		if pvp_first_win:
+			_battle_reward["daily"].append("Первая PvP-победа дня: +100 монет")
+		if _pvp_active():
+			# результат дуэли на сервер: ELO и анти-накрутка считает сервер, клиент только шлёт факты
+			var pvp_dmg := 0
+			for fd in _fighters:
+				if fd.team == 0:
+					pvp_dmg += int(fd.get("dmg", 0))
+			var pf: Dictionary = _pvp_fight
+			_pvp_fight = {}   # бой закрыт локально — повторная отправка невозможна
+			_pvp_call("pvp_result.php", {"token": _auth_token, "fight_id": str(pf.get("fight_id", "")),
+				"outcome": "win" if win else "lose", "turns": _turn, "dmg_dealt": pvp_dmg, "dmg_taken": 0},
+				func(rd: Dictionary) -> void:
+					if not bool(rd.get("ok", false)):
+						return
+					if bool(rd.get("anomaly", false)):
+						if _pvp_delta_lbl != null and is_instance_valid(_pvp_delta_lbl):
+							_pvp_delta_lbl.text = "⚠ Результат отклонён сервером (аномалия) — рейтинг не изменился"
+						return
+					_profile.pvp_rating = int(rd.get("rating", _profile.get("pvp_rating", 1000)))
+					_save_profile()
+					if _pvp_delta_lbl != null and is_instance_valid(_pvp_delta_lbl):
+						var dl := int(rd.get("delta", 0))
+						_pvp_delta_lbl.text = "Рейтинг: %+d → %d" % [dl, int(_profile.pvp_rating)]
+						_pvp_delta_lbl.add_theme_color_override("font_color",
+							Color(0.4, 0.95, 0.5) if dl >= 0 else Color(1.0, 0.45, 0.45)))
 		_save_profile()
 		var msg := "ПОБЕДА! Арена ваша!" if blue == 0 else "Поражение. Шоу окончено."
 		_log(msg)
@@ -5723,6 +5934,15 @@ func _check_end() -> void:
 				var rw_coin: Label = _reward_card(rw_row, "coin", Color(1.0, 0.85, 0.35), "+%d" % int(_battle_reward.coins), "монет за бой")
 				_reward_card(rw_row, "skull", Color(1.0, 0.45, 0.45), "%d" % int(_battle_reward.kills), "убийств")
 				var rw_total: Label = _reward_card(rw_row, "backpack", Color(0.65, 0.85, 1.0), "%d" % int(_profile.get("coins", 0)), "всего монет")
+				if pvp_fought:
+					# дельта рейтинга подтверждается сервером — метка обновится из колбэка результата
+					var pd := Label.new()
+					pd.text = "Рейтинг: подсчёт очков..."
+					pd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+					pd.add_theme_font_size_override("font_size", 16)
+					pd.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+					vb.add_child(pd)
+					_pvp_delta_lbl = pd
 				# удвоение награды за просмотр ролика
 				var bdouble := Button.new()
 				bdouble.text = "Удвоить награду ×2 (ролик)"
@@ -8000,18 +8220,165 @@ func _opp_switch() -> Control:
 	bots.add_theme_stylebox_override("pressed", bs)
 	bots.add_theme_color_override("font_color", Color(0.75, 0.92, 1.0))
 	var ppl := Button.new()
-	ppl.text = "Против игроков · СКОРО"
+	ppl.text = "Против игроков"
 	ppl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ppl.disabled = true
 	var ps := _frame_box()
-	ps.bg_color = Color(0.05, 0.07, 0.10, 0.85)
-	ps.border_color = Color(0.45, 0.5, 0.6, 0.7)
-	ppl.add_theme_stylebox_override("disabled", ps)
-	ppl.add_theme_color_override("font_disabled_color", Color(0.65, 0.7, 0.8))
-	ppl.tooltip_text = "Онлайн-бои против других игроков появятся, когда наберём аудиторию. Пока — тренировки против ботов"
+	ps.bg_color = Color(0.12, 0.20, 0.12, 0.95)
+	ps.border_color = Color(0.5, 0.95, 0.55, 0.9)
+	ppl.add_theme_stylebox_override("normal", ps)
+	ppl.add_theme_stylebox_override("hover", ps)
+	ppl.add_theme_stylebox_override("pressed", ps)
+	ppl.add_theme_color_override("font_color", Color(0.75, 1.0, 0.8))
+	ppl.tooltip_text = "Асинхронные дуэли: твой отряд против снапшотов отрядов других игроков (ИИ ведёт соперника). Рейтинг ELO"
+	ppl.pressed.connect(_show_menu_rating)
 	hb.add_child(bots)
 	hb.add_child(ppl)
 	return hb
+
+# ---------- ASYNC PvP: экран рейтинга (вкладка «Против игроков») ----------
+func _show_menu_rating() -> void:
+	_menu_back_show(true)
+	var vb: VBoxContainer = _ui.menu_box
+	for c in vb.get_children():
+		c.queue_free()
+	vb.custom_minimum_size = Vector2(minf(680.0, _vw() * 0.94), 0)
+	vb.add_child(_screen_title("trophy", "Рейтинг · Асинхронные дуэли", ""))
+	var hint := Label.new()
+	hint.text = "Твой отряд против отрядов других игроков: в бою соперника ведёт ИИ строго по его реальным статам, оружию и талантам. Победа +30 монет, поражение +10, первая победа дня +100. Рейтинг — ELO, старт 1000."
+	hint.add_theme_font_size_override("font_size", 13)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(hint)
+	var rate_lbl := Label.new()
+	rate_lbl.text = "Твой рейтинг: %d" % int(_profile.get("pvp_rating", 1000))
+	rate_lbl.add_theme_font_size_override("font_size", 20)
+	rate_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	vb.add_child(rate_lbl)
+	var n := clampi(int(_profile.get("unlocked_slots", 1)), 1, 4)
+	var squad_lbl := Label.new()
+	squad_lbl.text = "Отряд на дуэль: %d %s · бойцы выходят с оружием из экрана «Отряд»" % [
+		n, "боец" if n == 1 else "бойца"]
+	squad_lbl.add_theme_font_size_override("font_size", 13)
+	vb.add_child(squad_lbl)
+	var go_btn := _menu_button("В БОЙ — НАЙТИ СОПЕРНИКА", true)
+	go_btn.custom_minimum_size = Vector2(0, 56)
+	vb.add_child(go_btn)
+	var status := Label.new()
+	status.add_theme_font_size_override("font_size", 13)
+	status.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	vb.add_child(status)
+	if _auth_token == "":
+		go_btn.disabled = true
+		status.text = "Нужен вход (ВК или почта) — рейтинг хранится на сервере"
+	elif _tutorial_active():
+		go_btn.disabled = true
+		status.text = "Доступно после обучения (первые 3 боя — тренировка)"
+	go_btn.pressed.connect(func(): _pvp_go(go_btn, status, n))
+	# --- история дуэлей и топ ---
+	vb.add_child(_inv_section("ИСТОРИЯ ДУЭЛЕЙ"))
+	var hist_box := VBoxContainer.new()
+	hist_box.add_theme_constant_override("separation", 2)
+	vb.add_child(hist_box)
+	var h0 := Label.new()
+	h0.text = "(загрузка...)"
+	h0.add_theme_font_size_override("font_size", 13)
+	hist_box.add_child(h0)
+	vb.add_child(_inv_section("ТОП АРЕНЫ"))
+	var top_box := VBoxContainer.new()
+	top_box.add_theme_constant_override("separation", 2)
+	vb.add_child(top_box)
+	var t0 := Label.new()
+	t0.text = "(загрузка...)"
+	t0.add_theme_font_size_override("font_size", 13)
+	top_box.add_child(t0)
+	_pvp_refresh_rating(rate_lbl, hist_box, top_box)
+
+func _pvp_row_line(txt: String, col: Color) -> Label:
+	var l := Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", 13)
+	l.add_theme_color_override("font_color", col)
+	return l
+
+func _pvp_refresh_rating(rate_lbl: Label, hist_box: VBoxContainer, top_box: VBoxContainer) -> void:
+	if _auth_token == "":
+		for c in hist_box.get_children():
+			c.queue_free()
+		hist_box.add_child(_pvp_row_line("(войди, чтобы видеть историю)", Color(0.55, 0.6, 0.68)))
+		for c in top_box.get_children():
+			c.queue_free()
+		top_box.add_child(_pvp_row_line("(войди, чтобы видеть топ)", Color(0.55, 0.6, 0.68)))
+		return
+	_pvp_call("pvp_top.php", {"token": _auth_token}, func(d: Dictionary) -> void:
+		if not bool(d.get("ok", false)):
+			return
+		_profile.pvp_rating = int(d.get("rating", 1000))
+		if is_instance_valid(rate_lbl):
+			rate_lbl.text = "Твой рейтинг: %d" % int(_profile.pvp_rating)
+		for c in hist_box.get_children():
+			c.queue_free()
+		var hh: Array = d.get("history", [])
+		if hh.is_empty():
+			hist_box.add_child(_pvp_row_line("(дуэлей ещё не было — стань первым!)", Color(0.55, 0.6, 0.68)))
+		for h in hh:
+			var hl := int(h.get("delta", 0))
+			var tag := "[БОТ] " if int(h.get("bot", 0)) == 1 else ""
+			var res := "победа" if str(h.get("outcome", "")) == "win" else "поражение"
+			hist_box.add_child(_pvp_row_line("%s%s · %s · %+d" % [tag, str(h.get("opponent", "?")), res, hl],
+				Color(0.4, 0.95, 0.5) if hl >= 0 else Color(1.0, 0.45, 0.45)))
+		for c in top_box.get_children():
+			c.queue_free()
+		var top: Array = d.get("top", [])
+		if top.is_empty():
+			top_box.add_child(_pvp_row_line("(пул пуст — бей претендентов и поднимай рейтинг)", Color(0.55, 0.6, 0.68)))
+		var rank := 0
+		for row in top:
+			rank += 1
+			if rank > 30:
+				break
+			var nm := str(row.get("name", "?"))
+			var me := int(row.get("me", 0)) == 1
+			top_box.add_child(_pvp_row_line("%2d. %s — %d (%d побед)%s" % [
+				rank, nm, int(row.get("rating", 1000)), int(row.get("wins", 0)), "  ← ты" if me else ""],
+				Color(1.0, 0.85, 0.4) if me else Color(0.85, 0.9, 1.0)))
+	)
+
+# поиск дуэли: пуш снапшота -> матчмейкинг -> файл боя -> автостарт
+func _pvp_go(btn: Button, status: Label, size: int) -> void:
+	if _pvp_calling:
+		return
+	if _auth_token == "":
+		status.text = "Нужен вход (ВК или почта)"
+		return
+	_pvp_calling = true
+	btn.disabled = true
+	status.text = "Сохраняю отряд..."
+	_pvp_call("pvp_push.php", {"token": _auth_token, "snapshot": _pvp_build_snapshot()},
+		func(d: Dictionary) -> void:
+			if not bool(d.get("ok", false)):
+				_pvp_calling = false
+				btn.disabled = false
+				status.text = str(d.get("error", "Ошибка сохранения отряда"))
+				return
+			_profile.pvp_rating = int(d.get("rating", _profile.get("pvp_rating", 1000)))
+			status.text = "Ищу соперника в пуле..."
+			_pvp_call("pvp_match.php", {"token": _auth_token, "size": size},
+				func(d2: Dictionary) -> void:
+					_pvp_calling = false
+					if not bool(d2.get("ok", false)):
+						btn.disabled = false
+						status.text = str(d2.get("error", "Матчмейкинг не ответил"))
+						return
+					var fight := {"fight_id": str(d2.get("fight_id", "")), "seed": int(d2.get("seed", 0)),
+						"bot": int(d2.get("bot", 0)), "opponent_name": str(d2.get("opponent_name", "?")),
+						"opponent_rating": int(d2.get("opponent_rating", 1000)),
+						"fighters": d2.get("fighters", [])}
+					_pvp_save_fight(fight)
+					_save_mode(size)
+					var cfg := ConfigFile.new()
+					cfg.set_value("game", "autostart", 1)
+					cfg.save("user://autostart.cfg")
+					get_tree().reload_current_scene())
+	)
 
 func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locked := false, glow := false) -> Button:
 	# карточка режима боя: иконка на подложке + название + подпись; компактная, без пустот
