@@ -92,6 +92,17 @@ def main() -> int:
     meta["sfx"] = n_sfx
     print(f"sfx: {n_sfx} wav -> web_build/sfx")
 
+    # docs: шаблоны privacy/offer — отдаются статикой рядом с игрой
+    docs_src = os.path.join(ROOT, "docs")
+    docs_dst = os.path.join(BUILD, "docs")
+    if os.path.isdir(docs_src):
+        os.makedirs(docs_dst, exist_ok=True)
+        for name in os.listdir(docs_src):
+            if name.endswith(".html"):
+                with open(os.path.join(docs_src, name), "rb") as fh_in,                      open(os.path.join(docs_dst, name), "wb") as fh_out:
+                    fh_out.write(fh_in.read())
+        print("docs: privacy/offer -> web_build/docs")
+
     json.dump(meta, open(os.path.join(BUILD, "build.json"), "w", encoding="utf-8"))
     print(f"OK: {tag} (pck {sizes['pck']} байт, wasm {sizes['wasm']} байт)")
     return 0

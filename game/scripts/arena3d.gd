@@ -215,6 +215,12 @@ var _pvp_delta_lbl: Label = null     # метка дельты рейтинга 
 func _pvp_active() -> bool:
 	return not _pvp_fight.is_empty() and str(_pvp_fight.get("fight_id", "")) != ""
 
+# универсальный вызов методов VK Bridge: только внутри ВК, вне — тихий пропуск
+func _vk_send(method: String, args: String) -> void:
+	if not _vk_env():
+		return
+	JavaScriptBridge.eval("if (window.vkBridge) { window.vkBridge.send('" + method + "', " + args + "); }")
+
 # «парадный» грейд брони бойца для снапшота: растёт с уровнем, не выше гейта
 func _pvp_armor_grade(lvl: int) -> int:
 	return clampi(1 + int(lvl / 6), 1, _armor_grade_cap(lvl))
@@ -560,6 +566,7 @@ func _tutorial_on_win() -> void:
 	var stp := int(_profile.get("tutorial_step", 0))
 	if stp < 3:
 		_profile.tutorial_step = stp + 1
+		_an_event("tutorial_step", {"step": int(_profile.get("tutorial_step", 0))})
 		if int(_profile.get("tutorial_step", 0)) >= 3:
 			_profile.onboarded = 1
 			_log("Обучение пройдено — арена в твоём распоряжении!")
@@ -868,6 +875,8 @@ func _ready() -> void:
 		_run_testbots(args.has("--testfire"))
 	elif args.has("--testpvp"):
 		_run_testpvp()
+	elif args.has("--testanalytics"):
+		_run_testanalytics()
 	elif args.has("--testmenu"):
 		_load_sfx()
 		_build_ui()
@@ -931,6 +940,9 @@ func _ready() -> void:
 		else:
 			_auth_cfg_load()
 			_boot_done = true
+			_an_session_t = Time.get_unix_time_from_system()
+			_an_event("session_start", {})
+			_an_timer()
 			if _auth_token != "":
 				_build_auth(true)
 				_api_call("load", {"token": _auth_token})
@@ -1769,6 +1781,7 @@ func _login_streak_tick(today: String) -> void:
 	var yd := Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) - 86400)
 	var n := int(st.get("n", 0)) + 1 if str(st.get("last", "")) == yd else 1
 	_profile.login_streak = {"last": today, "n": n}
+	_an_event("daily_claim", {"day": n})
 	_login_reward_txt = ""
 	if n >= 1 and n <= LOGIN_STREAK_REWARDS.size():
 		var r: Dictionary = LOGIN_STREAK_REWARDS[n - 1]
@@ -4648,6 +4661,8 @@ func _gain_xp(i: int, amount: int) -> void:
 	_recalc_derived(f, true)
 	_sfx_play("levelup")
 	_log("%s — УРОВЕНЬ %d! (+%d очков навыков)" % [f.name, int(f.lvl), 5 if int(f.lvl) <= 5 else 3])
+	if int(f.team) == 0:
+		_an_event("level_up", {"lvl": int(f.lvl)})
 	if f.team == 1:
 		# боты распределяют очки автоматически
 		var keys := ["str", "agi", "end", "per"]
@@ -5402,6 +5417,7 @@ func _card_resolve(cid: String, tgt: int, cell: Vector2i) -> void:
 	_hand.erase(cid)
 	_card_played = true
 	_card_targeting = ""
+	_an_event("card_play", {"id": cid})
 	match cid:
 		"ten":
 			if _selected >= 0:
@@ -5821,6 +5837,7 @@ func _check_end() -> void:
 		# --- награды за бой: монеты, XP Battle Pass, миссии ---
 		var pvp_fought := _pvp_active()   # флаг до отправки результата: _pvp_fight потом очищается
 		var win := blue == 0
+		_an_event("battle_end", {"result": "win" if win else "lose", "turns": _turn, "pvp": pvp_fought})
 		# ТРИУМФЫ ЗАЛА (пак 1.1): не больше 1 за бой (первая кровь могла уже выдать)
 		if win:
 			_check_triumphs_win()
@@ -5897,6 +5914,8 @@ func _check_end() -> void:
 						return
 					_profile.pvp_rating = int(rd.get("rating", _profile.get("pvp_rating", 1000)))
 					_save_profile()
+					# зеркало рейтинга в нативный лидерборд ВК (друзья видят твой рост)
+					_vk_send("VKWebAppLeaderboardSetScore", '{"score": %d}' % int(_profile.pvp_rating))
 					if _pvp_delta_lbl != null and is_instance_valid(_pvp_delta_lbl):
 						var dl := int(rd.get("delta", 0))
 						_pvp_delta_lbl.text = "Рейтинг: %+d → %d" % [dl, int(_profile.pvp_rating)]
@@ -8273,6 +8292,20 @@ func _show_menu_rating() -> void:
 		go_btn.disabled = true
 		status.text = "Доступно после обучения (первые 3 боя — тренировка)"
 	go_btn.pressed.connect(func(): _pvp_go(go_btn, status, n))
+	# --- соцслой ВК: позвать друга + нативный лидерборд друзей ---
+	var vk_row := HBoxContainer.new()
+	vk_row.add_theme_constant_override("separation", 8)
+	var invite_b := _menu_button("ПОЗВАТЬ ДРУГА")
+	invite_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	invite_b.tooltip_text = "Поделиться игрой — друг перейдёт сразу в приложение ВК"
+	invite_b.pressed.connect(func(): _vk_send("VKWebAppShare", "{}"))
+	vk_row.add_child(invite_b)
+	var friends_b := _menu_button("ДРУЗЬЯ · ЛИДЕРБОРД ВК")
+	friends_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	friends_b.tooltip_text = "Нативная таблица рекордов ВК — кто из друзей выше в рейтинге"
+	friends_b.pressed.connect(func(): _vk_send("VKWebAppShowLeaderboard", '{"user_result": %d}' % int(_profile.get("pvp_rating", 1000))))
+	vk_row.add_child(friends_b)
+	vb.add_child(vk_row)
 	# --- история дуэлей и топ ---
 	vb.add_child(_inv_section("ИСТОРИЯ ДУЭЛЕЙ"))
 	var hist_box := VBoxContainer.new()
@@ -8368,6 +8401,7 @@ func _pvp_go(btn: Button, status: Label, size: int) -> void:
 						btn.disabled = false
 						status.text = str(d2.get("error", "Матчмейкинг не ответил"))
 						return
+					_an_event("pvp_fight", {"fight_id": str(d2.get("fight_id", "")), "bot": int(d2.get("bot", 0))})
 					var fight := {"fight_id": str(d2.get("fight_id", "")), "seed": int(d2.get("seed", 0)),
 						"bot": int(d2.get("bot", 0)), "opponent_name": str(d2.get("opponent_name", "?")),
 						"opponent_rating": int(d2.get("opponent_rating", 1000)),
@@ -8379,6 +8413,62 @@ func _pvp_go(btn: Button, status: Label, size: int) -> void:
 					cfg.save("user://autostart.cfg")
 					get_tree().reload_current_scene())
 	)
+
+# ---------------- АНАЛИТИКА (Этап 2): события пакетом на api/analytics.php ----------------
+# Буфер 200 событий (при переполнении дропаются старые), отправка каждые 30 сек и
+# sendBeacon при закрытии вкладки (зеркало буфера в JS: window.__dzAn, см. head_include).
+var _an_buf: Array = []
+var _an_session_t := 0.0
+
+func _an_event(e: String, d := {}) -> void:
+	# гарда на тесты не нужна: фоновая отправка в тестах не стартует (таймер — только
+	# из боевой ветки _ready), а JS-зеркало само проверяет окружение
+	var ev := {"e": e, "ts": int(Time.get_unix_time_from_system()), "d": d}
+	_an_buf.append(ev)
+	if _an_buf.size() > 200:
+		_an_buf.pop_front()   # лимит буфера: старые события дропаются
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.__dzAnPush && window.__dzAnPush(" + JSON.stringify(ev) + ")")
+
+func _an_flush() -> void:
+	if _an_buf.is_empty():
+		return
+	var batch: Array = _an_buf.duplicate()
+	_an_buf.clear()
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.__dzAn && (window.__dzAn.length = 0)")
+	_pvp_call("analytics.php", {"token": _auth_token, "events": batch}, func(_d: Dictionary) -> void: pass)
+
+func _an_timer() -> void:
+	# фоновая отправка каждые 30 сек; сцена перезагружается перед боем — таймер пересоздаётся
+	await get_tree().create_timer(30.0).timeout
+	_an_flush()
+	_an_timer()
+
+func _exit_tree() -> void:
+	if not _test_run() and _an_session_t > 0.0:
+		_an_event("session_end", {"sec": int(Time.get_unix_time_from_system() - _an_session_t)})
+		_an_flush()   # десктоп: best-effort; на вебе основной путь — sendBeacon из pagehide
+
+func _run_testanalytics() -> void:
+	# ANALYTICS_TEST: буфер пишется через _an_event, обрезается на 200 (дроп старых), пейлоад валиден
+	var fails := 0
+	for i in 250:
+		_an_event("battle_start", {"i": i})
+	if _an_buf.size() != 200:
+		print("ANALYTICS_TEST FAIL: buffer size ", _an_buf.size()); fails += 1
+	if int(_an_buf[0]["d"]["i"]) != 50:
+		print("ANALYTICS_TEST FAIL: oldest dropped"); fails += 1
+	if int(_an_buf[199]["d"]["i"]) != 249:
+		print("ANALYTICS_TEST FAIL: newest kept"); fails += 1
+	var payload := JSON.stringify({"token": "", "events": _an_buf.duplicate()})
+	if payload.length() < 1000 or not payload.contains("battle_start"):
+		print("ANALYTICS_TEST FAIL: payload"); fails += 1
+	_an_buf.clear()
+	if _an_buf.size() != 0:
+		print("ANALYTICS_TEST FAIL: clear"); fails += 1
+	print("ANALYTICS_TEST ", "OK" if fails == 0 else "FAILS: %d" % fails)
+	get_tree().quit()
 
 func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locked := false, glow := false) -> Button:
 	# карточка режима боя: иконка на подложке + название + подпись; компактная, без пустот
@@ -8570,6 +8660,7 @@ func _start_mode_go(m: int) -> void:
 		d.popup_centered()
 		return
 	_save_mode(m)
+	_an_event("battle_start", {"mode": m, "lvl": _max_squad_lvl()})
 	var cfg := ConfigFile.new()
 	cfg.set_value("game", "autostart", 1)
 	cfg.save("user://autostart.cfg")
@@ -8833,7 +8924,8 @@ func _build_menu() -> void:
 func _test_run() -> bool:
 	var a := OS.get_cmdline_user_args()
 	return a.has("--testmenu") or a.has("--testmenumid") or a.has("--testmenumobile") \
-		or a.has("--testplay") or a.has("--testbots") or a.has("--testlight")
+		or a.has("--testplay") or a.has("--testbots") or a.has("--testlight") \
+		or a.has("--testanalytics")
 
 const TIP_TEXTS := {
 	"squad": ["Отряд", "Здесь создаёшь и прокачиваешь бойцов: ник, оружие, класс, внешность.\nПогибшего бойца лечат в Медцентре — пока он восстанавливается, бери бойца из другого слота."],
@@ -9460,6 +9552,22 @@ func _show_menu_settings() -> void:
 	fsb.text = "Полный экран"
 	fsb.pressed.connect(_request_fullscreen)
 	vb.add_child(fsb)
+	var priv := Button.new()
+	priv.text = "Политика конфиденциальности"
+	priv.pressed.connect(func():
+		if OS.has_feature("web"):
+			JavaScriptBridge.eval("window.open('docs/privacy.html','_blank')")
+		else:
+			OS.shell_open("https://podvezu.online/dropzone/docs/privacy.html"))
+	vb.add_child(priv)
+	var offb := Button.new()
+	offb.text = "Публичная оферта"
+	offb.pressed.connect(func():
+		if OS.has_feature("web"):
+			JavaScriptBridge.eval("window.open('docs/offer.html','_blank')")
+		else:
+			OS.shell_open("https://podvezu.online/dropzone/docs/offer.html"))
+	vb.add_child(offb)
 	var gl := Label.new()
 	gl.text = "Графика:"
 	vb.add_child(gl)
@@ -11296,6 +11404,7 @@ func _chest_roll() -> void:
 	# гарант сиреневого: гарантированно на 200-м открытии без него
 	_profile.pity_siren = 0 if rarity == 5 else int(_profile.get("pity_siren", 0)) + 1
 	_profile.chests_total = int(_profile.get("chests_total", 0)) + 1
+	_an_event("chest_open", {"lvl_opener": _max_squad_lvl(), "rarity": rarity})
 	_chest_last = str(it.get("name", "?")) + extra + ("  (дубликат → +%d осколков)" % dup_shards if dup_shards > 0 else "")
 	_chest_last_rarity = rarity
 	_save_profile()
@@ -11662,6 +11771,7 @@ func _show_menu_heroes() -> void:
 
 func _show_menu_shop() -> void:
 	_menu_back_show(true)
+	_an_event("shop_view", {})
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
