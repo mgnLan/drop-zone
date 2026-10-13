@@ -1,4 +1,12 @@
 
+## 2026-10-14 v6.131
+| экран/система | баг | фикс |
+|---|---|---|
+| окно ВК desktop_web | приложение запрашивало полную высоту вьюпорта (~1246 px) — окно съедало всю страницу | оба VKWebAppResizeWindow в dz-мосте: height = Math.min(vh, 720) только при vk_platform=desktop_web (ширина не тронута) |
+| полноэкранный режим | UpdateConfig сжимал бы fullscreen обратно до 720 | флаг window.dzFs: тоггл в arena3d.gd ставит перед расширением и снимает при выходе + синхронизация по fullscreenchange (ESC); мост не ресайзит, пока флаг set |
+| поля letterbox (веб) | движок на WebGL заливает поля чёрными вопреки clear color: и RenderingServer.set_default_clear_color в _ready, и project-настройка на вебе не работают (на десктопе настройка работает — оставлена) | оверлейные полосы #edeef0 из dz-моста поверх канваса только для desktop_web: геометрия = наш KEEP (min(W/1280,H/720)), z-index 5, pointer-events:none, пересчёт по resize. Гейт 1000×1246: поля ровно (237,238,240), игра 16:9 по центру — shots_gray4_tall |
+| dz-мост (критично) | инжект исполняется в <head> — document.body ещё null: весь мост ВК умирал с TypeError до инициализации | оверлей и фон body перенесены в dzBoot с DOMContentLoaded; проверено CDP: 0 JS-исключений, divs 298.75px #edeef0 |
+
 ## 2026-10-14 v6.130
 | экран/система | баг | фикс |
 |---|---|---|

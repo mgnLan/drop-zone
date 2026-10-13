@@ -842,6 +842,12 @@ func _grant_sponsor_drop() -> void:
 	_sfx_play("levelup")
 
 func _ready() -> void:
+	# поля letterbox — светло-серые (#edeef0, как фон ВК):
+	# desktop: rendering/environment/defaults/default_clear_color в project.godot
+	# (рантайм RenderingServer.set_default_clear_color поля НЕ красит — проверено);
+	# web: WebGL-контекст канваса непрозрачный и движок заливает поля чёрным вне
+	# зависимости от clear color — их закрывают оверлейные полосы из dz-моста
+	# (только vk_platform=desktop_web, pointer-events:none, геометрия = нашему KEEP).
 	_apply_display_scale()
 	_setup_rewarded_bridge()
 	get_viewport().size_changed.connect(func(): _apply_display_scale.call_deferred())
@@ -9526,16 +9532,23 @@ func _request_fullscreen() -> void:
 				var el = document.documentElement;
 				var w, h;
 				if (!document.fullscreenElement) {
+					/* флаг для обёртки: пока fullscreen — не применять кап 720 в UpdateConfig */
+					window.dzFs = true;
 					var p = el.requestFullscreen && el.requestFullscreen();
 					if (p && p.catch) { p.catch(function(){}); }
 					w = window.screen.width;
 					h = window.screen.height;
 				} else {
+					window.dzFs = false;
 					if (document.exitFullscreen) { document.exitFullscreen(); }
 					/* стандартное окно ВК-приложения, не экран */
 					w = 1000;
 					h = 720;
 				}
+				/* ESC/жесты браузера тоже снимают fullscreen — синхронизируем флаг */
+				document.addEventListener('fullscreenchange', function(){
+					window.dzFs = !!document.fullscreenElement;
+				});
 				try {
 					if (window.vkBridge) {
 						window.vkBridge.send('VKWebAppResizeWindow', {width: w, height: h});
