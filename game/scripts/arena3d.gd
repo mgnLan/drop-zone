@@ -576,14 +576,17 @@ func _tutorial_on_win() -> void:
 func _apply_display_scale() -> void:
 	# Пропорции канваса (мини-ТЗ владельца, разворот тикета #8): EXPAND тянул сцену
 	# на всё окно без сохранения пропорций — персонажи плыли на ландшафтных окнах.
-	# KEEP_WIDTH: ширина канваса = ширине окна, пропорции 16:9 сохраняются;
-	# узкое/низкое окно даёт поля сверху/снизу (letterbox) цветом default clear
-	# (≈ фон body из head_include, тёмный градиент арены — поля выглядят как подложка).
+	# KEEP (классический letterbox): игра масштабируется по минимальной стороне,
+	# аспект 16:9 сохраняется всегда; высокое окно → тёмные поля сверху/снизу,
+	# широкое → поля по бокам. Поля цветом default clear (≈ фон body из
+	# head_include, тёмный градиент арены — выглядит как подложка, как на
+	# экране загрузки). KEEP_WIDTH не подходит: на высоком окне он расширяет
+	# viewport по вертикали, игра занимает всю высоту без полос.
 	# Ставим в рантайме, чтобы не трогать общий project.godot (десктоп/редактор).
 	var win := get_window()
 	if win != null:
 		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH
+		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 
 func _dpr() -> float:
 	# в браузере viewport считается в device-пикселях — переводим в CSS-пиксели
