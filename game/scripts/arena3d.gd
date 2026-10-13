@@ -7653,14 +7653,47 @@ func _grad_tex(key: String, top: Color, bottom: Color, border: Color, glow: Colo
 
 class DzPereliv:
 	extends Button
-	# Блок 5 «Перелив»: градиентная рамка с бегущим акцентом, искра, состояния
+	# «Перелив v2» (docs/BUTTONS_V2.md): фоны 9-slice из PNG-пакета + shine-оверлей.
+	# Кадры грузятся через load() — Godot отдаёт закэшированный ресурс, дублирования нет.
 	var selected := false
 	var priority := false
-	var _t := 0.0
+	var _shine: TextureRect
 
 	func _ready() -> void:
 		set_process(true)
 		_fit_text()
+		_apply_bg()
+		_shine = TextureRect.new()
+		_shine.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_shine.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_shine.stretch_mode = TextureRect.STRETCH_SCALE
+		_shine.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_shine.texture = load("res://assets/ui/buttons/btn_shine_00.png")
+		add_child(_shine)
+
+	func _bg(n: String) -> Texture2D:
+		var pth := "res://assets/ui/buttons/%s.png" % n
+		if ResourceLoader.exists(pth):
+			return load(pth)
+		return null
+
+	func _sb_for(n: String, modulate := Color(1, 1, 1)) -> StyleBoxTexture:
+		var sb := StyleBoxTexture.new()
+		sb.texture = _bg(n)
+		sb.texture_margin_left = 24.0
+		sb.texture_margin_right = 24.0
+		sb.texture_margin_top = 20.0
+		sb.texture_margin_bottom = 20.0
+		sb.modulate_color = modulate
+		return sb
+
+	func _apply_bg() -> void:
+		var base := "btn_bg_priority" if priority else "btn_bg_normal"
+		add_theme_stylebox_override("normal", _sb_for(base))
+		add_theme_stylebox_override("hover", _sb_for("btn_bg_hover" if not priority else "btn_bg_priority"))
+		add_theme_stylebox_override("pressed", _sb_for(base, Color(0.85, 0.85, 0.85)))
+		add_theme_stylebox_override("disabled", _sb_for("btn_bg_normal", Color("#6b7688")))
+		add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_THEME_CHANGED:
@@ -7675,95 +7708,30 @@ class DzPereliv:
 		var tw := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, get_theme_font_size("font_size")).x
 		custom_minimum_size.x = maxf(custom_minimum_size.x, tw + 44.0)
 
-	func _process(delta: float) -> void:
-		_t = fposmod(_t + delta / 2.4, 1.0)
-		queue_redraw()
-
-	func _pal_at(u: float) -> Color:
-		var c0: Color
-		var c1: Color
-		var t := fposmod(u * 3.0, 3.0)
-		var p0 := Color("#ff3c6e")
-		var p1 := Color("#28d8ff")
-		var p2 := Color("#ffd166")
-		if t < 1.0:
-			c0 = p0
-			c1 = p1
-		elif t < 2.0:
-			c0 = p1
-			c1 = p2
-			t -= 1.0
-		else:
-			c0 = p2
-			c1 = p0
-			t -= 2.0
-		return c0.lerp(c1, t)
-
-	func _rr_pts(w: float, h: float, r: float) -> Array:
-		var pts := []
-		var centers := [Vector2(w - r, r), Vector2(w - r, h - r), Vector2(r, h - r), Vector2(r, r)]
-		var starts := [-90.0, 0.0, 90.0, 180.0]
-		for c in 4:
-			var cc: Vector2 = centers[c]
-			var n := maxi(3, int(PI * r / 2.0 / 7.0) + 1)
-			for i in n:
-				var a := deg_to_rad(starts[c] + 90.0 * i / n)
-				pts.append(cc + Vector2(cos(a), sin(a)) * r)
-		return pts
-
-	func _star_tw(u: float) -> float:
-		var keys: Array[float] = [0.0, 0.25, 0.5, 0.75, 1.0]
-		var vals: Array[float] = [0.0, 1.0, 0.3, 1.0, 0.0]
-		for i in 4:
-			if u <= keys[i + 1]:
-				var tt := (u - keys[i]) / (keys[i + 1] - keys[i])
-				return lerpf(vals[i], vals[i + 1], tt)
-		return 0.0
-
-	func _draw_star(c: Vector2, r: float, col: Color) -> void:
-		var pts := PackedVector2Array()
-		pts.append(c + Vector2(0, -r))
-		pts.append(c + Vector2(r * 0.26, -r * 0.26))
-		pts.append(c + Vector2(r, 0))
-		pts.append(c + Vector2(r * 0.26, r * 0.26))
-		pts.append(c + Vector2(0, r))
-		pts.append(c + Vector2(-r * 0.26, r * 0.26))
-		pts.append(c + Vector2(-r, 0))
-		pts.append(c + Vector2(-r * 0.26, -r * 0.26))
-		draw_colored_polygon(pts, col)
+	func _process(_delta: float) -> void:
+		if _shine == null or not is_instance_valid(_shine):
+			return
+		var want := (not disabled) and (not selected)
+		_shine.visible = want
+		if want:
+			var fr := int(Time.get_ticks_msec() / 200) % 12
+			_shine.texture = load("res://assets/ui/buttons/btn_shine_%02d.png" % fr)
 
 	func _draw() -> void:
+		# «Выбрано» (docs/BUTTONS_V2.md): заливка #28d8ff33 + бордер #28d8ff, shine скрыт
+		if not selected:
+			return
 		var w := size.x
 		var h := size.y
 		if w < 10.0 or h < 10.0:
 			return
-		var r := minf(12.0, h * 0.28)
-		if priority and not disabled:
-			var ctop := Color("#ff3c6e")
-			var cbot := Color("#ff7a45")
-			var n2 := 24
-			for i in n2:
-				var tt := (i + 0.5) / n2
-				var y0 := 2.0 + (h - 4.0) * i / n2
-				draw_line(Vector2(2.0, y0), Vector2(w - 2.0, y0), ctop.lerp(cbot, tt), (h - 4.0) / n2 + 1.0)
-		if is_hovered() and not disabled:
-			draw_rect(Rect2(3, 3, w - 6, h - 6), Color("#28d8ff", 0.10))
-		if selected:
-			var sbs := StyleBoxFlat.new()
-			sbs.bg_color = Color("#28d8ff", 0.16)
-			sbs.border_color = Color("#28d8ff", 0.9)
-			sbs.set_border_width_all(2)
-			sbs.set_corner_radius_all(int(r))
-			sbs.draw(self, Rect2(1.5, 1.5, w - 3.0, h - 3.0))
-		if not disabled:
-			var pts := _rr_pts(w, h, r)
-			var m := pts.size()
-			for i in m:
-				var u := fposmod(float(i) / m + _t, 1.0)
-				draw_line(pts[i], pts[(i + 1) % m], _pal_at(u), 1.6, true)
-			var tw := _star_tw(fposmod(_t * 2.4 / 0.9, 1.0))
-			if tw > 0.02:
-				_draw_star(Vector2(w - 9.0, 9.0), 4.6, Color(1, 1, 1, tw * 0.95))
+		var r := minf(20.0, h * 0.4)
+		var sbs := StyleBoxFlat.new()
+		sbs.bg_color = Color("#28d8ff", 0.16)
+		sbs.border_color = Color("#28d8ff", 0.9)
+		sbs.set_border_width_all(2)
+		sbs.set_corner_radius_all(int(r))
+		sbs.draw(self, Rect2(1.5, 1.5, w - 3.0, h - 3.0))
 
 func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow: Color) -> StyleBoxTexture:
 	var sb := StyleBoxTexture.new()
@@ -7781,8 +7749,15 @@ func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow
 func _style_menu_button(b: Button, accent := false) -> void:
 	b.pressed.connect(_sfx_play.bind("click"))
 	if b is DzPereliv:
+		# «Перелив v2»: фоны и перелив — внутри класса (docs/BUTTONS_V2.md)
 		(b as DzPereliv).priority = accent
-	b.add_theme_font_override("font", _font_head())
+		b.add_theme_font_override("font", _font_head())
+		b.add_theme_color_override("font_color", Color("#f2f6ff"))
+		b.add_theme_color_override("font_hover_color", Color("#f2f6ff"))
+		b.add_theme_color_override("font_pressed_color", Color("#f2f6ff"))
+		b.add_theme_color_override("font_disabled_color", Color(0.42, 0.46, 0.53, 0.7))
+		b.add_theme_font_size_override("font_size", 17)
+		return
 	var top := Color(0.16, 0.38, 0.52)
 	var bottom := Color(0.05, 0.11, 0.22)
 	var border := Color(0.42, 0.88, 1.0)
@@ -10678,12 +10653,12 @@ func _show_menu_squad() -> void:
 	for k2 in STAT_KEYS:
 		invested += int(st.get(k2, 0))
 	if invested > 0:
-		var rstat := Button.new()
-		rstat.text = "Переподготовка (сброс статов) — %d монет" % RETRAIN_STATS_COST
+		var rstat := _menu_button("Переподготовка (сброс статов) — %d монет" % RETRAIN_STATS_COST, true)
 		rstat.icon = _icon_tex("coin")
-		rstat.add_theme_color_override("icon_normal_color", COIN_COLOR)
-		rstat.add_theme_color_override("icon_hover_color", COIN_COLOR)
-		rstat.add_theme_color_override("icon_pressed_color", COIN_COLOR)
+		rstat.add_theme_constant_override("icon_max_width", 16)
+		rstat.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
+		rstat.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
+		rstat.add_theme_color_override("icon_pressed_color", Color(0.12, 0.08, 0.02))
 		rstat.disabled = int(_profile.get("coins", 0)) < RETRAIN_STATS_COST
 		rstat.tooltip_text = "Вернёт %d вложенных очков для перераспределения" % invested
 		rstat.pressed.connect(func():
@@ -11123,12 +11098,12 @@ func _show_menu_med() -> void:
 		if float(rb3.get("expires", 0.0)) > now_h:
 			rent_active = true
 	if rsv.size() < RESERVE_MAX and not rent_active:
-		var bhire := Button.new()
-		bhire.text = "Нанять бойца — %d монет · %d дней" % [MED_HIRE_COST, HIRE_DAYS]
+		var bhire := _menu_button("Нанять бойца — %d монет · %d дней" % [MED_HIRE_COST, HIRE_DAYS], true)
 		bhire.icon = _icon_tex("coin")
-		bhire.add_theme_color_override("icon_normal_color", COIN_COLOR)
-		bhire.add_theme_color_override("icon_hover_color", COIN_COLOR)
-		bhire.add_theme_color_override("icon_pressed_color", COIN_COLOR)
+		bhire.add_theme_constant_override("icon_max_width", 16)
+		bhire.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
+		bhire.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
+		bhire.add_theme_color_override("icon_pressed_color", Color(0.12, 0.08, 0.02))
 		bhire.disabled = int(_profile.get("coins", 0)) < MED_HIRE_COST
 		bhire.tooltip_text = "Аренда одна активная: пока срок не вышел, второго найма не будет"
 		bhire.pressed.connect(func():
@@ -12442,7 +12417,7 @@ func _show_menu_shop() -> void:
 			# на 360px переносим длинные имена — иначе Label выталкивает цену за экран
 			nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(nl)
-		var b := Button.new()
+		var b := _menu_button("", true)
 		b.custom_minimum_size = Vector2(104, 40) if _mob() else Vector2(140, 40)
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if _shop_equipped(kind, idx):
@@ -12469,13 +12444,6 @@ func _show_menu_shop() -> void:
 			b.add_theme_color_override("icon_hover_color", COIN_COLOR)
 			b.add_theme_color_override("icon_pressed_color", COIN_COLOR)
 			b.add_theme_color_override("icon_disabled_color", Color(0.5, 0.45, 0.35))
-			# красная кнопка покупки
-			var bs := StyleBoxFlat.new()
-			bs.bg_color = Color(0.72, 0.16, 0.20, 0.95)
-			bs.border_color = Color(1.0, 0.45, 0.25, 0.9)
-			bs.set_border_width_all(1)
-			bs.set_corner_radius_all(12)
-			b.add_theme_stylebox_override("normal", bs)
 			b.add_theme_color_override("font_color", Color.WHITE)
 			if int(_profile.get("coins", 0)) < price:
 				b.disabled = true
