@@ -574,13 +574,16 @@ func _tutorial_on_win() -> void:
 
 # ---------- мобильный UI: масштаб через stretch (project.godot: canvas_items) ----------
 func _apply_display_scale() -> void:
-	# чёрные полосы в ВК (тикет #8): любой "keep"-аспект вписывает сцену 16:9 в окно
-	# и даёт letterbox. EXPAND — канвас тянется на всё окно, раскладку держат якоря.
+	# Пропорции канваса (мини-ТЗ владельца, разворот тикета #8): EXPAND тянул сцену
+	# на всё окно без сохранения пропорций — персонажи плыли на ландшафтных окнах.
+	# KEEP_WIDTH: ширина канваса = ширине окна, пропорции 16:9 сохраняются;
+	# узкое/низкое окно даёт поля сверху/снизу (letterbox) цветом default clear
+	# (≈ фон body из head_include, тёмный градиент арены — поля выглядят как подложка).
 	# Ставим в рантайме, чтобы не трогать общий project.godot (десктоп/редактор).
 	var win := get_window()
 	if win != null:
 		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH
 
 func _dpr() -> float:
 	# в браузере viewport считается в device-пикселях — переводим в CSS-пиксели
