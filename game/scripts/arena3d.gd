@@ -583,10 +583,20 @@ func _apply_display_scale() -> void:
 	# экране загрузки). KEEP_WIDTH не подходит: на высоком окне он расширяет
 	# viewport по вертикали, игра занимает всю высоту без полос.
 	# Ставим в рантайме, чтобы не трогать общий project.godot (десктоп/редактор).
+	# Мобильное исключение (владелец): на портрете телефона (360×800 и т.п.)
+	# KEEP дал бы узкую полоску 16:9 посреди экрана — телефоны ломаются.
+	# Ширина >= 700 CSS px — десктоп/iframe ВК: классический letterbox KEEP.
+	# Узкие экраны: KEEP_WIDTH — игра на всю ширину и высоту (фуллскрин).
+	# Масштаб UI весь идёт через _vw()/_vh() = get_visible_rect() — эффективный
+	# вьюпорт после letterbox, не DisplayServer.window_get_size(); при смене
+	# аспекта size_changed переприменяет раскладку через call_deferred.
 	var win := get_window()
 	if win != null:
 		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		if _vw() >= 700.0:
+			win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		else:
+			win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH
 
 func _dpr() -> float:
 	# в браузере viewport считается в device-пикселях — переводим в CSS-пиксели
