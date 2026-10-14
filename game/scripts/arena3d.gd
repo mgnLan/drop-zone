@@ -4810,7 +4810,11 @@ func _show_levelup(i: int) -> void:
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
-		var tb := Button.new()
+		# кнопка покупки ранга — стиль «Перелив v2» (docs/BUTTONS_V2.md, чек-лист «Таланты»)
+		var tb := _menu_button("")
+		tb.custom_minimum_size = Vector2(64, 36)
+		tb.add_theme_font_size_override("font_size", 14)
+		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var cost := cur + 1
 		if cur >= int(tal["max"]):
 			tb.text = "МАКС"
@@ -10719,9 +10723,11 @@ func _show_menu_squad() -> void:
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
-		var tb := Button.new()
-		if not _mob():
-			tb.add_theme_font_size_override("font_size", 12)
+		# кнопка покупки ранга — стиль «Перелив v2» (docs/BUTTONS_V2.md, чек-лист «Таланты»)
+		var tb := _menu_button("")
+		tb.custom_minimum_size = Vector2(64, 36)
+		tb.add_theme_font_size_override("font_size", 13)
+		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var cost := cur + 1
 		if cur >= int(tal["max"]):
 			tb.text = "МАКС"
@@ -10758,13 +10764,15 @@ func _show_menu_squad() -> void:
 		var r3 := int(tprof[k3])
 		spent += r3 * (r3 + 1) / 2
 	if spent > 0:
-		var rst := Button.new()
-		rst.text = "Сброс талантов — %d (вернёт %d очк.)" % [TALENT_RESET_COST, spent]
+		# сброс — покупка за монеты: «Перелив v2» PRIORITY (docs/BUTTONS_V2.md)
+		var rst := _menu_button("Сброс талантов — %d (вернёт %d очк.)" % [TALENT_RESET_COST, spent], true)
+		rst.custom_minimum_size = Vector2(0, 44)
+		rst.add_theme_font_size_override("font_size", 15)
 		rst.icon = _icon_tex("coin")
 		rst.add_theme_color_override("icon_normal_color", COIN_COLOR)
 		rst.add_theme_color_override("icon_hover_color", COIN_COLOR)
 		rst.add_theme_color_override("icon_pressed_color", COIN_COLOR)
-		rst.custom_minimum_size = Vector2(0, 40)
+		rst.add_theme_color_override("icon_disabled_color", Color(0.5, 0.45, 0.35))
 		rst.disabled = int(_profile.get("coins", 0)) < TALENT_RESET_COST
 		rst.pressed.connect(func():
 			if int(_profile.get("coins", 0)) >= TALENT_RESET_COST:
