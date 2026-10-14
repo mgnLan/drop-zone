@@ -997,7 +997,7 @@ func _uitest_tour() -> void:
 	# сообщение с эмодзи в чат — скрин-гейт цветных эмодзи (тикет #7)
 	_menu_chat_local[0].append("Вы: проверка 😀 🔥 💀 👍 ❤️")
 	_render_menu_chat()
-	var scr := ["lobby", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings"]
+	var scr := ["lobby", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "battle", "battle", "battle", "main"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -1008,7 +1008,12 @@ func _uitest_tour() -> void:
 		# отдельный таймер на каждый экран — ошибка в одном не рвёт весь тур
 		get_tree().create_timer(t).timeout.connect(_uitest_show.bind(s))
 		t += 3.0
-	get_tree().create_timer(t).timeout.connect(_uitest_show.bind("main"))
+	if "main" not in scr:
+		get_tree().create_timer(t).timeout.connect(_uitest_show.bind("main"))
+
+func _uitest_pick_fighter() -> void:
+	await get_tree().create_timer(1.5).timeout
+	_select_from_squad(0)
 
 func _uitest_show(s: String) -> void:
 	match s:
@@ -1022,6 +1027,17 @@ func _uitest_show(s: String) -> void:
 		"profile": _show_menu_profile()
 		"med": _show_menu_med()
 		"settings": _show_menu_settings()
+		"battle":
+			# скрин-гейт боевой полосы иконок (docs/EDITS_V1.md п.3): арена уже под меню —
+			# прячем слой лобби (как автостарт после перезагрузки), выбираем бойца отряда
+			_profile.onboarded = 1
+			_auth_close()
+			if _ui.has("menu_layer") and is_instance_valid(_ui.menu_layer):
+				_ui.menu_layer.visible = false
+			_menu_open = false
+			_busy = false
+			_refresh_turn_lbl()
+			call_deferred("_uitest_pick_fighter")
 		"lobby", "main": _show_menu_main()
 
 func _auth_watchdog() -> void:
@@ -5060,6 +5076,30 @@ func _take_all(k: String) -> void:
 		_show_chest_panel(k)
 	_refresh_fighter_panel()
 
+func _count_consumable(f: Dictionary, hot: bool) -> int:
+	# остаток бинтов (hot_per) или аптечек (heal) в рюкзаке бойца — бейджи полосы (EDITS_V1 п.3)
+	var n := 0
+	for e2 in f.backpack:
+		if str(e2.get("kind", "")) == "consumable":
+			var it2: Dictionary = e2["item"]
+			if (hot and it2.has("hot_per")) or (not hot and it2.has("heal")):
+				n += 1
+	return n
+
+func _quick_use_consumable(f: Dictionary, hot: bool) -> void:
+	# быстрое применение бинта/аптечки из полосы иконок — тот же путь, что через рюкзак
+	if f.team != 0 or _busy or _game_over:
+		return
+	for i2 in f.backpack.size():
+		var e2 = f.backpack[i2]
+		if str(e2.get("kind", "")) != "consumable":
+			continue
+		var it2: Dictionary = e2["item"]
+		if (hot and it2.has("hot_per")) or (not hot and it2.has("heal")):
+			_use_backpack(i2)
+			return
+	_log("Нет «%s» в рюкзаке" % ("бинта" if hot else "аптечки"))
+
 func _use_backpack(idx: int) -> void:
 	if _selected < 0:
 		return
@@ -6494,22 +6534,44 @@ func _build_ui() -> void:
 	if minf(_vw(), _vh()) < 700.0:
 		chat.visible = false
 		ct2.visible = true
-	# --- панель выбранного бойца: справа, компактная — минимум экрана загораживает ---
+	# --- панель выбранного бойца: справа ПОЛОСА иконок 40 px без подложки и рамки
+	# (docs/EDITS_V1.md п.3): бинт/аптечка (с остатком), перезарядка, ×4, счётчик карт;
+	# вся текстовая сводка (уровень/опыт/владение/вес/патроны) — тултип по иконке оружия ---
 	var fp := PanelContainer.new()
 	fp.anchor_left = 1.0
 	fp.anchor_right = 1.0
-	fp.offset_left = -min(232.0, _vw() * 0.62)
+	fp.offset_left = -560.0
 	fp.offset_right = -8.0
 	# ниже кнопок «Лобби»/«Дроп»/⛶ (они занимают y 62–202) — иначе перекрывают первые строки
 	fp.offset_top = 208.0
-	fp.offset_bottom = 348.0
-	fp.add_theme_stylebox_override("panel", _frame_box())
+	fp.offset_bottom = 262.0
+	fp.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	fp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(fp)
-	var vb := VBoxContainer.new()
+	var vb := HBoxContainer.new()
+	vb.add_theme_constant_override("separation", 4)
+	vb.alignment = BoxContainer.ALIGNMENT_END
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fp.add_child(vb)
 	_ui.fighter_panel = fp
 	_ui.fighter_box = vb
 	fp.visible = false
+	# попап шоу-карт: раскрывается по тапу на счётчик «×N» в полосе
+	var fcp := PanelContainer.new()
+	fcp.anchor_left = 1.0
+	fcp.anchor_right = 1.0
+	fcp.offset_left = -330.0
+	fcp.offset_right = -8.0
+	fcp.offset_top = 266.0
+	fcp.offset_bottom = 356.0
+	fcp.add_theme_stylebox_override("panel", _frame_box())
+	fcp.visible = false
+	layer.add_child(fcp)
+	var fcv := VBoxContainer.new()
+	fcv.add_theme_constant_override("separation", 4)
+	fcp.add_child(fcv)
+	_ui.fighter_cards = fcp
+	_ui.fighter_cards_box = fcv
 	var cp := PanelContainer.new()
 	cp.set_anchors_preset(Control.PRESET_CENTER)
 	var cw: float = min(240.0, _vw() * 0.46)
@@ -6654,153 +6716,185 @@ func _refresh_turn_lbl() -> void:
 	_refresh_squad()
 
 func _refresh_fighter_panel() -> void:
+	# ПОЛОСА иконок 40 px без подложки и рамки (docs/EDITS_V1.md п.3):
+	# бинт/аптечка (с остатком), перезарядка, очередь ×4, счётчик шоу-карт «×N»;
+	# текстовая сводка (уровень/опыт/владение/вес/патроны) — тултип по иконке оружия
 	if _selected < 0 or not _ui.has("fighter_panel"):
 		return
 	var f = _fighters[_selected]
 	_ui.fighter_panel.visible = true
-	var box: VBoxContainer = _ui.fighter_box
+	if _ui.has("fighter_cards"):
+		_ui.fighter_cards.visible = false
+	var box: HBoxContainer = _ui.fighter_box
 	for ch in box.get_children():
 		ch.queue_free()
-	var w := Label.new()
+	# --- сводка для тултипа ---
 	var ammo_txt := ""
 	if f.weapon.has("ammo"):
 		var sp_txt := "∞" if int(f.get("spare", -1)) < 0 else str(int(f.spare))
 		ammo_txt = " [патр. %d/%s]" % [int(f.ammo), sp_txt]
-	w.text = "В руках: %s%s" % [f.weapon.get("name", "?"), ammo_txt]
-	w.add_theme_font_size_override("font_size", 12)
-	box.add_child(w)
-	var lv := Label.new()
-	lv.text = "Ур. %d · Опыт %d/%d · Убийств: %d" % [int(f.lvl), int(f.xp), _xp_need(int(f.lvl)), int(f.kills)]
-	lv.add_theme_font_size_override("font_size", 12)
-	box.add_child(lv)
+	var info := "В руках: %s%s\nУр. %d · Опыт %d/%d · Убийств: %d" % [
+		f.weapon.get("name", "?"), ammo_txt, int(f.lvl), int(f.xp), _xp_need(int(f.lvl)), int(f.kills)]
 	var cls3 := _weapon_class(f.weapon)
 	if cls3 != "":
 		var plv := _prof_lvl(f, cls3)
 		var px := int(f.get("prof", {}).get(cls3, 0))
-		var next_txt := "МАКС" if plv >= 3 else "%d/%d" % [px, PROF_XP[plv]]
-		var pl2 := Label.new()
-		pl2.text = "Владение «%s»: ур. %d (%s)" % [CLASS_NAMES[cls3], plv, next_txt]
-		pl2.add_theme_font_size_override("font_size", 12)
-		pl2.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
-		box.add_child(pl2)
-	var d := Label.new()
-	d.text = "Защита: %d   Вес: %.1f/%.1f кг" % [_defense(f), _load_weight(f), _carry_limit(f)]
-	d.add_theme_font_size_override("font_size", 12)
-	box.add_child(d)
-	var row := GridContainer.new()
-	row.columns = 3
-	row.add_theme_constant_override("h_separation", 4)
-	row.add_theme_constant_override("v_separation", 4)
-	box.add_child(row)
-	# компактные иконки действий (24px) — название и горячая клавиша в подсказке
-	var inv := Button.new()
-	inv.tooltip_text = "Рюкзак [I]"
-	if ResourceLoader.exists("res://assets/ui/icons/backpack.png"):
-		inv.icon = load("res://assets/ui/icons/backpack.png")
-		inv.expand_icon = true
-		inv.add_theme_constant_override("icon_max_width", 16)
-	inv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inv.custom_minimum_size = Vector2(0, 24)
+		info += "\nВладение «%s»: ур. %d (%s)" % [CLASS_NAMES[cls3], plv, "МАКС" if plv >= 3 else "%d/%d" % [px, PROF_XP[plv]]]
+	info += "\nЗащита: %d · Вес: %.1f/%.1f кг" % [_defense(f), _load_weight(f), _carry_limit(f)]
+	# --- фабрика иконок: flat-кнопка 40×40, лёгкий hover-фон, без рамок ---
+	var hov := StyleBoxFlat.new()
+	hov.bg_color = Color(1, 1, 1, 0.08)
+	hov.set_corner_radius_all(8)
+	var prs := StyleBoxFlat.new()
+	prs.bg_color = Color(1, 1, 1, 0.15)
+	prs.set_corner_radius_all(8)
+	var mk_ic := func(ic: Texture2D, tip: String) -> Button:
+		var b := Button.new()
+		if ic != null:
+			b.icon = ic
+			b.expand_icon = true
+			b.add_theme_constant_override("icon_max_width", 30)
+		b.custom_minimum_size = Vector2(40, 40)
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		b.tooltip_text = tip
+		b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+		b.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
+		b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		b.add_theme_stylebox_override("hover", hov)
+		b.add_theme_stylebox_override("pressed", prs)
+		return b
+	var mk_badge := func(b: Button, txt: String) -> void:
+		# бейдж остатка в правом нижнем углу иконки
+		var bd := Label.new()
+		bd.text = txt
+		bd.add_theme_font_size_override("font_size", 10)
+		bd.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0))
+		bd.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+		bd.add_theme_constant_override("shadow_offset_x", 1)
+		bd.add_theme_constant_override("shadow_offset_y", 1)
+		bd.anchor_left = 1.0
+		bd.anchor_top = 1.0
+		bd.anchor_right = 1.0
+		bd.anchor_bottom = 1.0
+		bd.offset_left = -22.0
+		bd.offset_top = -14.0
+		bd.offset_right = -1.0
+		bd.offset_bottom = -1.0
+		bd.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		bd.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(bd)
+	var own: bool = f.team == 0
+	# рюкзак / смена оружия (сводка — по hover на иконку оружия, docs/EDITS_V1.md)
+	var inv: Button = mk_ic.call(load("res://assets/ui/icons/backpack.png") as Texture2D, "Рюкзак [I]")
 	inv.pressed.connect(_toggle_inventory)
 	inv.pressed.connect(_sfx_play.bind("click"))
-	row.add_child(inv)
-	var sw := Button.new()
-	sw.tooltip_text = "Нож/ствол [F]"
-	if ResourceLoader.exists("res://assets/ui/icons/Knife_1.png"):
-		sw.icon = load("res://assets/ui/icons/Knife_1.png")
-		sw.expand_icon = true
-		sw.add_theme_constant_override("icon_max_width", 16)
-	sw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sw.custom_minimum_size = Vector2(0, 24)
+	box.add_child(inv)
+	var sw: Button = mk_ic.call(load("res://assets/ui/icons/Knife_1.png") as Texture2D, info)
 	sw.pressed.connect(_swap_weapon)
 	sw.pressed.connect(_sfx_play.bind("click"))
-	row.add_child(sw)
-	var rl := Button.new()
-	rl.tooltip_text = "Перезарядка [R]"
-	if ResourceLoader.exists("res://assets/ui/icons/reload.png"):
-		rl.icon = load("res://assets/ui/icons/reload.png")
-		rl.expand_icon = true
-		rl.add_theme_constant_override("icon_max_width", 16)
-	rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rl.custom_minimum_size = Vector2(0, 24)
+	box.add_child(sw)
+	# бинт и аптечка — быстрое применение с бейджем остатка
+	var nb := _count_consumable(f, true)
+	var band: Button = mk_ic.call(_png_icon("med_bandage"), "Бинт: +HP в ход, несколько ходов [быстрое применение]\nОсталось: %d" % nb)
+	if nb <= 0:
+		band.disabled = true
+	elif own:
+		band.pressed.connect(func(): _quick_use_consumable(f, true))
+		band.pressed.connect(_sfx_play.bind("click"))
+	if nb > 0:
+		mk_badge.call(band, "×%d" % nb)
+	box.add_child(band)
+	var nk := _count_consumable(f, false)
+	var med: Button = mk_ic.call(_png_icon("med_aptechka_s"), "Аптечка: мгновенное лечение [быстрое применение]\nОсталось: %d" % nk)
+	if nk <= 0:
+		med.disabled = true
+	elif own:
+		med.pressed.connect(func(): _quick_use_consumable(f, false))
+		med.pressed.connect(_sfx_play.bind("click"))
+	if nk > 0:
+		mk_badge.call(med, "×%d" % nk)
+	box.add_child(med)
+	# перезарядка
+	var rl: Button = mk_ic.call(load("res://assets/ui/icons/reload.png") as Texture2D, "Перезарядка [R]")
 	rl.pressed.connect(_reload_selected)
 	rl.pressed.connect(_sfx_play.bind("click"))
-	row.add_child(rl)
-	var tt := Button.new()
-	tt.icon = _icon_tex("smile")
-	tt.expand_icon = true
-	tt.add_theme_constant_override("icon_max_width", 16)
-	tt.tooltip_text = "Насмешка [T] (1 ОД): боты в радиусе 8 клеток 2 хода атакуют этого бойца"
-	tt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tt.custom_minimum_size = Vector2(0, 24)
-	tt.pressed.connect(_taunt_selected)
-	tt.pressed.connect(_sfx_play.bind("click"))
-	row.add_child(tt)
-	var gf := Button.new()
-	gf.icon = _icon_tex("bolt")
-	gf.expand_icon = true
-	gf.add_theme_constant_override("icon_max_width", 16)
-	gf.tooltip_text = "Граффити [G] (1 ОД): оставить яркую метку на клетке"
-	gf.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	gf.custom_minimum_size = Vector2(0, 24)
-	gf.pressed.connect(_graffiti_selected)
-	gf.pressed.connect(_sfx_play.bind("click"))
-	row.add_child(gf)
-	# очередь ×4: доступна только для автоматического оружия (burst >= 2), цена BURST4_AP ОД
+	box.add_child(rl)
+	# очередь ×4 — только для автоматического оружия (burst >= 2), цена BURST4_AP ОД
 	if int(f.weapon.get("burst", 1)) >= 2:
-		var b4b := Button.new()
-		b4b.text = "×4"
+		var b4b: Button = mk_ic.call(_png_icon("ind_burst4"), "Очередь ×4 — %d ОД: 4 выстрела по −20%% урона за пулю" % BURST4_AP)
 		b4b.toggle_mode = true
 		b4b.button_pressed = f.get("burst4", false)
-		b4b.tooltip_text = "Очередь ×4 — %d ОД: 4 выстрела по −20%% урона за пулю" % BURST4_AP
-		b4b.add_theme_font_size_override("font_size", 12)
-		b4b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b4b.custom_minimum_size = Vector2(0, 24)
+		if f.get("burst4", false):
+			b4b.modulate = Color(1.0, 0.85, 0.4)
 		b4b.pressed.connect(func():
 			f.burst4 = not f.get("burst4", false)
 			_log("%s: очередь ×4 %s" % [f.name, "ВКЛ" if f.burst4 else "ВЫКЛ"])
 			_refresh_fighter_panel())
 		b4b.pressed.connect(_sfx_play.bind("click"))
-		row.add_child(b4b)
-	# рука шоу-карт + ставка букмекера (только для своего отряда)
-	if f.team == 0 and _selected < _mode:
-		var hrow := HBoxContainer.new()
-		hrow.add_theme_constant_override("separation", 4)
-		box.add_child(hrow)
-		if _hand.is_empty():
-			var hempty := Label.new()
-			hempty.text = "Шоу-карты: пусто (колода в лобби, дроп из ящиков)"
-			hempty.add_theme_font_size_override("font_size", 10)
-			hempty.add_theme_color_override("font_color", Color(0.5, 0.56, 0.62))
-			hrow.add_child(hempty)
-		for cid_h in _hand:
-			var cbtn := Button.new()
-			cbtn.text = SHOW_CARDS[cid_h]["name"]
-			cbtn.tooltip_text = SHOW_CARDS[cid_h]["desc"] + "\n1 карта/ход на отряд"
-			cbtn.add_theme_font_size_override("font_size", 10)
-			cbtn.custom_minimum_size = Vector2(0, 22)
-			cbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			cbtn.disabled = _card_played or _busy or _game_over
-			var cid_c: String = cid_h
-			cbtn.pressed.connect(func(): _play_card(cid_c))
-			cbtn.pressed.connect(_sfx_play.bind("click"))
-			hrow.add_child(cbtn)
-		var betb := Button.new()
-		betb.text = "Ставка ×2"
-		betb.toggle_mode = true
-		betb.button_pressed = _book_bet
-		betb.tooltip_text = "Ставка букмекера: победа — монеты ×2, поражение — ×0.5"
-		betb.add_theme_font_size_override("font_size", 10)
-		betb.custom_minimum_size = Vector2(0, 22)
-		betb.pressed.connect(func():
-			_book_bet = not _book_bet
-			_log("Ставка букмекера: %s" % ("ВКЛ — победа ×2, поражение ×0.5" if _book_bet else "выкл"))
-			_refresh_fighter_panel())
-		betb.pressed.connect(_sfx_play.bind("click"))
-		hrow.add_child(betb)
+		box.add_child(b4b)
+	# насмешка / граффити — боевые действия, иконками без текста
+	var tt: Button = mk_ic.call(_icon_tex("smile"), "Насмешка [T] (1 ОД): боты в радиусе 8 клеток 2 хода атакуют этого бойца")
+	tt.pressed.connect(_taunt_selected)
+	tt.pressed.connect(_sfx_play.bind("click"))
+	box.add_child(tt)
+	var gf: Button = mk_ic.call(_icon_tex("bolt"), "Граффити [G] (1 ОД): оставить яркую метку на клетке")
+	gf.pressed.connect(_graffiti_selected)
+	gf.pressed.connect(_sfx_play.bind("click"))
+	box.add_child(gf)
+	# счётчик шоу-карт «×N» — тап раскрывает попап с рукой и ставкой (свой отряд)
+	if own and _selected < _mode:
+		var nc := _hand.size()
+		var cbt: Button = mk_ic.call(_icon_tex("ticket"), "Шоу-карты: %d в руке (колода в лобби, дроп из ящиков)\n1 карта/ход на отряд" % nc)
+		if nc > 0:
+			mk_badge.call(cbt, "×%d" % nc)
+		cbt.pressed.connect(func():
+			_sfx_play("click")
+			_populate_cards_popup()
+			_ui.fighter_cards.visible = not _ui.fighter_cards.visible)
+		box.add_child(cbt)
 	if (int(f.get("pts", 0)) > 0 or int(f.get("tpts", 0)) > 0) and f.team == 0:
 		_refresh_lvl_note()
 	_refresh_card()
+
+func _populate_cards_popup() -> void:
+	# рука шоу-карт + ставка букмекера — попап под полосой иконок (docs/EDITS_V1.md п.3)
+	if not _ui.has("fighter_cards_box"):
+		return
+	var fcv: VBoxContainer = _ui.fighter_cards_box
+	for ch in fcv.get_children():
+		ch.queue_free()
+	if _hand.is_empty():
+		var hempty := Label.new()
+		hempty.text = "Шоу-карт нет — колода в лобби, дроп из ящиков арены"
+		hempty.add_theme_font_size_override("font_size", 11)
+		hempty.add_theme_color_override("font_color", Color(0.5, 0.56, 0.62))
+		fcv.add_child(hempty)
+	for cid_h in _hand:
+		var cbtn := Button.new()
+		cbtn.text = SHOW_CARDS[cid_h]["name"]
+		cbtn.tooltip_text = SHOW_CARDS[cid_h]["desc"] + "\n1 карта/ход на отряд"
+		cbtn.add_theme_font_size_override("font_size", 11)
+		cbtn.custom_minimum_size = Vector2(0, 26)
+		cbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cbtn.disabled = _card_played or _busy or _game_over
+		var cid_c: String = cid_h
+		cbtn.pressed.connect(func(): _play_card(cid_c))
+		cbtn.pressed.connect(_sfx_play.bind("click"))
+		fcv.add_child(cbtn)
+	var betb := Button.new()
+	betb.text = "Ставка ×2"
+	betb.toggle_mode = true
+	betb.button_pressed = _book_bet
+	betb.tooltip_text = "Ставка букмекера: победа — монеты ×2, поражение — ×0.5"
+	betb.add_theme_font_size_override("font_size", 11)
+	betb.custom_minimum_size = Vector2(0, 26)
+	betb.pressed.connect(func():
+		_book_bet = not _book_bet
+		_log("Ставка букмекера: %s" % ("ВКЛ — победа ×2, поражение ×0.5" if _book_bet else "выкл"))
+		_ui.fighter_cards.visible = false
+		_refresh_fighter_panel())
+	betb.pressed.connect(_sfx_play.bind("click"))
+	fcv.add_child(betb)
 
 # ---------- тестовый прогон для скриншота ----------
 # ---------------- ДЕМО-СЦЕНА: кинематографичный свет (--testlight) ----------------
@@ -8901,8 +8995,11 @@ func _build_menu() -> void:
 	var logo := TextureRect.new()
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	logo.custom_minimum_size = Vector2(150, 44) if mob_w else Vector2(280, 72)
-	if ResourceLoader.exists("res://assets/ui/logo.png"):
+	# логотип v2 (docs/EDITS_V1.md п.2): вырезка из splash со свечением, ~210 px по ширине
+	logo.custom_minimum_size = Vector2(124, 30) if mob_w else Vector2(210, 52)
+	if ResourceLoader.exists("res://assets/ui/logo_v2.png"):
+		logo.texture = load("res://assets/ui/logo_v2.png")
+	elif ResourceLoader.exists("res://assets/ui/logo.png"):
 		logo.texture = load("res://assets/ui/logo.png")
 	top.add_child(logo)
 	_logo_pulse(logo)
