@@ -67,6 +67,24 @@ def main() -> int:
     if tag not in out or f"{tag}.pck" not in out:
         print("Патч index.html не применился — формат GODOT_CONFIG изменился?")
         return 1
+
+    # Сплэш загрузки: index.png (~3 МБ) Apache не жмёт (image/png не в mod_deflate) —
+    # конвертируем в JPEG q90 (~0.3 МБ), src в <img id="status-splash"> патчим.
+    png_path = os.path.join(BUILD, "index.png")
+    if os.path.isfile(png_path):
+        from PIL import Image
+        sizes["splash_png"] = os.path.getsize(png_path)
+        im = Image.open(png_path).convert("RGB")
+        jpg_path = os.path.join(BUILD, "index.jpg")
+        im.save(jpg_path, "JPEG", quality=90, optimize=True)
+        os.remove(png_path)
+        out = out.replace('src="index.png"', 'src="index.jpg"')
+        if 'src="index.jpg"' not in out:
+            print("Патч сплэша не применился — src=\"index.png\" не найден в html")
+            return 1
+        sizes["splash_jpg"] = os.path.getsize(jpg_path)
+        print(f"splash: index.png {sizes.get('splash_png', 0)} -> index.jpg {sizes['splash_jpg']} байт")
+
     open(html_path, "w", encoding="utf-8").write(out)
 
     # удаляем локальные версионные файлы прошлых сборок — иначе ftp_upload
