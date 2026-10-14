@@ -7200,10 +7200,11 @@ func _run_testplay() -> void:
 		print("BARREL_TEST 1-е попадание 43: жива=", _covers.has(bk), " (ожидается true)")
 		_damage_cover_hit(bk, 43, "TEST")
 		print("BARREL_TEST 2-е попадание: жива=", _covers.has(bk), " (ожидается false)")
-	await RenderingServer.frame_post_draw
-	await RenderingServer.frame_post_draw
-	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("user://test_play.png")
+	if DisplayServer.get_name() != "headless":
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("user://test_play.png")
 	# --- HERO_TEST: сборка из 45 фрагментов, продление аренды от max(сейчас, остаток), спавн-статы ---
 	print("HERO_TEST: старт")
 	_profile.hero_frags = {"3": 42, "4": 42, "5": 42}
