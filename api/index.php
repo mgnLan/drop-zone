@@ -181,7 +181,7 @@ if ($action === 'buy') {
     $orderId = trim((string)($in['order_id'] ?? ''));
     if ($token === '' || $orderId === '') out(['ok' => false, 'error' => 'bad request']);
     // серверная таблица цен — клиентскую не доверяем
-    $PACKS = [0 => 210, 1 => 825, 2 => 1950, 3 => 4800]; // coins+bonus по индексу пака
+    $PACKS = [0 => 630, 1 => 2475, 2 => 5850, 3 => 14400]; // Хвост v1 §4.5: объёмы ×3 (coins+bonus)
     if (!isset($PACKS[$pack_id])) out(['ok' => false, 'error' => 'unknown pack']);
     $st = $db->prepare("SELECT id, profile FROM users WHERE token = ?");
     $st->execute([$token]);
