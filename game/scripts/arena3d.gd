@@ -979,6 +979,30 @@ func _ready() -> void:
 		var _utq = JavaScriptBridge.eval("window.location.search.indexOf('uitest') >= 0")
 		if _utq != null and bool(_utq):
 			call_deferred("_uitest_tour")
+		# отладочный дамп дерева сцены в консоль (?uitree=1) — поиск UI-артефактов
+		var _utr = JavaScriptBridge.eval("window.location.search.indexOf('uitree') >= 0")
+		if _utr != null and bool(_utr):
+			call_deferred("_uitree_dump_at", 25.0)
+			call_deferred("_uitree_dump_at", 37.0)
+			call_deferred("_uitree_dump_at", 52.0)
+
+func _uitree_dump_at(delay: float) -> void:
+	await get_tree().create_timer(delay).timeout
+	print("UITREE-DUMP-BEGIN t=%.1f" % delay)
+	_uitree_dump_node(get_tree().root, 0)
+	print("UITREE-DUMP-END")
+
+func _uitree_dump_node(n: Node, d: int) -> void:
+	var info := ""
+	if n is Control:
+		var c := n as Control
+		var r := c.get_global_rect()
+		info = " <%s | %.0f,%.0f %.0fx%.0f%s>" % [n.get_class(), r.position.x, r.position.y, r.size.x, r.size.y, "" if c.visible else " HIDDEN"]
+	elif n is Node2D or n is Node3D:
+		info = " <%s>" % n.get_class()
+	print("%s%s%s" % [".".repeat(d), n.name, info])
+	for ch in n.get_children():
+		_uitree_dump_node(ch, d + 1)
 
 func _uitest_tour() -> void:
 	# авто-вход гостем + цикл по всем экранам лобби (~3 с каждый) для скриншот-проверки иконок
@@ -10068,10 +10092,12 @@ func _menu_back_show(on: bool) -> void:
 		var mp2: PanelContainer = _ui.menu_panel
 		var vb2: Control = _ui.menu_box
 		if on and vb2.get_parent() != mp2:
-			mp2.add_child(vb2)
+			# Godot 4: add_child к уже родителю имеющему узел падает с ERROR —
+			# контент оставался в cc, а пустая подложка висела по центру (квадрат-артефакт)
+			vb2.reparent(mp2)
 			mp2.visible = true
 		elif not on and vb2.get_parent() != mp2.get_parent():
-			mp2.get_parent().add_child(vb2)
+			vb2.reparent(mp2.get_parent())
 			mp2.visible = false
 
 func _show_menu_settings() -> void:
