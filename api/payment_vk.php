@@ -56,17 +56,22 @@ if (file_exists(__DIR__ . '/config.php')) {
 $SECURE = (string)($cfg['vk_secure_key'] ?? '');
 
 // --- подпись: md5(конкатенация key=value по алфавиту ключей + защищённый ключ) ---
+// ВАЖНО: ВК считает sig по СЫРОМ query string (значения URL-encoded, '+' как пробел).
+// $_GET их декодирует — для проверки парсим QUERY_STRING сами, иначе кириллица ломает md5.
 function vk_pay_sig_ok($params, $secret) {
     if ($secret === '' || !isset($params['sig'])) return false;
-    $sig = (string)$params['sig'];
+    $qs = (string)($_SERVER['QUERY_STRING'] ?? '');
+    if ($qs === '') return false;
     $pairs = [];
-    foreach ($params as $k => $v) {
-        if ((string)$k === 'sig') continue;
-        if (is_array($v)) return false;
-        $pairs[(string)$k] = (string)$k . '=' . (string)$v;
+    foreach (explode('&', $qs) as $kv) {
+        if ($kv === '') continue;
+        $p = explode('=', $kv, 2);
+        if ($p[0] === 'sig') continue;
+        $pairs[] = $p[0] . '=' . (isset($p[1]) ? $p[1] : '');
     }
-    ksort($pairs);
-    return hash_equals(md5(implode('', $pairs) . $secret), $sig);
+    if (!$pairs) return false;
+    sort($pairs, SORT_STRING);   // по алфавиту ключей
+    return hash_equals(md5(implode('', $pairs) . $secret), (string)$params['sig']);
 }
 
 $sig_ok = vk_pay_sig_ok($params, $SECURE) ? 1 : 0;
@@ -87,10 +92,12 @@ try {
         user_id INTEGER,
         app_id INTEGER,
         sig_ok INTEGER,
-        raw TEXT
+        raw TEXT,
+        qs TEXT
     )");
-    $db->prepare("INSERT INTO vk_pay_log (at, ip, notification_type, order_id, status, item, price, user_id, app_id, sig_ok, raw)
-        VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    try { $db->exec("ALTER TABLE vk_pay_log ADD COLUMN qs TEXT"); } catch (Exception $e) { /* колонка уже есть */ }
+    $db->prepare("INSERT INTO vk_pay_log (at, ip, notification_type, order_id, status, item, price, user_id, app_id, sig_ok, raw, qs)
+        VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
        ->execute([
             $_SERVER['REMOTE_ADDR'] ?? '',
             (string)($params['notification_type'] ?? ''),
@@ -102,6 +109,7 @@ try {
             (int)($params['app_id'] ?? 0),
             $sig_ok,
             substr(json_encode($params, JSON_UNESCAPED_UNICODE), 0, 4000),
+            substr((string)($_SERVER['QUERY_STRING'] ?? ''), 0, 2000),
         ]);
 } catch (Exception $e) { /* лог не критичен */ }
 
