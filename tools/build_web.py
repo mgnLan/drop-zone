@@ -85,6 +85,24 @@ def main() -> int:
         sizes["splash_jpg"] = os.path.getsize(jpg_path)
         print(f"splash: index.png {sizes.get('splash_png', 0)} -> index.jpg {sizes['splash_jpg']} байт")
 
+    # WebGL2: вместо сырого английского текста Godot — понятная русская
+    # инструкция (частая причина «зависания» на старте у игроков ВК).
+    old_msg = "'Error\\nThe following features required to run Godot projects on the Web are missing:\\n'"
+    new_msg = ("'Ошибка\\nВаш браузер не поддерживает WebGL2 — без него игра не запустится.\\n"
+               "Включите аппаратное ускорение: настройки браузера → Система → "
+               "«Использовать аппаратное ускорение», затем перезапустите браузер.\\n"
+               "Если не помогло — обновите браузер или видеодрайвер.'")
+    if old_msg in out:
+        out = out.replace(
+            "const missingMsg = " + old_msg + ";",
+            "const missingMsg = " + new_msg + ";")
+        if new_msg not in out:
+            print("Патч WebGL2-сообщения не применился — формат шаблона изменился?")
+            return 1
+        print("webgl2: сообщение о missing features переведено")
+    else:
+        print("ПРЕДУПРЕЖДЕНИЕ: шаблон missingMsg не найден — Godot обновил шаблон?")
+
     open(html_path, "w", encoding="utf-8").write(out)
 
     # удаляем локальные версионные файлы прошлых сборок — иначе ftp_upload

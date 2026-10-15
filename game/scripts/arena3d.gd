@@ -1012,8 +1012,14 @@ func _uitest_tour() -> void:
 		get_tree().create_timer(t).timeout.connect(_uitest_show.bind("main"))
 
 func _uitest_pick_fighter() -> void:
-	await get_tree().create_timer(1.5).timeout
-	_select_from_squad(0)
+	# гейт боевой полосы: выбор гарантирован — повторяем, пока бойца не выберет
+	# (в битве ботов _busy часто занят, выбор с первого раза может не пройти)
+	for attempt in 8:
+		await get_tree().create_timer(1.0).timeout
+		if _selected >= 0:
+			return
+		_busy = false
+		_select_from_squad(0)
 
 func _uitest_show(s: String) -> void:
 	match s:
@@ -6260,16 +6266,16 @@ func _build_ui() -> void:
 	btn.pressed.connect(_end_turn)
 	btn.pressed.connect(_sfx_play.bind("click"))
 	var eb_n := StyleBoxFlat.new()
-	eb_n.bg_color = Color(0.50, 0.10, 0.14, 0.95)
-	eb_n.border_color = Color(1.0, 0.28, 0.40, 0.95)
+	eb_n.bg_color = Color(0.14, 0.18, 0.28, 0.95)
+	eb_n.border_color = Color(0.16, 0.85, 1.0, 0.55)
 	eb_n.set_border_width_all(2)
 	eb_n.set_corner_radius_all(8)
-	eb_n.shadow_color = Color(1.0, 0.2, 0.35, 0.35)
-	eb_n.shadow_size = 8
+	eb_n.shadow_color = Color(0.16, 0.85, 1.0, 0.18)
+	eb_n.shadow_size = 6
 	var eb_h: StyleBoxFlat = eb_n.duplicate()
-	eb_h.bg_color = Color(0.72, 0.16, 0.20, 1.0)
+	eb_h.bg_color = Color(0.19, 0.24, 0.37, 1.0)
 	var eb_p: StyleBoxFlat = eb_n.duplicate()
-	eb_p.bg_color = Color(0.34, 0.06, 0.09, 1.0)
+	eb_p.bg_color = Color(0.10, 0.12, 0.20, 1.0)
 	btn.add_theme_stylebox_override("normal", eb_n)
 	btn.add_theme_stylebox_override("hover", eb_h)
 	btn.add_theme_stylebox_override("pressed", eb_p)
@@ -6582,32 +6588,32 @@ func _build_ui() -> void:
 	# (docs/EDITS_V1.md п.3): бинт/аптечка (с остатком), перезарядка, ×4, счётчик карт;
 	# вся текстовая сводка (уровень/опыт/владение/вес/патроны) — тултип по иконке оружия ---
 	var fp := PanelContainer.new()
-	fp.anchor_left = 1.0
-	fp.anchor_right = 1.0
-	fp.offset_left = -560.0
-	fp.offset_right = -8.0
-	# ниже кнопок «Лобби»/«Дроп»/⛶ (они занимают y 62–202) — иначе перекрывают первые строки
-	fp.offset_top = 208.0
-	fp.offset_bottom = 262.0
+	fp.anchor_left = 0.0
+	fp.anchor_right = 0.0
+	fp.offset_left = 8.0
+	fp.offset_right = 56.0
+	# вертикальная колонка под карточкой бойца (y≈48–152) — поле слева свободно
+	fp.offset_top = 215.0
+	fp.offset_bottom = 640.0
 	fp.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	fp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(fp)
-	var vb := HBoxContainer.new()
+	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 4)
-	vb.alignment = BoxContainer.ALIGNMENT_END
+	vb.alignment = BoxContainer.ALIGNMENT_BEGIN
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fp.add_child(vb)
 	_ui.fighter_panel = fp
 	_ui.fighter_box = vb
 	fp.visible = false
-	# попап шоу-карт: раскрывается по тапу на счётчик «×N» в полосе
+	# попап шоу-карт: раскрывается по тапу на счётчик «×N» в колонке
 	var fcp := PanelContainer.new()
-	fcp.anchor_left = 1.0
-	fcp.anchor_right = 1.0
-	fcp.offset_left = -330.0
-	fcp.offset_right = -8.0
-	fcp.offset_top = 266.0
-	fcp.offset_bottom = 356.0
+	fcp.anchor_left = 0.0
+	fcp.anchor_right = 0.0
+	fcp.offset_left = 64.0
+	fcp.offset_right = 384.0
+	fcp.offset_top = 215.0
+	fcp.offset_bottom = 305.0
 	fcp.add_theme_stylebox_override("panel", _frame_box())
 	fcp.visible = false
 	layer.add_child(fcp)
@@ -6769,7 +6775,7 @@ func _refresh_fighter_panel() -> void:
 	_ui.fighter_panel.visible = true
 	if _ui.has("fighter_cards"):
 		_ui.fighter_cards.visible = false
-	var box: HBoxContainer = _ui.fighter_box
+	var box: VBoxContainer = _ui.fighter_box
 	for ch in box.get_children():
 		ch.queue_free()
 	# --- сводка для тултипа ---
@@ -6799,7 +6805,7 @@ func _refresh_fighter_panel() -> void:
 			b.expand_icon = true
 			b.add_theme_constant_override("icon_max_width", 30)
 		b.custom_minimum_size = Vector2(40, 40)
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		b.tooltip_text = tip
 		b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 		b.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
@@ -7804,27 +7810,10 @@ class DzPereliv:
 	# Кадры грузятся через load() — Godot отдаёт закэшированный ресурс, дублирования нет.
 	var selected := false
 	var priority := false
-	var _shine_a: TextureRect
-	var _shine_b: TextureRect
-	var _shine_idx := -1
 
 	func _ready() -> void:
-		set_process(true)
 		_fit_text()
 		_apply_bg()
-		_shine_a = _make_shine()
-		_shine_b = _make_shine()
-		add_child(_shine_a)
-		add_child(_shine_b)
-
-	func _make_shine() -> TextureRect:
-		var tr := TextureRect.new()
-		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_SCALE
-		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		tr.modulate = Color(1, 1, 1, 0)
-		return tr
 
 	func _bg(n: String) -> Texture2D:
 		var pth := "res://assets/ui/buttons/%s.png" % n
@@ -7864,24 +7853,7 @@ class DzPereliv:
 		custom_minimum_size.x = maxf(custom_minimum_size.x, tw + 44.0)
 
 	func _process(_delta: float) -> void:
-		if _shine_a == null or not is_instance_valid(_shine_a):
-			return
-		var want := (not disabled) and (not selected)
-		_shine_a.visible = want
-		_shine_b.visible = want
-		if not want:
-			return
-		# плавный перелив: кроссфейд соседних кадров (12 кадров, окно 200 мс,
-		# цикл 2.4 с — как в спеке, но без рывков 5 fps)
-		var ms := Time.get_ticks_msec()
-		var idx := int(ms / 200) % 12
-		var t := float(ms % 200) / 200.0
-		if idx != _shine_idx:
-			_shine_idx = idx
-			_shine_a.texture = load("res://assets/ui/buttons/btn_shine_%02d.png" % idx)
-			_shine_b.texture = load("res://assets/ui/buttons/btn_shine_%02d.png" % ((idx + 1) % 12))
-		_shine_a.modulate = Color(1, 1, 1, 1.0 - t)
-		_shine_b.modulate = Color(1, 1, 1, t)
+		pass
 
 	func _draw() -> void:
 		# «Выбрано» (docs/BUTTONS_V2.md): заливка #28d8ff33 + бордер #28d8ff, shine скрыт
