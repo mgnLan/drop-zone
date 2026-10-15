@@ -1610,13 +1610,12 @@ const MQ_WEEK_LIST := [
 ]
 var _mq_acc := {"damage": 0, "loot": 0, "heals": 0, "grenades": 0, "lvlups": 0}   # накапливается в бою, сливается в конце
 var _chests_opened := 0       # ящиков открыто игроком за текущий бой
-# паки монет за реальные деньги; bonus — сверх базового объёма (комиссия площадки ~45% заложена в цену)
+# паки монет за реальные деньги; итоговый объём = coins (бонусов нет) — привязка: 29₽≈1 лечение, 199₽=1 переподготовка, 399₽≈2 недели игры
 const COIN_PACKS := [
-	# Хвост v1 §4.5: объёмы ×3 (цены в ₽ те же; реальная база была 200/750/1700/4000)
-	{"coins": 600, "bonus": 30, "price": 29},
-	{"coins": 2250, "bonus": 225, "price": 99},
-	{"coins": 5100, "bonus": 750, "price": 199},
-	{"coins": 12000, "bonus": 2400, "price": 399},
+	{"coins": 150, "bonus": 0, "price": 29},
+	{"coins": 750, "bonus": 0, "price": 99},
+	{"coins": 1800, "bonus": 0, "price": 199},
+	{"coins": 3750, "bonus": 0, "price": 399},
 ]
 const PAYMENTS_ENABLED := true   # VK: ShowOrderBox -> серверная верификация order_id; вне ВК — dev-начисление
 const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неон»", "price": 200},
