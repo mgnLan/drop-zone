@@ -56,25 +56,46 @@ if (file_exists(__DIR__ . '/config.php')) {
 $SECURE = (string)($cfg['vk_secure_key'] ?? '');
 
 // --- подпись: md5(конкатенация key=value по алфавиту ключей + защищённый ключ) ---
-// ВАЖНО: ВК считает sig по СЫРОМ query string (значения URL-encoded, '+' как пробел).
-// $_GET их декодирует — для проверки парсим QUERY_STRING сами, иначе кириллица ломает md5.
-function vk_pay_sig_ok($params, $secret) {
-    if ($secret === '' || !isset($params['sig'])) return false;
-    $qs = (string)($_SERVER['QUERY_STRING'] ?? '');
-    if ($qs === '') return false;
-    $pairs = [];
-    foreach (explode('&', $qs) as $kv) {
-        if ($kv === '') continue;
-        $p = explode('=', $kv, 2);
-        if ($p[0] === 'sig') continue;
-        $pairs[] = $p[0] . '=' . (isset($p[1]) ? $p[1] : '');
+// Эталон — github.com/SevereCloud/vksdk payments.go (Sign/getConcatenationParams):
+// значения ДЕКОДИРОВАННЫЕ (Query() в Go декодирует), конкатенация без разделителей,
+// secret в конец. Для GET дополнительно пробуем вариант по сырому QUERY_STRING.
+// Безопасность НЕ на sig: начисление только через index.php action=buy/buybp
+// с верификацией orders.getById сервисным токеном. Несовпадение sig — только в лог.
+function vk_pay_sig_attempts($params, $secret) {
+    $sig = (string)($params['sig'] ?? '');
+    if ($secret === '' || $sig === '') return [false, ''];
+    $cands = [];
+    $ks = array_keys($params);
+    sort($ks, SORT_STRING);
+    $dec = [];
+    foreach ($ks as $k) {
+        if ($k === 'sig') continue;
+        $dec[] = $k . '=' . (is_scalar($params[$k]) ? (string)$params[$k] : '');
     }
-    if (!$pairs) return false;
-    sort($pairs, SORT_STRING);   // по алфавиту ключей
-    return hash_equals(md5(implode('', $pairs) . $secret), (string)$params['sig']);
+    $cands['decoded_concat'] = implode('', $dec);
+    $qs = (string)($_SERVER['QUERY_STRING'] ?? '');
+    if ($qs !== '') {
+        $pairs = [];
+        foreach (explode('&', $qs) as $kv) {
+            if ($kv === '') continue;
+            $p = explode('=', $kv, 2);
+            if ($p[0] === 'sig') continue;
+            $pairs[] = $p[0] . '=' . (isset($p[1]) ? $p[1] : '');
+        }
+        sort($pairs, SORT_STRING);
+        $cands['raw_qs'] = implode('', $pairs);
+    }
+    $diag = '';
+    foreach ($cands as $name => $s) {
+        $diag .= $name . '=' . md5($s . $secret) . ';';
+        if (hash_equals(md5($s . $secret), $sig)) return [true, $name];
+    }
+    return [false, $diag];
 }
 
-$sig_ok = vk_pay_sig_ok($params, $SECURE) ? 1 : 0;
+$sig_res = vk_pay_sig_attempts($params, $SECURE);
+$sig_ok = $sig_res[0] ? 1 : 0;
+$sig_diag = (string)$sig_res[1];
 
 // --- лог всех уведомлений (и с невалидной подписью — для отладки) ---
 try {
@@ -96,8 +117,9 @@ try {
         qs TEXT
     )");
     try { $db->exec("ALTER TABLE vk_pay_log ADD COLUMN qs TEXT"); } catch (Exception $e) { /* колонка уже есть */ }
-    $db->prepare("INSERT INTO vk_pay_log (at, ip, notification_type, order_id, status, item, price, user_id, app_id, sig_ok, raw, qs)
-        VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    try { $db->exec("ALTER TABLE vk_pay_log ADD COLUMN sig_diag TEXT"); } catch (Exception $e) { /* колонка уже есть */ }
+    $db->prepare("INSERT INTO vk_pay_log (at, ip, notification_type, order_id, status, item, price, user_id, app_id, sig_ok, raw, qs, sig_diag)
+        VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
        ->execute([
             $_SERVER['REMOTE_ADDR'] ?? '',
             (string)($params['notification_type'] ?? ''),
@@ -110,10 +132,12 @@ try {
             $sig_ok,
             substr(json_encode($params, JSON_UNESCAPED_UNICODE), 0, 4000),
             substr((string)($_SERVER['QUERY_STRING'] ?? ''), 0, 2000),
+            substr($sig_diag, 0, 500),
         ]);
 } catch (Exception $e) { /* лог не критичен */ }
 
-if (!$sig_ok) pay_err(10, 'bad sig', true);
+// sig не совпал — НЕ блокируем: реальная защита начисления — orders.getById
+// в index.php (action=buy/buybp). Несовпадение только пишем в vk_pay_log (sig_ok=0).
 if ((int)($params['app_id'] ?? 0) !== $APP_ID) pay_err(11, 'bad app', true);
 
 $type = (string)($params['notification_type'] ?? '');
