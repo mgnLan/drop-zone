@@ -31,9 +31,62 @@ $ITEMS = [
     'Premium Battle Pass · сезон 1' => ['title' => 'Premium Battle Pass · сезон 1', 'price' => 399],
 ];
 
+// --- начисление по тестовому уведомлению: имя товара -> монеты (объёмы прод-экономики) ---
+// BP отдельно: не монеты, а bp_owned=1. Только для _test-уведомлений, только по флагу.
+$CREDIT_BY_ITEM = [
+    'Пак 600 монет' => 630,
+    'Пак 2250 монет' => 2475,
+    'Пак 5100 монет' => 5850,
+    'Пак 12000 монет' => 14400,
+    'Пак 150 монет' => 150,     // новая экономика (тест-стенд / будущий прод)
+    'Пак 750 монет' => 750,
+    'Пак 1800 монет' => 1800,
+    'Пак 3750 монет' => 3750,
+];
+$BP_ITEM_NAME = 'Premium Battle Pass · сезон 1';
+
 function pay_out($d) { echo json_encode($d, JSON_UNESCAPED_UNICODE); exit; }
 function pay_err($code, $msg, $critical) {
     pay_out(['error' => ['error_code' => $code, 'error_msg' => $msg, 'critical' => $critical]]);
+}
+
+// --- начисление по тестовому chargeable: та же таблица orders, что в index.php
+// (action=buy) — единый idempotency по order_id, двойного начисления не будет.
+function vk_pay_credit_test($db, $params, $coins_by_item) {
+    global $BP_ITEM_NAME;
+    $orderId = (string)($params['order_id'] ?? '');
+    $item = (string)($params['item'] ?? '');
+    $vkUid = (int)($params['user_id'] ?? 0);
+    if ($orderId === '' || $vkUid <= 0) return;
+    $db->exec("CREATE TABLE IF NOT EXISTS orders (
+        order_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        pack INTEGER,
+        coins INTEGER,
+        created_at TEXT
+    )");
+    $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
+    $st->execute([$orderId]);
+    if ($st->fetch()) return;   // уже начислен (в т.ч. клиентским путём)
+    $st = $db->prepare("SELECT id, profile FROM users WHERE vk_id = ?");
+    $st->execute([$vkUid]);
+    $u = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$u) return;            // аккаунта с таким vk_id нет — не начисляем
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
+    if (!is_array($profile)) $profile = [];
+    if ($item === $BP_ITEM_NAME) {
+        $profile['bp_owned'] = 1;
+        $coins = 0;
+    } elseif (isset($coins_by_item[$item])) {
+        $coins = (int)$coins_by_item[$item];
+        $profile['coins'] = (int)($profile['coins'] ?? 0) + $coins;
+    } else {
+        return;                 // неизвестный товар — не подтверждаем начисление
+    }
+    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+    $db->prepare("INSERT OR IGNORE INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
+       ->execute([$orderId, $u['id'], 0, $coins]);
 }
 
 // --- параметры: ВК шлёт GET (query string); принимаем и POST ---
@@ -156,10 +209,21 @@ if ($base === 'get_item') {
     ]);
 }
 
-if ($base === 'order_state_change') {
+if ($base === 'order_state_change' || $base === 'order_status_change') {
     if ($orderId <= 0) pay_err(11, 'no order', true);
     $status = (string)($params['status'] ?? '');
     if ($status === 'chargeable') {
+        // тест-режим (приложение на модерации): VK НЕ отдаёт тестовый заказ
+        // в orders.getById — клиентский путь buy завершиться не может.
+        // Начисляем сами по уведомлению. Только _test, только по флагу в config.php:
+        //   'vk_pay_test_credit' => true
+        // Реальных денег в тесте нет. ПОСЛЕ прохождения модерации флаг убрать/выключить —
+        // реальные заказы подтверждаются здесь, а начисляются клиентским путём
+        // (action=buy → orders.getById, тот же idempotency-таблицей orders).
+        $is_test = preg_match('/_test$/', $type) === 1;
+        if ($is_test && !empty($cfg['vk_pay_test_credit']) && isset($db) && $db instanceof PDO) {
+            vk_pay_credit_test($db, $params, $CREDIT_BY_ITEM);
+        }
         // подтверждаем заказ; app_order_id = наш id (здесь = order_id ВК)
         pay_out(['response' => ['order_id' => $orderId, 'app_order_id' => $orderId]]);
     }
