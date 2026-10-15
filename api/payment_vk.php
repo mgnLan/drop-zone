@@ -50,8 +50,10 @@ function pay_err($code, $msg, $critical) {
     pay_out(['error' => ['error_code' => $code, 'error_msg' => $msg, 'critical' => $critical]]);
 }
 
-// --- начисление по тестовому chargeable: та же таблица orders, что в index.php
-// (action=buy) — единый idempotency по order_id, двойного начисления не будет.
+// --- начисление по тестовому chargeable: idempotency в orders (та же таблица,
+// что в index.php action=buy), сами деньги — в серверный кошелёк: index.php
+// применит их при save/load поверх клиентского профиля. Прямая запись в profile
+// здесь опасна: клиент со stale-профилем перезапишет её своей синхронизацией.
 function vk_pay_credit_test($db, $params, $coins_by_item) {
     global $BP_ITEM_NAME;
     $orderId = (string)($params['order_id'] ?? '');
@@ -68,23 +70,20 @@ function vk_pay_credit_test($db, $params, $coins_by_item) {
     $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
     $st->execute([$orderId]);
     if ($st->fetch()) return;   // уже начислен (в т.ч. клиентским путём)
-    $st = $db->prepare("SELECT id, profile FROM users WHERE vk_id = ?");
+    $st = $db->prepare("SELECT id FROM users WHERE vk_id = ?");
     $st->execute([$vkUid]);
     $u = $st->fetch(PDO::FETCH_ASSOC);
     if (!$u) return;            // аккаунта с таким vk_id нет — не начисляем
-    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
-    if (!is_array($profile)) $profile = [];
     if ($item === $BP_ITEM_NAME) {
-        $profile['bp_owned'] = 1;
-        $coins = 0;
+        $kind = 'bp'; $amount = 1; $coins = 0;
     } elseif (isset($coins_by_item[$item])) {
-        $coins = (int)$coins_by_item[$item];
-        $profile['coins'] = (int)($profile['coins'] ?? 0) + $coins;
+        $kind = 'coins'; $amount = (int)$coins_by_item[$item]; $coins = $amount;
     } else {
         return;                 // неизвестный товар — не подтверждаем начисление
     }
-    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
-       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+    $db->exec("CREATE TABLE IF NOT EXISTS wallet (user_id INTEGER, kind TEXT, amount INTEGER, at TEXT)");
+    $db->prepare("INSERT INTO wallet (user_id, kind, amount, at) VALUES (?, ?, ?, datetime('now'))")
+       ->execute([(int)$u['id'], $kind, $amount]);
     $db->prepare("INSERT OR IGNORE INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
        ->execute([$orderId, $u['id'], 0, $coins]);
 }
@@ -195,12 +194,13 @@ if ((int)($params['app_id'] ?? 0) !== $APP_ID) pay_err(11, 'bad app', true);
 
 $type = (string)($params['notification_type'] ?? '');
 $base = preg_replace('/_test$/', '', $type);   // тестовый режим — та же логика
-$orderId = (int)($params['order_id'] ?? 0);
+$orderIdRaw = trim((string)($params['order_id'] ?? ''));
+$orderId = (int)$orderIdRaw;
 $item = (string)($params['item'] ?? '');
 
 if ($base === 'get_item') {
     // диалог покупки ждёт данные товара; без них — «Ваш запрос не был обработан»
-    if ($orderId <= 0) pay_err(11, 'no order', true);
+    if ($orderIdRaw === '') pay_err(11, 'no order', true);
     if (!isset($ITEMS[$item])) pay_err(20, 'Product does not exist', true);
     pay_out([
         'title' => $ITEMS[$item]['title'],
@@ -210,7 +210,7 @@ if ($base === 'get_item') {
 }
 
 if ($base === 'order_state_change' || $base === 'order_status_change') {
-    if ($orderId <= 0) pay_err(11, 'no order', true);
+    if ($orderIdRaw === '') pay_err(11, 'no order', true);
     $status = (string)($params['status'] ?? '');
     if ($status === 'chargeable') {
         // тест-режим (приложение на модерации): VK НЕ отдаёт тестовый заказ

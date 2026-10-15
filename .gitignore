@@ -27,3 +27,4 @@ __pycache__/
 # --- СЕКРЕТЫ: ключи ВК не коммитим (только на сервере) ---
 api/config.php
 deploy_regru/prod_snapshot/config_backup.php
+deploy_regru/prod_snapshot/*.sqlite

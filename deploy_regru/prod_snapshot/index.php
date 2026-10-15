@@ -150,12 +150,39 @@ if ($action === 'vklogin') {
     out(['ok' => true, 'token' => $token, 'profile' => $profile, 'name' => $name]);
 }
 
+// --- серверный кошелёк: начисления ВК (тест-режим, payment_vk.php) кладутся
+// сюда, а не в профиль напрямую — иначе клиентская синхронизация со stale-
+// профилем перезапишет начисление. Применяется при save/load: coins суммируется,
+// bp ставит bp_owned=1. Строки удаляются при применении — двойного начисления нет.
+function dz_wallet_apply($db, $userId, &$profile) {
+    $db->exec("CREATE TABLE IF NOT EXISTS wallet (user_id INTEGER, kind TEXT, amount INTEGER, at TEXT)");
+    $st = $db->prepare("SELECT kind, SUM(amount) a FROM wallet WHERE user_id = ? GROUP BY kind");
+    $st->execute([$userId]);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    if (!$rows) return;
+    $coins = 0; $bp = false;
+    foreach ($rows as $r) {
+        if ($r['kind'] === 'coins') $coins += (int)$r['a'];
+        elseif ($r['kind'] === 'bp' && (int)$r['a'] > 0) $bp = true;
+    }
+    if (!is_array($profile)) $profile = [];
+    if ($coins !== 0) $profile['coins'] = (int)($profile['coins'] ?? 0) + $coins;
+    if ($bp) $profile['bp_owned'] = 1;
+    $db->prepare("DELETE FROM wallet WHERE user_id = ?")->execute([$userId]);
+}
+
 if ($action === 'save') {
     $token = (string)($in['token'] ?? '');
     $profile = $in['profile'] ?? null;
     if ($token === '' || !is_array($profile)) out(['ok' => false, 'error' => 'bad token or profile']);
     // лимит: 256 КБ на профиль — больше не нужно и безопаснее
     if (strlen(json_encode($profile)) > 262144) out(['ok' => false, 'error' => 'profile too large']);
+    $st = $db->prepare("SELECT id FROM users WHERE token = ?");
+    $st->execute([$token]);
+    $uu = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$uu) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
+    // серверные начисления (кошелёк) применяем ПОВЕРХ клиентского профиля
+    dz_wallet_apply($db, (int)$uu['id'], $profile);
     $st = $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE token = ?");
     $st->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $token]);
     if ($st->rowCount() === 0) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
@@ -164,12 +191,16 @@ if ($action === 'save') {
 
 if ($action === 'load') {
     $token = (string)($in['token'] ?? '');
-    $st = $db->prepare("SELECT profile FROM users WHERE token = ?");
+    $st = $db->prepare("SELECT id, profile FROM users WHERE token = ?");
     $st->execute([$token]);
     $u = $st->fetch(PDO::FETCH_ASSOC);
     if (!$u) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
-    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : new stdClass();
-    if ($profile === null) $profile = new stdClass();
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
+    if (!is_array($profile)) $profile = [];
+    // серверные начисления применяем сразу и сохраняем — клиент получит актуальный баланс
+    dz_wallet_apply($db, (int)$u['id'], $profile);
+    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
     out(['ok' => true, 'profile' => $profile]);
 }
 
