@@ -12866,12 +12866,18 @@ func _show_menu_shop() -> void:
 			pvs.bg_color = OUTFIT_SKINS[idx]["col"]
 		else:
 			pvs.bg_color = Color(0.1, 0.12, 0.16)
-			pvs.border_color = FRAME_ACCENTS[idx] if idx < FRAME_ACCENTS.size() else Color.WHITE
-			pvs.set_border_width_all(3)
+			var fpp: String = _frame_png(idx) if kind == "frame" else ""
+			if fpp == "" or _png_icon(fpp) == null:
+				pvs.border_color = FRAME_ACCENTS[idx] if idx < FRAME_ACCENTS.size() else Color.WHITE
+				pvs.set_border_width_all(3)
 		pvs.set_corner_radius_all(8)
 		pv.add_theme_stylebox_override("panel", pvs)
 		pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(pv)
+		if kind == "frame":
+			var fpp2: String = _frame_png(idx)
+			if fpp2 != "" and _png_icon(fpp2) != null:
+				pv.add_child(_frame_overlay(idx))   # Рамки v3: арт-рамка в витрине
 		var nl := Label.new()
 		nl.text = str(it["name"])
 		# на мобиле шрифт меньше, чтобы самое длинное имя влезало без переноса
