@@ -629,6 +629,14 @@ func _mob() -> bool:
 	# узкий экран — компактные раскладки (по реальной ширине окна, не вьюпорта)
 	return _css_win_w() < 520.0
 
+func _menu_w() -> float:
+	# ширина колонки меню в design-юнитах. Десктоп: узкая центральная колонка 460.
+	# Мобильный: юнит ≠ CSS px (design-ширина 1280 на 360 CSS — масштаб 0.28),
+	# 460 юнитов = треть экрана; берём 94 % ширины вьюпорта — колонка на всю ширину.
+	if _mob():
+		return get_viewport().get_visible_rect().size.x * 0.94
+	return 460.0
+
 # ---------- rewarded-реклама: мост к VK/MAX Ads ----------
 # Веб-оболочка экспорта может определить window.dzRewarded.show():
 # в VK — VKWebAppShowNativeAds с колбэком награды, вне площадок — сразу награда (dev-режим).
@@ -1429,7 +1437,7 @@ func _build_auth(auto: bool) -> void:
 	_logo_pulse(logo)
 	# скролл на ВСЕХ разрешениях: макс. высота = вьюпорт - лого - отступы
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(minf(460.0, vw2 * 0.92),
+	scroll.custom_minimum_size = Vector2(_menu_w(),
 		minf(500.0, vh2 - logo.custom_minimum_size.y - 60.0))
 	col.add_child(scroll)
 	var panel := PanelContainer.new()
@@ -10049,21 +10057,23 @@ func _show_menu_main() -> void:
 	var sett := _ctrl_button("gear", "Настройки")
 	sett.pressed.connect(_show_menu_settings)
 	var ctrls: Array = [squad, heroes, cards, showbiz, shop, chests, bp, prog, med, prof, sett]
-	var vw4: float = _vw()
-	if vw4 >= 980.0:
-		vb.custom_minimum_size = Vector2(minf(1100.0, vw4 * 0.92), 0)
-	elif vw4 >= 620.0:
+	# ветки — по CSS-ширине окна (не _vw(): он делит на dpr — на телефоне
+	# давал треть дизайн-ширины и лобби сжималось в узкую колонку, v6.145)
+	var cw4: float = _css_win_w()
+	if cw4 >= 980.0:
+		vb.custom_minimum_size = Vector2(minf(1100.0, _vw() * 0.92), 0)
+	elif cw4 >= 620.0:
 		# среднее окно (десктоп-панель ВК): две колонки — бой слева, управление справа
-		vb.custom_minimum_size = Vector2(minf(940.0, vw4 * 0.94), 0)
+		vb.custom_minimum_size = Vector2(minf(940.0, _vw() * 0.94), 0)
 	else:
-		vb.custom_minimum_size = Vector2(minf(560.0, vw4 * 0.92), 0)
-	if vw4 >= 620.0:
+		vb.custom_minimum_size = Vector2(_menu_w(), 0)
+	if cw4 >= 620.0:
 		# две-три колонки — бой | управление | миссии: всё лобби помещается без скролла
 		var two := HBoxContainer.new()
 		two.add_theme_constant_override("separation", 16)
 		vb.add_child(two)
 		var col_l2 := VBoxContainer.new()
-		col_l2.custom_minimum_size = Vector2(minf(300.0, vw4 * 0.34), 0)
+		col_l2.custom_minimum_size = Vector2(minf(300.0, _vw() * 0.34), 0)
 		col_l2.add_theme_constant_override("separation", 8)
 		two.add_child(col_l2)
 		col_l2.add_child(_section_title("БОЙ"))
@@ -10085,9 +10095,9 @@ func _show_menu_main() -> void:
 		for cb in ctrls:
 			flow.add_child(cb)
 		# третья колонка — миссии дня (на среднем окне под колонками, см. низ функции)
-		if vw4 >= 860.0:
+		if cw4 >= 860.0:
 			var col_m2 := VBoxContainer.new()
-			col_m2.custom_minimum_size = Vector2(minf(330.0, vw4 * 0.36), 0)
+			col_m2.custom_minimum_size = Vector2(minf(330.0, _vw() * 0.36), 0)
 			col_m2.add_theme_constant_override("separation", 8)
 			two.add_child(col_m2)
 			col_m2.add_child(_section_title("МИССИИ ДНЯ"))
@@ -10109,7 +10119,7 @@ func _show_menu_main() -> void:
 		vb.add_child(grid)
 		for cb in ctrls:
 			grid.add_child(cb)
-	if vw4 < 860.0:
+	if cw4 < 860.0:
 		vb.add_child(_section_title("МИССИИ ДНЯ"))
 		vb.add_child(_daily_box())
 
@@ -10183,7 +10193,7 @@ func _show_menu_settings() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("gear", "Настройки"))
 	var fsb := _menu_button("Полный экран")
 	fsb.pressed.connect(_request_fullscreen)
@@ -10472,7 +10482,7 @@ func _show_menu_squad() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("squad", "Отряд — создание бойцов", "squad"))
 	_maybe_auto_tip("squad")
 	# вкладки 4 слотов: открыт только первый, остальные — заслуги/подписка
@@ -12831,7 +12841,7 @@ func _show_menu_shop() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("shop", "Магазин", "shop"))
 	_maybe_auto_tip("shop")
 	var bal2 := HBoxContainer.new()
@@ -12982,7 +12992,7 @@ func _show_menu_profile() -> void:
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(460.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("profile", "Личные настройки"))
 	# аватар
 	var arow := HBoxContainer.new()
