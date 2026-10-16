@@ -590,13 +590,25 @@ func _apply_display_scale() -> void:
 	# Масштаб UI весь идёт через _vw()/_vh() = get_visible_rect() — эффективный
 	# вьюпорт после letterbox, не DisplayServer.window_get_size(); при смене
 	# аспекта size_changed переприменяет раскладку через call_deferred.
+	# ВНИМАНИЕ: условие ниже — ТОЛЬКО по _css_win_w() (реальная ширина окна
+	# браузера). Через _vw() нельзя: visible_rect в design-юнитах (≈1000),
+	# условие всегда давало KEEP — на портрете телефона игра сжималась
+	# в полоску 16:9 посреди экрана (гейт 360×800, 2026-10-16).
 	var win := get_window()
 	if win != null:
 		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-		if _vw() >= 700.0:
+		if _css_win_w() >= 700.0:
 			win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 		else:
 			win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH
+
+func _css_win_w() -> float:
+	# реальная ширина окна в CSS-пикселях (не design-юниты вьюпорта)
+	if OS.has_feature("web"):
+		var jw = JavaScriptBridge.eval("window.innerWidth || 0")
+		if jw != null and float(jw) > 0.0:
+			return float(jw)
+	return get_viewport().get_visible_rect().size.x / _dpr()
 
 func _dpr() -> float:
 	# в браузере viewport считается в device-пикселях — переводим в CSS-пиксели
@@ -614,8 +626,8 @@ func _vh() -> float:
 	return get_viewport().get_visible_rect().size.y / _dpr()
 
 func _mob() -> bool:
-	# узкий экран — компактные раскладки
-	return _vw() < 520.0
+	# узкий экран — компактные раскладки (по реальной ширине окна, не вьюпорта)
+	return _css_win_w() < 520.0
 
 # ---------- rewarded-реклама: мост к VK/MAX Ads ----------
 # Веб-оболочка экспорта может определить window.dzRewarded.show():
