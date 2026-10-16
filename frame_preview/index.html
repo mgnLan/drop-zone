@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drop Zone — концепт рамок аватара</title>
+<style>
+  :root{
+    --bg0:#05070c; --bg1:#0b1428;
+    --pink:#ff3c6e; --cyan:#28d8ff; --gold:#d4af37;
+    --text:#f2f6ff; --muted:#9aa7bd;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    min-height:100vh;
+    background:
+      radial-gradient(1200px 600px at 70% -10%, rgba(40,216,255,.12), transparent 60%),
+      radial-gradient(900px 500px at 10% 110%, rgba(255,60,110,.14), transparent 60%),
+      linear-gradient(180deg,var(--bg1) 0%,var(--bg0) 55%,#030509 100%);
+    color:var(--text);
+    font-family:'Segoe UI',Manrope,Arial,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:48px 24px 72px;
+  }
+  h1{
+    font-size:30px;letter-spacing:2px;text-transform:uppercase;
+    background:linear-gradient(90deg,var(--pink),var(--cyan));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-align:center;
+  }
+  .sub{color:var(--muted);margin:10px 0 44px;text-align:center;max-width:640px;line-height:1.5}
+  .row{display:flex;gap:64px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+  .card{display:flex;flex-direction:column;align-items:center;gap:18px}
+  .label{font-size:13px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)}
+  .label b{color:var(--text)}
+
+  /* аватар + рамка */
+  .avatar-wrap{position:relative;width:220px;height:220px}
+  .avatar{
+    position:absolute;inset:11%;
+    width:78%;height:78%;object-fit:cover;
+    border-radius:8%;
+    background:#0d1220;
+  }
+  .frame{
+    position:absolute;inset:0;width:100%;height:100%;
+    pointer-events:none;
+  }
+  /* пульсация неона */
+  .glow-neon{animation:pulseN 2.6s ease-in-out infinite}
+  @keyframes pulseN{
+    0%,100%{filter:drop-shadow(0 0 10px rgba(255,60,110,.45)) drop-shadow(0 0 18px rgba(40,216,255,.30))}
+    50%{filter:drop-shadow(0 0 22px rgba(255,60,110,.75)) drop-shadow(0 0 30px rgba(40,216,255,.55))}
+  }
+  .glow-gold{animation:pulseG 3.4s ease-in-out infinite}
+  @keyframes pulseG{
+    0%,100%{filter:drop-shadow(0 0 10px rgba(212,175,55,.40))}
+    50%{filter:drop-shadow(0 0 24px rgba(212,175,55,.75))}
+  }
+
+  /* «старая» рамка — тонкая полоска, текущий стиль */
+  .avatar-wrap.old .avatar{inset:6%;width:88%;height:88%;border-radius:10px}
+  .stripe{
+    position:absolute;inset:0;border-radius:10px;
+    border:3px solid #8a93a6; /* «Стандарт» */
+    box-shadow:0 0 0 1px rgba(255,255,255,.06) inset;
+  }
+
+  /* мини-вид в списке (как в ростере) */
+  .mini-row{display:flex;gap:36px;align-items:flex-end;margin-top:56px}
+  .mini{position:relative;width:56px;height:56px}
+  .mini .avatar{inset:11%;width:78%;height:78%;border-radius:8%}
+  .mini .frame{inset:0}
+  .mini .stripe{border-width:2px;border-radius:6px}
+  .mini-label{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
+
+  .note{
+    margin-top:56px;max-width:680px;color:var(--muted);font-size:13px;line-height:1.6;
+    border:1px solid rgba(40,216,255,.2);border-radius:10px;padding:16px 20px;
+    background:rgba(5,8,15,.6);
+  }
+  .note b{color:var(--text)}
+</style>
+</head>
+<body>
+
+<h1>Рамки аватара — новый концепт</h1>
+<p class="sub">Сравнение: слева текущий стиль («полоска»), справа — два варианта
+полноценных рамок в арт-стиле игры. PNG с прозрачным фоном, центровое отверстие
+под аватар — в игре это обычный TextureRect поверх аватара.</p>
+
+<div class="row">
+  <div class="card">
+    <div class="avatar-wrap old">
+      <img class="avatar" src="../game/assets/ui/avatars/av1.png" alt="">
+      <div class="stripe"></div>
+    </div>
+    <div class="label"><b>Текущий стиль</b> · «Стандарт»</div>
+  </div>
+
+  <div class="card">
+    <div class="avatar-wrap">
+      <img class="avatar" src="../game/assets/ui/avatars/av1.png" alt="">
+      <img class="frame glow-neon" src="frame_neon.png" alt="">
+    </div>
+    <div class="label"><b>«Неон-арена»</b> · роза/циан · эпическая</div>
+  </div>
+
+  <div class="card">
+    <div class="avatar-wrap">
+      <img class="avatar" src="../game/assets/ui/avatars/av1.png" alt="">
+      <img class="frame glow-gold" src="frame_gold.png" alt="">
+    </div>
+    <div class="label"><b>«Легенда шоу»</b> · золото · легендарная</div>
+  </div>
+</div>
+
+<div class="mini-row">
+  <div>
+    <div class="mini old"><img class="avatar" src="../game/assets/ui/avatars/av2.png" alt=""><div class="stripe"></div></div>
+    <div class="mini-label">56px сейчас</div>
+  </div>
+  <div>
+    <div class="mini"><img class="avatar" src="../game/assets/ui/avatars/av2.png" alt=""><img class="frame" src="frame_neon.png" alt=""></div>
+    <div class="mini-label">56px неон</div>
+  </div>
+  <div>
+    <div class="mini"><img class="avatar" src="../game/assets/ui/avatars/av2.png" alt=""><img class="frame" src="frame_gold.png" alt=""></div>
+    <div class="mini-label">56px золото</div>
+  </div>
+</div>
+
+<div class="note">
+  <b>Как это встраивается в игру (кода не тронуто):</b> рамка — один PNG
+  1024×1024 (вес ~1,5–1,8 МБ, даунскейл до 256×256 даст ~80–120 КБ на рамку),
+  рисуется TextureRect'ом поверх аватара — тот же паттерн, что уже используется
+  для иконок из png256. Редкость читается силуэтом и цветом свечения, а не
+  толщиной линии. Серию можно расширить генерацией под каждый тир
+  (Стандарт → графит, Редкая → один цвет неона, Эпическая → два, Легендарная → золото).
+</div>
+
+</body>
+</html>

@@ -1351,6 +1351,11 @@ func _profile_normalize() -> void:
 		if not (hd is Dictionary):
 			hd = {}
 		_profile[hk] = hd
+	# BP_SEASON_V1 §1: токены аренды (массив словарей; пустой объект из PHP -> [])
+	var ht = _profile.get("hero_tokens", null)
+	if not (ht is Array):
+		ht = []
+	_profile.hero_tokens = ht
 	var sqh = _profile.get("squad_heroes", null)
 	if not (sqh is Array):
 		sqh = [-1, -1, -1, -1]
@@ -1606,9 +1611,9 @@ const RETRAIN_STATS_COST := 1800  # Хвост v1 §4.4: ×3 — монет за
 const CLASS_NAMES := {"pistols": "Пистолеты", "smg": "ПП", "rifles": "Винтовки",
 	"shotguns": "Дробовики", "sniper": "Снайперское", "heavy": "Тяжёлое", "melee": "Ближний бой"}
 # ---------- миссии сезона: основной источник XP Battle Pass ----------
-# Расчёт (сезон 28 дней = 4 недели): до 50 ур. нужно 22 800 XP.
-# Дневные 5×50=250/день (7 000) + вход +20/день (560) + недельные 12×300=3 600/нед (14 400) = 21 960
-# + бои 3/3/10 (~1 300 у активного) ≈ 23 300 → запас ~3 дня. Пропуск 4+ дней = финал недостижим.
+# Расчёт (сезон 60 дней, конец 2026-12-02): до 50 ур. нужно 22 800 XP.
+# Дневные 5×45=225/день · вход +20/день · недельные миссии + бои — у активного
+# ~425 XP/день → проход за ~54 дня. ПЕРВЫЙ СЕЗОН ЩЕДРЫЙ — прогрессию не трогаем.
 const MQ_DAY_XP := 45
 const MQ_DAY_COINS := 5
 const MQ_LOGIN_XP := 20
@@ -2063,6 +2068,7 @@ func _load_profile() -> void:
 	_profile.hero_owned = cfg.get_value("player", "hero_owned", [])
 	_profile.hero_rentals = cfg.get_value("player", "hero_rentals", {})
 	_profile.hero_frags = cfg.get_value("player", "hero_frags", {})
+	_profile.hero_tokens = cfg.get_value("player", "hero_tokens", [])   # BP_SEASON_V1 §1
 	_profile.squad_heroes = cfg.get_value("player", "squad_heroes", [-1, -1, -1, -1])
 	_profile.craft_dups = int(cfg.get_value("player", "craft_dups", 0))
 	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
@@ -2123,6 +2129,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "hero_owned", _profile.get("hero_owned", []))
 	cfg.set_value("player", "hero_rentals", _profile.get("hero_rentals", {}))
 	cfg.set_value("player", "hero_frags", _profile.get("hero_frags", {}))
+	cfg.set_value("player", "hero_tokens", _profile.get("hero_tokens", []))   # BP_SEASON_V1 §1
 	cfg.set_value("player", "squad_heroes", _profile.get("squad_heroes", [-1, -1, -1, -1]))
 	cfg.set_value("player", "craft_dups", int(_profile.get("craft_dups", 0)))
 	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
@@ -5479,7 +5486,7 @@ const SHOW_CARDS := {
 	# редкие (rare)
 	"molot": {"name": "Молот Рекса", "desc": "Удар 3×3: 60 урона, броня в зоне сгорает", "target": "cell", "rarity": "rare"},
 	"rezerv": {"name": "Резерв", "desc": "Союзный боец на краю арены с 50% HP", "target": "", "rarity": "rare"},
-	"stavka": {"name": "Ставка", "desc": "Ставка букмекера бесплатно: победа ×2, поражение ×0.5", "target": "", "rarity": "rare"},
+	"stavka": {"name": "Ставка", "desc": "Ставка букмекера бесплатно: победа ×1.5, поражение ×0.5", "target": "", "rarity": "rare"},
 }
 # веса тиров ролла (пак 1.1): частые 45 / средние 30 / редкие 18 / легендарные 7 (резерв — не падают)
 const CARD_RARITY_W := {"common": 45, "medium": 30, "rare": 18, "legendary": 7}
@@ -5488,7 +5495,7 @@ var _card_played := false        # 1 карта/ход на отряд
 var _card_targeting := ""        # карта ждёт клика по цели/клетке
 var _crowd_fury := false         # 13-й раунд: урон всех +25%
 var _first_blood := false
-var _book_bet := false           # ставка букмекера: победа ×2, поражение ×0.5
+var _book_bet := false           # ставка букмекера: победа ×1.5, поражение ×0.5 (выплата ~6069)
 var _molot_pending: Array = []   # [{cell}] — красная зона ударит в начале след. хода
 var _radar_ttl := 0              # Радар: ходов без тумана войны (видит игрок)
 var _airdrop_pending: Array = [] # [{cell, lvl}] — аирдроп приземлится в начале след. хода игрока
@@ -5665,8 +5672,8 @@ func _card_resolve(cid: String, tgt: int, cell: Vector2i) -> void:
 				_card_played = false
 				return
 			_book_bet = true
-			_log("СТАВКА принята букмекером: победа ×2, поражение ×0.5!")
-			_toast("stavka", "Ставка принята: победа ×2, поражение ×0.5!")
+			_log("СТАВКА принята букмекером: победа ×1.5, поражение ×0.5!")
+			_toast("stavka", "Ставка принята: победа ×1.5, поражение ×0.5!")
 	_sfx_play("click")
 	_after_action()
 
@@ -7015,15 +7022,15 @@ func _populate_cards_popup() -> void:
 		cbtn.pressed.connect(_sfx_play.bind("click"))
 		fcv.add_child(cbtn)
 	var betb := Button.new()
-	betb.text = "Ставка ×2"
+	betb.text = "Ставка ×1.5"
 	betb.toggle_mode = true
 	betb.button_pressed = _book_bet
-	betb.tooltip_text = "Ставка букмекера: победа — монеты ×2, поражение — ×0.5"
+	betb.tooltip_text = "Ставка букмекера: победа — монеты ×1.5, поражение — ×0.5"
 	betb.add_theme_font_size_override("font_size", 11)
 	betb.custom_minimum_size = Vector2(0, 26)
 	betb.pressed.connect(func():
 		_book_bet = not _book_bet
-		_log("Ставка букмекера: %s" % ("ВКЛ — победа ×2, поражение ×0.5" if _book_bet else "выкл"))
+		_log("Ставка букмекера: %s" % ("ВКЛ — победа ×1.5, поражение ×0.5" if _book_bet else "выкл"))
 		_ui.fighter_cards.visible = false
 		_refresh_fighter_panel())
 	betb.pressed.connect(_sfx_play.bind("click"))
@@ -10048,11 +10055,6 @@ func _show_menu_main() -> void:
 		col_l2.add_child(m2)
 		col_l2.add_child(m3)
 		col_l2.add_child(m4)
-		var go_cta := _menu_button("В БОЙ", true)
-		go_cta.custom_minimum_size = Vector2(0, 52)
-		go_cta.add_theme_font_size_override("font_size", 19)
-		go_cta.pressed.connect(func(): _start_mode(1))
-		col_l2.add_child(go_cta)
 		var col_r2 := VBoxContainer.new()
 		col_r2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		col_r2.add_theme_constant_override("separation", 8)
@@ -10082,11 +10084,6 @@ func _show_menu_main() -> void:
 		vb.add_child(m2)
 		vb.add_child(m3)
 		vb.add_child(m4)
-		var go_cta2 := _menu_button("В БОЙ", true)
-		go_cta2.custom_minimum_size = Vector2(0, 52)
-		go_cta2.add_theme_font_size_override("font_size", 19)
-		go_cta2.pressed.connect(func(): _start_mode(1))
-		vb.add_child(go_cta2)
 		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
 		var grid := GridContainer.new()
 		grid.columns = 3
@@ -10509,6 +10506,8 @@ func _show_menu_squad() -> void:
 	vb.add_child(nrow)
 	var nl := Label.new()
 	nl.text = "Ник:"
+	if not _mob():
+		nl.add_theme_font_size_override("font_size", 12)
 	nrow.add_child(nl)
 	var ne := LineEdit.new()
 	ne.text = _profile.names[_squad_edit]
@@ -10535,6 +10534,8 @@ func _show_menu_squad() -> void:
 	vb.add_child(wrow)
 	var wl := Label.new()
 	wl.text = "Оружие:"
+	if not _mob():
+		wl.add_theme_font_size_override("font_size", 12)
 	wrow.add_child(wl)
 	for wi in SIDEARMS.size():
 		var wd: Dictionary = _weapon_by_id(SIDEARMS[wi])
@@ -10564,6 +10565,8 @@ func _show_menu_squad() -> void:
 	vb.add_child(crow3)
 	var cl3 := Label.new()
 	cl3.text = "Класс:"
+	if not _mob():
+		cl3.add_theme_font_size_override("font_size", 12)
 	crow3.add_child(cl3)
 	for ci in FIGHTER_CLASSES.size():
 		var cb := Button.new()
@@ -10593,6 +10596,8 @@ func _show_menu_squad() -> void:
 	vb.add_child(hrow)
 	var hl := Label.new()
 	hl.text = "Герой:"
+	if not _mob():
+		hl.add_theme_font_size_override("font_size", 12)
 	hrow.add_child(hl)
 	var hb := Button.new()
 	var hmods: Dictionary = {}
@@ -10649,6 +10654,8 @@ func _show_menu_squad() -> void:
 		vb.add_child(grow2)
 		var gl := Label.new()
 		gl.text = "Пол:"
+		if not _mob():
+			gl.add_theme_font_size_override("font_size", 12)
 		grow2.add_child(gl)
 		for g in [["m", "Мужчина"], ["f", "Женщина"]]:
 			var gb := Button.new()
@@ -10666,11 +10673,13 @@ func _show_menu_squad() -> void:
 		vb.add_child(srow)
 		var sl := Label.new()
 		sl.text = "Кожа:"
+		if not _mob():
+			sl.add_theme_font_size_override("font_size", 12)
 		srow.add_child(sl)
 		var SKIN_COLS := [Color(0.96, 0.80, 0.66), Color(0.78, 0.56, 0.38), Color(0.42, 0.28, 0.18), Color(0.98, 0.93, 0.88)]
 		for si in SKIN_NAMES.size():
 			var sb := Button.new()
-			sb.custom_minimum_size = Vector2(30, 30)
+			sb.custom_minimum_size = Vector2(20, 20)   # OTRYAD_V1: 30->20
 			sb.tooltip_text = SKIN_NAMES[si]
 			var ss := StyleBoxFlat.new()
 			ss.bg_color = SKIN_COLS[si]
@@ -10703,23 +10712,30 @@ func _show_menu_squad() -> void:
 			og.add_theme_constant_override("v_separation", 4)
 			orow = og
 		else:
-			var oh := HBoxContainer.new()
-			oh.add_theme_constant_override("separation", 4)
-			orow = oh
-		vb.add_child(orow)
-		if not _mob():
+			# OTRYAD_V1 p.3: FlowContainer (перенос), подпись сверху
+			var ow2 := VBoxContainer.new()
+			ow2.add_theme_constant_override("separation", 2)
 			var ol := Label.new()
 			ol.text = "Камуфляж:"
-			orow.add_child(ol)
+			ol.add_theme_font_size_override("font_size", 12)
+			ow2.add_child(ol)
+			var oh := FlowContainer.new()
+			oh.add_theme_constant_override("h_separation", 4)
+			oh.add_theme_constant_override("v_separation", 4)
+			orow = oh
+			ow2.add_child(orow)
+			vb.add_child(ow2)
+		if _mob():
+			vb.add_child(orow)
 		var owned_of: Array = _profile.get("owned_outfits", [1, 0, 0, 0, 0])
 		for oi in OUTFIT_SKINS.size():
 			var ob := Button.new()
-			ob.custom_minimum_size = Vector2(0, 30)
+			ob.custom_minimum_size = Vector2(0, 26)   # OTRYAD_V1: 30->26
 			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
 			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "?"
 			ob.modulate = Color(1, 1, 1) if owned_ofi else Color(0.4, 0.4, 0.45)
 			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
-			ob.add_theme_font_size_override("font_size", 12)
+			ob.add_theme_font_size_override("font_size", 11)   # OTRYAD_V1: 12->11
 			var os: StyleBoxFlat = StyleBoxFlat.new()
 			os.bg_color = Color("#141824") if owned_ofi else Color(0.10, 0.11, 0.14, 0.9)
 			if not owned_ofi:
@@ -10755,18 +10771,25 @@ func _show_menu_squad() -> void:
 			sg.add_theme_constant_override("v_separation", 4)
 			skin_row = sg
 		else:
-			var sh := HBoxContainer.new()
-			sh.add_theme_constant_override("separation", 4)
-			skin_row = sh
-		vb.add_child(skin_row)
-		if not _mob():
+			# OTRYAD_V1 p.3: FlowContainer (перенос), подпись сверху
+			var sw2 := VBoxContainer.new()
+			sw2.add_theme_constant_override("separation", 2)
 			var skin_lbl := Label.new()
 			skin_lbl.text = "Скин:"
-			skin_row.add_child(skin_lbl)
+			skin_lbl.add_theme_font_size_override("font_size", 12)
+			sw2.add_child(skin_lbl)
+			var sh := FlowContainer.new()
+			sh.add_theme_constant_override("h_separation", 4)
+			sh.add_theme_constant_override("v_separation", 4)
+			skin_row = sh
+			sw2.add_child(skin_row)
+			vb.add_child(sw2)
+		if _mob():
+			vb.add_child(skin_row)
 		for ski in SKINS.size():
 			var skd: Dictionary = SKINS[ski]
 			var skb := Button.new()
-			skb.custom_minimum_size = Vector2(0, 30)
+			skb.custom_minimum_size = Vector2(0, 26)   # OTRYAD_V1: 30->26
 			var owned_si: bool = _skin_owned(str(skd["id"]))
 			skb.text = str(skd["name"])
 			if not owned_si:
@@ -10775,7 +10798,7 @@ func _show_menu_squad() -> void:
 				skb.expand_icon = false
 			skb.modulate = Color(1, 1, 1) if owned_si else Color(0.4, 0.4, 0.45)
 			skb.tooltip_text = str(skd["name"]) if owned_si else (str(skd["name"]) + " — награда Battle Pass (скоро)")
-			skb.add_theme_font_size_override("font_size", 12)
+			skb.add_theme_font_size_override("font_size", 11)   # OTRYAD_V1: 12->11
 			var skss: StyleBoxFlat = StyleBoxFlat.new()
 			skss.bg_color = Color("#141824") if owned_si else Color(0.10, 0.11, 0.14, 0.9)
 			if not owned_si:
@@ -10833,9 +10856,9 @@ func _show_menu_squad() -> void:
 			)
 			crow.add_child(cb)
 		# рамка аватара (монетизация) — 9 пресетов сеткой; на десктопе компактнее (6 колонок, 2 ряда)
-		vb.add_child(_mk_label("Рамка: · аватар — в «Личные настройки»" if not _mob() else "Рамка:", 14))
-		var fgrid := GridContainer.new()
-		fgrid.columns = 5 if _mob() else 6
+		vb.add_child(_mk_label("Рамка: · аватар — в «Личные настройки»" if not _mob() else "Рамка:", 12))
+		# OTRYAD_V1 p.3: рамки — FlowContainer (перенос при нехватке ширины)
+		var fgrid := FlowContainer.new()
 		fgrid.add_theme_constant_override("h_separation", 4)
 		fgrid.add_theme_constant_override("v_separation", 4)
 		vb.add_child(fgrid)
@@ -10874,7 +10897,7 @@ func _show_menu_squad() -> void:
 		vb.add_child(body)
 		# тикет #1: на невысоком окне ВК колонки отряда переполнялись — каждая в своём
 		# ScrollContainer фиксированной высоты под окно; внешний скролл не трогаем
-		var area_h: float = clampf(_vh() - 340.0, 220.0, 700.0)
+		var area_h: float = clampf(_vh() - 240.0, 220.0, 700.0)   # OTRYAD_V1: -340->-240
 		var col_l := VBoxContainer.new()
 		col_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		col_l.add_theme_constant_override("separation", sep)
@@ -10883,6 +10906,10 @@ func _show_menu_squad() -> void:
 		sc_l.custom_minimum_size = Vector2(0, area_h)
 		sc_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sc_l.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		# OTRYAD_V1 p.1: scrollbar alpha 0 (wheel/swipe work, no square)
+		var sbl: VScrollBar = sc_l.get_v_scroll_bar()
+		if sbl:
+			sbl.modulate.a = 0.0
 		sc_l.add_child(col_l)
 		body.add_child(sc_l)
 		var col_r := VBoxContainer.new()
@@ -10893,6 +10920,9 @@ func _show_menu_squad() -> void:
 		sc_r.custom_minimum_size = Vector2(0, area_h)
 		sc_r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sc_r.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		var sbr: VScrollBar = sc_r.get_v_scroll_bar()
+		if sbr:
+			sbr.modulate.a = 0.0
 		sc_r.add_child(col_r)
 		body.add_child(sc_r)
 		# переносим внешность (всё после заголовка и вкладок) в левую колонку
@@ -10913,20 +10943,20 @@ func _show_menu_squad() -> void:
 	stps.border_color = Color(0.16, 0.85, 1.0, 0.2)
 	stps.set_border_width_all(1)
 	stps.set_corner_radius_all(10)
-	stps.content_margin_left = 14.0
-	stps.content_margin_right = 14.0
-	stps.content_margin_top = 12.0
-	stps.content_margin_bottom = 12.0
+	stps.content_margin_left = 10.0    # OTRYAD_V1: 14/12 -> 10/8
+	stps.content_margin_right = 10.0
+	stps.content_margin_top = 8.0
+	stps.content_margin_bottom = 8.0
 	st_panel.add_theme_stylebox_override("panel", stps)
 	vs.add_child(st_panel)
 	var stv := VBoxContainer.new()
-	stv.add_theme_constant_override("separation", 6)
+	stv.add_theme_constant_override("separation", 4)   # OTRYAD_V1: 6->4
 	st_panel.add_child(stv)
 	var st: Dictionary = _profile.stats[_squad_edit]
 	var left := _stat_points_left(st, _profile.lvl[_squad_edit])
 	var pl := Label.new()
 	pl.text = "Уровень %d (опыт %d/%d) · Свободно очков: %d" % [_profile.lvl[_squad_edit], _profile.xp[_squad_edit], _xp_need(_profile.lvl[_squad_edit]), left]
-	pl.add_theme_font_size_override("font_size", 17 if _mob() else 15)
+	pl.add_theme_font_size_override("font_size", 17 if _mob() else 14)   # OTRYAD_V1: -1 px
 	var plf := _font_mono()
 	if plf != null:
 		pl.add_theme_font_override("font", plf)
@@ -10971,7 +11001,7 @@ func _show_menu_squad() -> void:
 		row.add_child(plus)
 		var hint := Label.new()
 		hint.text = "  " + STAT_HINTS[k]
-		hint.add_theme_font_size_override("font_size", 10 if _mob() else 12)
+		hint.add_theme_font_size_override("font_size", 10 if _mob() else 11)   # OTRYAD_V1: 12->11
 		row.add_child(hint)
 	# переподготовка: сброс очков статов за монеты (вернёт все вложенные очки)
 	var invested := 0
@@ -10979,6 +11009,7 @@ func _show_menu_squad() -> void:
 		invested += int(st.get(k2, 0))
 	if invested > 0:
 		var rstat := _menu_button("Переподготовка (сброс статов) — %d монет" % RETRAIN_STATS_COST, true)
+		rstat.add_theme_font_size_override("font_size", 15)   # OTRYAD_V1: -1 px
 		rstat.icon = _icon_tex("coin")
 		rstat.add_theme_constant_override("icon_max_width", 16)
 		rstat.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
@@ -10997,7 +11028,7 @@ func _show_menu_squad() -> void:
 		vs.add_child(rstat)
 	var tl2 := Label.new()
 	tl2.text = "Таланты — очков: %d (+1 каждые 3 уровня)" % int(_profile.tpts[_squad_edit])
-	tl2.add_theme_font_size_override("font_size", 15)
+	tl2.add_theme_font_size_override("font_size", 14)   # OTRYAD_V1: -1 px
 	tl2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.45))
 	vs.add_child(tl2)
 	var tprof: Dictionary = _profile.talents[_squad_edit]
@@ -11117,7 +11148,7 @@ const BP_TABLE_FREE := {
 	42: {"kind": "outfit", "idx": 1, "name": "Камуфляж «Город»"},
 	45: {"kind": "hero_frag", "hid": 7, "n": 15, "name": "Фрагменты «Вдова» ×15 (30/45)"},
 	48: {"kind": "chest", "name": "Сундук удачи"},
-	50: {"kind": "hero_own", "hid": 11, "name": "Герой «Призрак» НАВСЕГДА"},
+	50: {"kind": "hero_token", "hid": 11, "days": 30, "name": "Призрак — аренда 30 дн (активация в любой момент)"},   # BP_SEASON_V1 §1
 }
 const BP_TABLE_PREM := {
 	3: {"kind": "coins", "n": 90, "name": "90 монет"},
@@ -11254,6 +11285,23 @@ func _bp_claim(lv: int, prem: bool) -> void:
 					_profile.hero_owned = hf_own
 					hf_frags.erase(str(hf_hid))
 				_profile.hero_frags = hf_frags
+		"hero_token":
+			# BP_SEASON_V1 §1: токен аренды с отложенной активацией — часы НЕ идут с получения
+			var tk_hid := int(rw.get("hid", -1))
+			var tk_days := int(rw.get("days", 30))
+			if tk_hid >= 0 and tk_hid < HEROES.size():
+				var tk_arr: Array = _profile.get("hero_tokens", [])
+				var tk_dup := false
+				for tk0 in tk_arr:
+					if int(tk0.get("hid", -1)) == tk_hid:
+						tk_dup = true
+						break
+				if tk_dup:
+					# в сезоне 1 не бывает — assert в лог, не крешим
+					push_error("BP_SEASON_V1: дубликат токена аренды hid=%d" % tk_hid)
+				else:
+					tk_arr.append({"hid": tk_hid, "days": tk_days})
+					_profile.hero_tokens = tk_arr
 		"hero_own":
 			# герой навсегда
 			var ho_hid := int(rw.get("hid", -1))
@@ -12001,6 +12049,11 @@ func _hero_status(hid: int) -> String:
 	var fn := int(frags.get(str(hid), 0))
 	if until > Time.get_unix_time_from_system():
 		return "Аренда: ещё %d дн. · фрагменты %d/%d" % [left, fn, HERO_FRAGS_NEED]
+	# BP_SEASON_V1 §1: токен аренды ждёт активации (до активации не playable)
+	var ht2: Array = _profile.get("hero_tokens", [])
+	for tk in ht2:
+		if int(tk.get("hid", -1)) == hid:
+			return "Аренда готова: %d дн — активируй кнопкой ниже" % int(tk.get("days", 30))
 	return "Фрагменты %d/%d" % [fn, HERO_FRAGS_NEED]
 
 func _hero_grant(rarity: int, is_rent: bool, amount: int) -> Dictionary:
@@ -12697,6 +12750,37 @@ func _show_menu_heroes() -> void:
 				_show_menu_heroes()
 			)
 			cv.add_child(bb)
+		# BP_SEASON_V1 §1: активация токена аренды — перенос в hero_rentals, часы пошли.
+		# Токенов может быть несколько — очередь: активировать по одному.
+		var tk_idx := -1
+		var tk_days2 := 0
+		var ht3: Array = _profile.get("hero_tokens", [])
+		for tki in ht3.size():
+			if int(ht3[tki].get("hid", -1)) == hid:
+				tk_idx = tki
+				tk_days2 = int(ht3[tki].get("days", 30))
+				break
+		if tk_idx >= 0 and not (hid < owned_arr.size() and int(owned_arr[hid]) == 1):
+			var tkb := _menu_button("Активировать аренду (%d дн)" % tk_days2, true)
+			tkb.custom_minimum_size = Vector2(0, 34)
+			var hv2: int = hid
+			var tidx: int = tk_idx
+			tkb.pressed.connect(func():
+				var ht4: Array = _profile.get("hero_tokens", [])
+				if tidx < ht4.size() and int(ht4[tidx].get("hid", -1)) == hv2:
+					var days4 := int(ht4[tidx].get("days", 30))
+					ht4.remove_at(tidx)
+					_profile.hero_tokens = ht4
+					var rentals4: Dictionary = _profile.get("hero_rentals", {})
+					var cur4 := float(rentals4.get(str(hv2), 0))
+					rentals4[str(hv2)] = maxf(Time.get_unix_time_from_system(), cur4) + days4 * 86400
+					_profile.hero_rentals = rentals4
+					_save_profile()
+					_sfx_play("levelup")
+					_log("%s: аренда активирована — %d дн." % [HEROES[hv2]["name"], days4])
+				_show_menu_heroes()
+			)
+			cv.add_child(tkb)
 
 func _show_menu_shop() -> void:
 	_menu_back_show(true)
