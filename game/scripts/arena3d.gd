@@ -4686,6 +4686,7 @@ func _check_triumphs_win() -> void:
 # ---------- опыт и уровни ----------
 var _lvl_open := false
 var _lvl_wrap: CenterContainer = null
+var _lvl_f = null            # боец окна уровня — для закрытия через Esc/«×»/«ГОТОВО»
 # тиры-лиги: название, первый уровень, награда за вход (титул + рамка/камуфляж)
 const XP_TIERS := [
 	{"name": "Рекруты", "min": 1},
@@ -4805,31 +4806,48 @@ func _tier_rewards_check(old_lvl: int, new_lvl: int) -> void:
 					_log("Награда тира: камуфляж «%s»!" % OUTFIT_SKINS[int(XP_TIERS[ti]["outfit"])]["name"])
 			_save_profile()
 
-func _lvl_add(f: Dictionary, k: String, d: int, val: Label, pts: Label) -> void:
+func _lvl_add(f: Dictionary, k: String, d: int, val: Label, pts: Label, base_stats: Dictionary = {}, minus_btns: Dictionary = {}) -> void:
 	if d > 0 and int(f.pts) <= 0:
 		return
-	if d < 0 and int(f.stats.get(k, 0)) <= 0:
+	# HOTFIX_LEVELUP_V1 баг 2: минус разрешён только выше снапшота базы на момент
+	# открытия окна — иначе снимались очки, вложенные на прошлых уровнях,
+	# и перекидывались в другой скилл (регресс)
+	if d < 0 and int(f.stats.get(k, 0)) <= int(base_stats.get(k, 0)):
 		return
 	f.stats[k] = int(f.stats.get(k, 0)) + d
 	f.pts = int(f.pts) - d
 	val.text = str(int(f.stats[k]))
 	pts.text = "Свободно очков: %d" % int(f.pts)
+	# пересчёт состояний минусов во всех строках, а не только текущей
+	if not minus_btns.is_empty():
+		for kk in minus_btns:
+			minus_btns[kk].disabled = int(f.stats.get(kk, 0)) <= int(base_stats.get(kk, 0))
 
-func _lvl_confirm(f: Dictionary) -> void:
+func _lvl_confirm(f: Dictionary, quiet := false) -> void:
 	_recalc_derived(f, false)
 	_lvl_open = false
+	_lvl_f = null
 	if _lvl_wrap:
 		_lvl_wrap.queue_free()
 		_lvl_wrap = null
 	_refresh_fighter_panel()
 	_refresh_squad()
-	_log("%s: навыки обновлены — HP %d, ОД %d, обзор %d" % [f.name, int(f.max_hp), int(f.max_ap), int(f.vision)])
+	if not quiet:
+		_log("%s: навыки обновлены — HP %d, ОД %d, обзор %d" % [f.name, int(f.max_hp), int(f.max_ap), int(f.vision)])
+
+func _lvl_close() -> void:
+	# тот же путь, что _lvl_confirm, но без лога «навыки обновлены» (Esc / «×» / «ГОТОВО»)
+	if _lvl_f != null:
+		_lvl_confirm(_lvl_f, true)
 
 func _show_levelup(i: int) -> void:
 	if _lvl_open or i < 0:
 		return
 	var f = _fighters[i]
 	_lvl_open = true
+	_lvl_f = f
+	# снапшот базы на момент открытия: минус не опускает стат ниже базы
+	var base_stats: Dictionary = f.stats.duplicate()
 	var wrap := CenterContainer.new()
 	wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ui.layer.add_child(wrap)
@@ -4844,7 +4862,19 @@ func _show_levelup(i: int) -> void:
 	t.text = "УРОВЕНЬ %d — %s" % [int(f.lvl), f.name]
 	t.add_theme_font_size_override("font_size", 24)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(t)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# HOTFIX_LEVELUP_V1 баг 1: заголовок + «×» — закрытие без фиксации (Esc тоже закрывает)
+	var thead := HBoxContainer.new()
+	vb.add_child(thead)
+	thead.add_child(t)
+	var bx := Button.new()
+	bx.text = "×"
+	bx.tooltip_text = "Закрыть (Esc)"
+	bx.add_theme_font_size_override("font_size", 18)
+	bx.custom_minimum_size = Vector2(38, 38)
+	_style_menu_button(bx)
+	bx.pressed.connect(_lvl_close)
+	thead.add_child(bx)
 	var sub := Label.new()
 	sub.text = "Распредели очки навыков — действуют сразу, нераспределённые сохранятся"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -4854,6 +4884,8 @@ func _show_levelup(i: int) -> void:
 	pts.text = "Свободно очков: %d" % int(f.pts)
 	pts.add_theme_font_size_override("font_size", 17)
 	vb.add_child(pts)
+	# кнопки минуса всех строк — для пересчёта disabled после каждого +/−
+	var minus_btns := {}
 	for k in STAT_KEYS:
 		var row := HBoxContainer.new()
 		vb.add_child(row)
@@ -4868,11 +4900,14 @@ func _show_levelup(i: int) -> void:
 		row.add_child(val)
 		var minus := Button.new()
 		minus.text = "-"
-		minus.pressed.connect(_lvl_add.bind(f, k, -1, val, pts))
+		# минус гаснет на базе: снять можно только вложенное в текущей сессии окна
+		minus.disabled = int(f.stats.get(k, 0)) <= int(base_stats.get(k, 0))
+		minus_btns[k] = minus
+		minus.pressed.connect(_lvl_add.bind(f, k, -1, val, pts, base_stats, minus_btns))
 		row.add_child(minus)
 		var plus := Button.new()
 		plus.text = "+"
-		plus.pressed.connect(_lvl_add.bind(f, k, 1, val, pts))
+		plus.pressed.connect(_lvl_add.bind(f, k, 1, val, pts, base_stats, minus_btns))
 		row.add_child(plus)
 		var hint := Label.new()
 		hint.text = "  " + STAT_HINTS[k]
@@ -4931,10 +4966,12 @@ func _show_levelup(i: int) -> void:
 		tdesc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tdesc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		trow.add_child(tdesc)
+	# «ГОТОВО» (HOTFIX_LEVELUP_V1): подтверждения не требуется — очки применяются
+	# в _lvl_add сразу; закрытие = тот же путь, что Esc/«×»
 	var ok := Button.new()
-	ok.text = "ПОДТВЕРДИТЬ"
+	ok.text = "ГОТОВО"
 	_style_menu_button(ok)
-	ok.pressed.connect(_lvl_confirm.bind(f))
+	ok.pressed.connect(_lvl_close)
 	vb.add_child(ok)
 func _spend_consumable(att: int) -> void:
 	var a = _fighters[att]
@@ -5281,6 +5318,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_orbit(-event.relative.x * 0.3, event.relative.y * 0.25)
 		if event.relative.length() > 2.0:
 			_rmb_moved = true
+		return
+	# Esc до раннего выхода: окно уровня — закрыть, меню — в главное лобби
+	# (HOTFIX_BACK_V1 п.3: ни один подэкран не зависит от единственной точки выхода)
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		if _lvl_open:
+			_lvl_close()
+		elif _menu_open:
+			_show_menu_main()
 		return
 	if _menu_open or _lvl_open:
 		return
@@ -10097,6 +10142,13 @@ func _menu_back_show(on: bool) -> void:
 	if not _ui.has("menu_back") or not is_instance_valid(_ui.menu_back):
 		return
 	_ui.menu_back.visible = on
+	# HOTFIX_BACK_V1: подложка-панель (сиблинг слоя, поверх по z) перекрывала
+	# кнопку — она была видима, но мертва для клика (софтлок подэкранов).
+	# Инвариант: «Назад» ВСЕГДА последний сиблинг = верхний z и первой получает клик.
+	if on:
+		var layer2: Node = _ui.menu_back.get_parent()
+		if layer2:
+			layer2.move_child(_ui.menu_back, layer2.get_child_count() - 1)
 	if _ui.has("menu_logo") and is_instance_valid(_ui.menu_logo):
 		_ui.menu_logo.visible = not on
 	# Блок 4: на подэкранах контент живёт в подложке-панели, на главном — снова в cc
