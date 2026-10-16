@@ -60,6 +60,16 @@ def main() -> int:
         sizes[ext] = os.path.getsize(p)
         os.replace(p, os.path.join(BUILD, f"{tag}.{ext}"))
 
+    # аудио-ворклеты: Godot 4.7 грузит их как <executable>.audio.worklet.js —
+    # без версионных копий 404 (откат на ScriptProcessor, звук хуже и варнинги)
+    import shutil
+    for wname in ("index.audio.worklet.js", "index.audio.position.worklet.js"):
+        wsrc = os.path.join(BUILD, wname)
+        if os.path.isfile(wsrc):
+            wtag = tag + wname[len("index"):]   # <executable>.audio.worklet.js
+            shutil.copyfile(wsrc, os.path.join(BUILD, wtag))
+            print(f"worklet: {wname} -> {wtag}")
+
     # правим GODOT_CONFIG: executable и ключи fileSizes
     out = src.replace('"executable":"index"', f'"executable":"{tag}"')
     out = out.replace('"index.pck"', f'"{tag}.pck"')
@@ -108,7 +118,7 @@ def main() -> int:
     # удаляем локальные версионные файлы прошлых сборок — иначе ftp_upload
     # зальёт их на сервер повторно (мусор + двойной трафик)
     for name in os.listdir(BUILD):
-        if re.fullmatch(r"index_t\d+\.(pck|wasm)", name) and not name.startswith(tag):
+        if re.fullmatch(r"index_t\d+\.(pck|wasm|audio\.worklet\.js|audio\.position\.worklet\.js)", name) and not name.startswith(tag):
             os.remove(os.path.join(BUILD, name))
 
     meta = {"tag": tag, "stamp": stamp, "sizes": sizes}

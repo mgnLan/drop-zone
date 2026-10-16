@@ -12988,6 +12988,8 @@ func _show_menu_profile() -> void:
 	av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	av.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var cur: Texture2D = _avatar_texture()
+	if cur == null:
+		cur = _preset_avatar(int(_profile.get("avatar_preset", 1)) - 1)   # Рамки v2: без своего фото — пресет
 	if cur:
 		av.texture = cur
 	avw.add_child(av)
