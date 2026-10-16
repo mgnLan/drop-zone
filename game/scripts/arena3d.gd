@@ -8449,10 +8449,27 @@ const PNG_BY_NAME := {"coin": "res_coin", "shard": "res_shard", "trophy": "res_t
 func _png_icon(n: String) -> Texture2D:
 	if n == "":
 		return null
-	var pth := "res://assets/icons/png256/%s.png" % n
+	var pth := n if n.begins_with("res://") else "res://assets/icons/png256/%s.png" % n
 	if ResourceLoader.exists(pth):
 		return load(pth)
 	return null
+
+func _frame_png(fi: int) -> String:
+	# Рамки v2: путь к арт-рамке 256×256; fi=0 (Стандарт) — голый аватар, 12+ — по циклу 1..11
+	if fi <= 0:
+		return ""
+	var idx: int = 1 + ((fi - 1) % 11)
+	return "res://assets/ui/frames256/%s.png" % FRAME_PNG_FILES[idx]
+
+func _frame_overlay(fi: int) -> TextureRect:
+	# Рамки v2: TextureRect рамки поверх ячейки аватара (inset 0, expand, якоря к краям)
+	var fr := TextureRect.new()
+	fr.texture = _png_icon(_frame_png(fi))
+	fr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	fr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	fr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return fr
 
 func _icon_chip(n: String, size := 40, tex: Texture2D = null) -> PanelContainer:
 	# тёмная скруглённая подложка с белой пиктограммой (tex — готовая PNG вместо SVG)
@@ -10309,6 +10326,8 @@ const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", 
 	"Хром", "Янтарь", "Кислота", "Мороз", "Буря", "Пепел", "Рубин", "Оникс", "Азур", "Коралл", "Мята",
 	"Ирис", "Медь", "Сталь", "Вольфрам", "Звезда", "Комета", "Галактика"]
 const FRAME_ACCENTS_POOL := [Color("#8a93a6"), Color(0.2, 0.9, 1.0), Color("#d4af37"), Color(0.35, 0.5, 0.25), Color(0.85, 0.7, 0.4), Color(0.2, 1.0, 0.5), Color(1.0, 0.45, 0.1), Color(0.9, 0.9, 0.95), Color(1.0, 0.5, 1.0)]
+# Рамки v2: файл арт-рамки по индексу 1..11 (frames256); 0 — без рамки
+const FRAME_PNG_FILES := ["", "f01_neon", "f02_gold", "f03_camo", "f04_desert", "f05_crypto", "f06_flame", "f07_ghost", "f08_lilac", "f09_veteran", "f10_elite", "f11_legend"]
 const NICK_COLORS := [Color(1, 1, 1), Color(1, 0.35, 0.45), Color("#d4af37"), Color(0.2, 0.9, 0.45), Color(0.5, 0.8, 1.0), Color(0.7, 0.4, 1.0), Color(1.0, 0.55, 0.2), Color(0.85, 0.12, 0.18), Color(1.0, 0.5, 1.0),
 	Color("#6b8e23"), Color(0.2, 0.85, 0.75), Color(0.25, 0.55, 0.85), Color("#a4e635"), Color(1.0, 0.72, 0.55), Color("#3a3f4b"),
 	Color(0.93, 0.93, 0.9), Color(0.75, 0.5, 0.3), Color(0.8, 0.82, 0.88), Color(0.62, 0.68, 0.78), Color(0.75, 0.45, 0.95), Color(0.95, 0.65, 0.35),
@@ -10856,7 +10875,27 @@ func _show_menu_squad() -> void:
 			)
 			crow.add_child(cb)
 		# рамка аватара (монетизация) — 9 пресетов сеткой; на десктопе компактнее (6 колонок, 2 ряда)
-		vb.add_child(_mk_label("Рамка: · аватар — в «Личные настройки»" if not _mob() else "Рамка:", 12))
+		var frh := HBoxContainer.new()
+		frh.add_theme_constant_override("separation", 8)
+		frh.alignment = BoxContainer.ALIGNMENT_CENTER
+		vb.add_child(frh)
+		var favw := Control.new()
+		favw.custom_minimum_size = Vector2(56, 56)
+		var favt := TextureRect.new()
+		favt.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		favt.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		favt.set_anchors_preset(Control.PRESET_FULL_RECT)
+		var fcur: Texture2D = _avatar_texture()
+		if fcur == null:
+			fcur = _preset_avatar(int(_profile.get("avatar_preset", 1)) - 1)
+		if fcur:
+			favt.texture = fcur
+		favw.add_child(favt)
+		var fpp1: String = _frame_png(int(_profile.frame))
+		if fpp1 != "" and _png_icon(fpp1) != null:
+			favw.add_child(_frame_overlay(int(_profile.frame)))   # Рамки v2
+		frh.add_child(favw)
+		frh.add_child(_mk_label("Рамка: · аватар — в «Личные настройки»" if not _mob() else "Рамка:", 12))
 		# OTRYAD_V1 p.3: рамки — FlowContainer (перенос при нехватке ширины)
 		var fgrid := FlowContainer.new()
 		fgrid.add_theme_constant_override("h_separation", 4)
@@ -12329,8 +12368,10 @@ func _show_menu_chests() -> void:
 		fpv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var fps := StyleBoxFlat.new()
 		fps.bg_color = Color(0.07, 0.09, 0.13)
-		fps.border_color = FRAME_ACCENTS_POOL[fi]
-		fps.set_border_width_all(3)
+		var fpp: String = _frame_png(fi)
+		if fpp == "" or _png_icon(fpp) == null:
+			fps.border_color = FRAME_ACCENTS_POOL[fi]   # Рамки v2 fallback: полоска акцента
+			fps.set_border_width_all(3)
 		fps.set_corner_radius_all(8)
 		fpv.add_theme_stylebox_override("panel", fps)
 		fcell.add_child(fpv)
@@ -12342,6 +12383,8 @@ func _show_menu_chests() -> void:
 		fav.add_theme_font_size_override("font_size", 20)
 		fav.add_theme_color_override("font_color", Color(0.92, 0.94, 0.98))
 		fpv.add_child(fav)
+		if fpp != "" and _png_icon(fpp) != null:
+			fpv.add_child(_frame_overlay(fi))   # Рамки v2: арт-рамка поверх превью
 		var fnl := Label.new()
 		fnl.text = FRAME_NAMES[fi]
 		fnl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -12938,14 +12981,20 @@ func _show_menu_profile() -> void:
 	# аватар
 	var arow := HBoxContainer.new()
 	vb.add_child(arow)
+	var avw := Control.new()
+	avw.custom_minimum_size = Vector2(96, 96)
 	var av := TextureRect.new()
-	av.custom_minimum_size = Vector2(96, 96)
 	av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	av.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var cur: Texture2D = _avatar_texture()
 	if cur:
 		av.texture = cur
-	arow.add_child(av)
+	avw.add_child(av)
+	var fpp0: String = _frame_png(int(_profile.frame))
+	if fpp0 != "" and _png_icon(fpp0) != null:
+		avw.add_child(_frame_overlay(int(_profile.frame)))   # Рамки v2: рамка профиля поверх аватара
+	arow.add_child(avw)
 	var ab := Button.new()
 	ab.text = "Загрузить фото (аватар)"
 	ab.custom_minimum_size = Vector2(230, 44)

@@ -1,0 +1,12 @@
+imgen_f00_standard RUNNING
+imgen_f01_neon RUNNING
+imgen_f02_gold RUNNING
+imgen_f03_camo RUNNING
+imgen_f04_desert RUNNING
+imgen_f05_crypto RUNNING
+imgen_f06_flame RUNNING
+imgen_f07_ghost RUNNING
+imgen_f08_lilac RUNNING
+imgen_f09_veteran RUNNING
+imgen_f10_elite RUNNING
+imgen_f11_legend RUNNING

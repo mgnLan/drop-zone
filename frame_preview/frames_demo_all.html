@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drop Zone — комплект рамок v2 (12 шт)</title>
+<style>
+  :root{
+    --bg0:#05070c; --bg1:#0b1428;
+    --pink:#ff3c6e; --cyan:#28d8ff;
+    --text:#f2f6ff; --muted:#9aa7bd;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    min-height:100vh;
+    background:
+      radial-gradient(1200px 600px at 70% -10%, rgba(40,216,255,.12), transparent 60%),
+      radial-gradient(900px 500px at 10% 110%, rgba(255,60,110,.14), transparent 60%),
+      linear-gradient(180deg,var(--bg1) 0%,var(--bg0) 55%,#030509 100%);
+    color:var(--text);
+    font-family:'Segoe UI',Manrope,Arial,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:44px 24px 64px;
+  }
+  h1{
+    font-size:28px;letter-spacing:2px;text-transform:uppercase;
+    background:linear-gradient(90deg,var(--pink),var(--cyan));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-align:center;
+  }
+  .sub{color:var(--muted);margin:10px 0 40px;text-align:center;max-width:680px;line-height:1.5}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:30px;max-width:1100px;width:100%}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .slot{position:relative;width:150px;height:150px;transition:transform .25s ease}
+  .cell:hover .slot{transform:scale(1.07)}
+  .avatar{position:absolute;inset:11%;width:78%;height:78%;object-fit:cover;border-radius:8%;background:#0d1220}
+  .frame{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .nm{font-size:14px;font-weight:600;letter-spacing:.5px}
+  .tg{font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+  .tier .nm{color:#ffd166}
+  .note{
+    margin-top:48px;max-width:720px;color:var(--muted);font-size:13px;line-height:1.6;
+    border:1px solid rgba(40,216,255,.2);border-radius:10px;padding:16px 20px;
+    background:rgba(5,8,15,.6);
+  }
+  .note b{color:var(--text)}
+</style>
+</head>
+<body>
+
+<h1>Комплект рамок v2 — 12 штук</h1>
+<p class="sub">Единое дизайн-семейство «арена шоу», акцент — фирменный цвет каждой рамки.
+PNG 1024×1024 → игровые 256×256 (~60–90 КБ). Цвет теперь читается силуэтом и свечением.</p>
+
+<div class="grid" id="grid"></div>
+
+<div class="note">
+  <b>Имена файлов ↔ FRAME_NAMES (arena3d.gd:10308):</b><br>
+  f00_standard → 0 «Стандарт» · f01_neon → 1 «Неоновая» · f02_gold → 2 «Золотая» ·
+  f03_camo → 3 «Камуфляж» · f04_desert → 4 «Пустыня» · f05_crypto → 5 «Крипто» ·
+  f06_flame → 6 «Пламя» · f07_ghost → 7 «Призрак» · f08_lilac → 8 «Сиреневая» ·
+  f09_veteran → 9 «Ветеран» (тир) · f10_elite → 10 «Элита» (тир) ·
+  f11_legend → 11 «Легенда» (тир).<br><br>
+  <b>Встраивание:</b> TextureRect поверх аватара вместо border_color
+  (~arena3d.gd:12332) — паттерн png256. Стандарт (0) остаётся «голым»
+  аватаром без PNG, рамки 12–29 (Хром…Галактика) переиспользуют
+  этот комплект по циклу акцентов.
+</div>
+
+<script>
+const FRAMES = [
+  {f:'f00_standard', n:'Стандарт',   t:'стартовая',        av:1},
+  {f:'f01_neon',     n:'Неоновая',   t:'касса шоу',        av:2},
+  {f:'f02_gold',     n:'Золотая',    t:'касса · 500 🪙',   av:3},
+  {f:'f03_camo',     n:'Камуфляж',   t:'сундук',           av:4},
+  {f:'f04_desert',   n:'Пустыня',    t:'сундук',           av:5},
+  {f:'f05_crypto',   n:'Крипто',     t:'сундук',           av:1},
+  {f:'f06_flame',    n:'Пламя',      t:'сундук',           av:2},
+  {f:'f07_ghost',    n:'Призрак',    t:'сундук',           av:3},
+  {f:'f08_lilac',    n:'Сиреневая',  t:'удача 0.1%',       av:4},
+  {f:'f09_veteran',  n:'Ветеран',    t:'тир 13 ур.',       av:5, tier:1},
+  {f:'f10_elite',    n:'Элита',      t:'тир 25 ур.',       av:1, tier:1},
+  {f:'f11_legend',   n:'Легенда',    t:'тир 40 ур.',       av:2, tier:1},
+];
+const grid = document.getElementById('grid');
+for (const x of FRAMES) {
+  const cell = document.createElement('div');
+  cell.className = 'cell' + (x.tier ? ' tier' : '');
+  cell.innerHTML = `
+    <div class="slot">
+      <img class="avatar" src="../game/assets/ui/avatars/av${x.av}.png" alt="">
+      ${x.f === 'f00_standard' ? '' : `<img class="frame" src="frames256/${x.f}.png" alt="">`}
+    </div>
+    <div class="nm">${x.n}</div>
+    <div class="tg">${x.t}</div>`;
+  grid.appendChild(cell);
+}
+</script>
+
+</body>
+</html>
