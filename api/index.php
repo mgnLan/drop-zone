@@ -160,13 +160,15 @@ function dz_wallet_apply($db, $userId, &$profile) {
     $st->execute([$userId]);
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
     if (!$rows) return;
-    $coins = 0; $bp = false;
+    $coins = 0; $shards = 0; $bp = false;
     foreach ($rows as $r) {
         if ($r['kind'] === 'coins') $coins += (int)$r['a'];
+        elseif ($r['kind'] === 'shards') $shards += (int)$r['a'];
         elseif ($r['kind'] === 'bp' && (int)$r['a'] > 0) $bp = true;
     }
     if (!is_array($profile)) $profile = [];
     if ($coins !== 0) $profile['coins'] = (int)($profile['coins'] ?? 0) + $coins;
+    if ($shards !== 0) $profile['shards'] = (int)($profile['shards'] ?? 0) + $shards;
     if ($bp) $profile['bp_owned'] = 1;
     $db->prepare("DELETE FROM wallet WHERE user_id = ?")->execute([$userId]);
 }
@@ -197,6 +199,18 @@ if ($action === 'load') {
     if (!$u) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
     $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
     if (!is_array($profile)) $profile = [];
+    // серия входа тикает на СЕРВЕРЕ (МСК): клиент может зависнуть/закрыться до меню —
+    // тогда клиентский _daily_check не успевал сработать и серия сгорала
+    $today = date('Y-m-d', time() + 3 * 3600);
+    $streak = $profile['login_streak'] ?? null;
+    if (!is_array($streak)) $streak = [];
+    if (($streak['last'] ?? '') !== $today) {
+        $yd = date('Y-m-d', time() + 3 * 3600 - 86400);
+        $n = (($streak['last'] ?? '') === $yd) ? (int)($streak['n'] ?? 0) + 1 : 1;
+        if ($n > 7) $n = 1;   // цикл 7 дней завершён — новая серия
+        $profile['login_streak'] = ['last' => $today, 'n' => $n];
+        $profile['login_reward_grant'] = $n;   // награду материализует клиент (он знает таблицы)
+    }
     // серверные начисления применяем сразу и сохраняем — клиент получит актуальный баланс
     dz_wallet_apply($db, (int)$u['id'], $profile);
     $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")

@@ -1301,6 +1301,11 @@ func _profile_from_server(sp) -> void:
 		return
 	for k in (sp as Dictionary).keys():
 		_profile[k] = sp[k]
+	if _profile.has("login_reward_grant"):
+		# серия входа тикнута на сервере (api load) — материализуем награду и стираем флаг
+		var gn := int(_profile.get("login_reward_grant", 0))
+		_profile.erase("login_reward_grant")
+		_login_reward_txt = _apply_login_reward(gn)
 	_profile_normalize()
 	_sync_push = false
 	_save_profile()
@@ -1667,7 +1672,7 @@ const COIN_PACKS := [
 	{"coins": 3750, "bonus": 0, "price": 399},
 ]
 const PAYMENTS_ENABLED := true   # VK: ShowOrderBox -> серверная верификация order_id; вне ВК — dev-начисление
-const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неон»", "price": 200},
+const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неоновая»", "price": 200},
 	{"kind": "frame", "idx": 2, "name": "Рамка «Золото»", "price": 500},
 	{"kind": "nick_color", "idx": 1, "name": "Цвет ника «Красный»", "price": 150},
 	{"kind": "nick_color", "idx": 2, "name": "Цвет ника «Золотой»", "price": 400},
@@ -1692,6 +1697,25 @@ func _shop_equip(kind: String, idx: int) -> void:
 	else:
 		_profile.nick_color = idx
 	_save_profile()
+
+func _shop_equip_cell(kind: String, idx: int, cell: VBoxContainer) -> void:
+	# HOTFIX_SHOP_OWNED_V1 п.5: на владенной ячейке — «Надеть» (или метка «Надето»)
+	if _shop_equipped(kind, idx):
+		var onl := Label.new()
+		onl.text = "Надето"
+		onl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		onl.add_theme_font_size_override("font_size", 11)
+		onl.add_theme_color_override("font_color", Color(0.16, 0.85, 1.0))
+		cell.add_child(onl)
+		return
+	var eq := _menu_button("Надеть", true)
+	eq.custom_minimum_size = Vector2(0, 24)
+	eq.add_theme_font_size_override("font_size", 11)
+	eq.pressed.connect(func():
+		_shop_equip(kind, idx)
+		_show_menu_chests()
+	)
+	cell.add_child(eq)
 
 func _buy_coin_pack(pi: int) -> void:
 	# покупка пака: мост к VK (JS), вне ВК — начисляем сразу (отладка)
@@ -1888,28 +1912,34 @@ func _login_streak_tick(today: String) -> void:
 		return
 	var yd := Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) - 86400)
 	var n := int(st.get("n", 0)) + 1 if str(st.get("last", "")) == yd else 1
+	if n > LOGIN_STREAK_REWARDS.size():
+		n = 1   # цикл 7 дней завершён — серия начинается заново
 	_profile.login_streak = {"last": today, "n": n}
 	_an_event("daily_claim", {"day": n})
-	_login_reward_txt = ""
-	if n >= 1 and n <= LOGIN_STREAK_REWARDS.size():
-		var r: Dictionary = LOGIN_STREAK_REWARDS[n - 1]
-		match str(r["kind"]):
-			"coins":
-				_profile.coins = int(_profile.get("coins", 0)) + int(r["amount"])
-			"item":
-				var stash: Array = _profile.get("login_stash", []).duplicate()
-				stash.append({"id": str(r["item"]), "count": int(r["count"])})
-				_profile.login_stash = stash
-			"card_hand":
-				if not _profile.has("show_next"):
-					_profile.show_next = []
-				_profile.show_next.append(_random_card_rarity(str(r["rarity"])))
-			"card_deck":
-				var dk: Array = _profile.get("show_deck", []).duplicate()
-				dk.append(_random_card_rarity(str(r["rarity"])))
-				_profile.show_deck = dk
-		_login_reward_txt = "День %d серии входа: %s" % [n, str(r["label"])]
+	_login_reward_txt = _apply_login_reward(n)
 	_save_profile()
+
+func _apply_login_reward(n: int) -> String:
+	# награда за день серии входа; общая для локального тика и серверного гранта (api load)
+	if n < 1 or n > LOGIN_STREAK_REWARDS.size():
+		return ""
+	var r: Dictionary = LOGIN_STREAK_REWARDS[n - 1]
+	match str(r["kind"]):
+		"coins":
+			_profile.coins = int(_profile.get("coins", 0)) + int(r["amount"])
+		"item":
+			var stash: Array = _profile.get("login_stash", []).duplicate()
+			stash.append({"id": str(r["item"]), "count": int(r["count"])})
+			_profile.login_stash = stash
+		"card_hand":
+			if not _profile.has("show_next"):
+				_profile.show_next = []
+			_profile.show_next.append(_random_card_rarity(str(r["rarity"])))
+		"card_deck":
+			var dk: Array = _profile.get("show_deck", []).duplicate()
+			dk.append(_random_card_rarity(str(r["rarity"])))
+			_profile.show_deck = dk
+	return "День %d серии входа: %s" % [n, str(r["label"])]
 
 func _consumable_by_id(cid: String) -> Dictionary:
 	for c in _items["consumables"]:
@@ -2056,6 +2086,8 @@ func _load_profile() -> void:
 	_profile.total_kills = int(cfg.get_value("player", "total_kills", 0))
 	_profile.mq_day = cfg.get_value("player", "mq_day", {"date": "", "login": 0, "prog": {}, "done": {}})
 	_profile.mq_week = cfg.get_value("player", "mq_week", {"week": -1, "prog": {}, "done": {}})
+	_profile.login_streak = cfg.get_value("player", "login_streak", {"last": "", "n": 0})
+	_profile.daily = cfg.get_value("player", "daily", {"daily_reset": "", "prog": {}, "done": {}})
 	_profile.teleport = str(cfg.get_value("player", "teleport", "beam"))
 	_profile.owned_frames = cfg.get_value("player", "owned_frames", [1, 0, 0])
 	_profile.owned_colors = cfg.get_value("player", "owned_colors", [1, 0, 0])
@@ -2141,6 +2173,8 @@ func _save_profile() -> void:
 	cfg.set_value("player", "squad_heroes", _profile.get("squad_heroes", [-1, -1, -1, -1]))
 	cfg.set_value("player", "craft_dups", int(_profile.get("craft_dups", 0)))
 	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
+	cfg.set_value("player", "login_streak", _profile.get("login_streak", {"last": "", "n": 0}))
+	cfg.set_value("player", "daily", _profile.get("daily", {"daily_reset": "", "prog": {}, "done": {}}))
 	cfg.save("user://profile.cfg")
 	if _sync_push and _auth_token != "" and _http != null:
 		_api_call("save", {"token": _auth_token, "profile": _profile})
@@ -5920,6 +5954,7 @@ func _nearest_visible_enemy(from_cell: Vector2i, vision: int, enemy_team: int) -
 
 func _bot_act(i: int) -> void:
 	var f = _fighters[i]
+	f.march_steps = 0   # ИИ v1: лимит перебежки в этот ход (сбрасывается каждую активацию)
 	if int(f.get("aggro_ttl", 0)) > 0:
 		f.aggro_ttl = int(f.get("aggro_ttl", 0)) - 1
 	var guard := 0
@@ -5985,6 +6020,13 @@ func _bot_act(i: int) -> void:
 			_shoot(i, t)
 			await get_tree().create_timer(0.5).timeout
 		elif f.ap >= 1:
+			# ИИ v1: соперник на дальней дистанции — не сближаемся впустую: короткая
+			# перебежка (макс 2 клетки за ход), оставшиеся ОД сохраняем на отстрел/оборону;
+			# ближний бой (дальность ≤ 2) идёт в сближение как раньше
+			if dist > float(w.get("range", 1)) and int(w.get("range", 1)) > 2:
+				if int(f.get("march_steps", 0)) >= 2:
+					return
+				f.march_steps = int(f.get("march_steps", 0)) + 1
 			if not _bot_step(i, _fighters[t].cell):
 				return
 			await get_tree().create_timer(0.25).timeout
@@ -6686,16 +6728,17 @@ func _build_ui() -> void:
 	fp.anchor_left = 0.0
 	fp.anchor_right = 0.0
 	fp.offset_left = 8.0
-	fp.offset_right = 56.0
+	fp.offset_right = 100.0
 	# вертикальная колонка под ростером (y≈222+) — вплотную к карточке и аватарам
 	fp.offset_top = 222.0
 	fp.offset_bottom = 640.0
 	fp.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	fp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(fp)
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 4)
-	vb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	var vb := GridContainer.new()
+	vb.columns = 2   # HUD v1: две колонки по левому краю — полоса вдвое короче
+	vb.add_theme_constant_override("h_separation", 4)
+	vb.add_theme_constant_override("v_separation", 4)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fp.add_child(vb)
 	_ui.fighter_panel = fp
@@ -6705,8 +6748,8 @@ func _build_ui() -> void:
 	var fcp := PanelContainer.new()
 	fcp.anchor_left = 0.0
 	fcp.anchor_right = 0.0
-	fcp.offset_left = 64.0
-	fcp.offset_right = 384.0
+	fcp.offset_left = 104.0
+	fcp.offset_right = 424.0
 	fcp.offset_top = 222.0
 	fcp.offset_bottom = 312.0
 	fcp.add_theme_stylebox_override("panel", _frame_box())
@@ -6870,7 +6913,7 @@ func _refresh_fighter_panel() -> void:
 	_ui.fighter_panel.visible = true
 	if _ui.has("fighter_cards"):
 		_ui.fighter_cards.visible = false
-	var box: VBoxContainer = _ui.fighter_box
+	var box: Container = _ui.fighter_box
 	for ch in box.get_children():
 		ch.queue_free()
 	# --- сводка для тултипа ---
@@ -12379,7 +12422,7 @@ func _show_menu_chests() -> void:
 	fgrid.add_theme_constant_override("h_separation", 10)
 	fgrid.add_theme_constant_override("v_separation", 10)
 	colR.add_child(fgrid)
-	for fi in 9:
+	for fi in 12:
 		var fcell := VBoxContainer.new()
 		fcell.add_theme_constant_override("separation", 2)
 		fgrid.add_child(fcell)
@@ -12427,6 +12470,7 @@ func _show_menu_chests() -> void:
 				ownl.add_theme_font_size_override("font_size", 11)
 				ownl.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
 				fcell.add_child(ownl)
+				_shop_equip_cell("frame", fi, fcell)
 			else:
 				var fbuy := _menu_button("%d" % int(SHOP_ITEMS[fsi]["price"]), true)
 				fbuy.icon = _icon_tex("coin")
@@ -12446,6 +12490,32 @@ func _show_menu_chests() -> void:
 			basel.add_theme_font_size_override("font_size", 11)
 			basel.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 			fcell.add_child(basel)
+		elif _shop_owned("frame", fi):
+			var ownl3 := Label.new()
+			ownl3.text = "Куплено"
+			ownl3.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			ownl3.add_theme_font_size_override("font_size", 11)
+			ownl3.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
+			fcell.add_child(ownl3)
+			_shop_equip_cell("frame", fi, fcell)
+		elif fi <= 8:
+			var chutl := Label.new()
+			chutl.text = "В сундуках"
+			chutl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			chutl.add_theme_font_size_override("font_size", 11)
+			chutl.add_theme_color_override("font_color", Color(0.60, 0.65, 0.74))
+			chutl.tooltip_text = "Выпадает из сундуков удачи"
+			fcell.add_child(chutl)
+		else:
+			var tier_need: Array = [13, 25, 40]
+			var tn: int = tier_need[fi - 9]
+			var tl2 := Label.new()
+			tl2.text = "Тир %d ур." % tn
+			tl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			tl2.add_theme_font_size_override("font_size", 11)
+			tl2.add_theme_color_override("font_color", Color(0.60, 0.65, 0.74))
+			tl2.tooltip_text = "Награда за вход в тир, %d ур." % tn
+			fcell.add_child(tl2)
 	colR.add_child(_inv_section("ЦВЕТА НИКА", Color(1.0, 0.82, 0.35)))
 	var cgrid := GridContainer.new()
 	cgrid.columns = 3 if _mob() else 5
@@ -12496,6 +12566,7 @@ func _show_menu_chests() -> void:
 				ownl2.add_theme_font_size_override("font_size", 11)
 				ownl2.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
 				ccell.add_child(ownl2)
+				_shop_equip_cell("nick_color", ci, ccell)
 			else:
 				var cbuy := _menu_button("%d" % int(SHOP_ITEMS[csi]["price"]), true)
 				cbuy.icon = _icon_tex("coin")
@@ -12515,6 +12586,22 @@ func _show_menu_chests() -> void:
 			basel2.add_theme_font_size_override("font_size", 11)
 			basel2.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 			ccell.add_child(basel2)
+		elif _shop_owned("nick_color", ci):
+			var ownl4 := Label.new()
+			ownl4.text = "Куплено"
+			ownl4.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			ownl4.add_theme_font_size_override("font_size", 11)
+			ownl4.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
+			ccell.add_child(ownl4)
+			_shop_equip_cell("nick_color", ci, ccell)
+		else:
+			var chutl2 := Label.new()
+			chutl2.text = "В сундуках"
+			chutl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			chutl2.add_theme_font_size_override("font_size", 11)
+			chutl2.add_theme_color_override("font_color", Color(0.60, 0.65, 0.74))
+			chutl2.tooltip_text = "Выпадает из сундуков удачи"
+			ccell.add_child(chutl2)
 	var pity: Array = _profile.get("pity", [0, 0, 0])
 	var pity_siren: int = int(_profile.get("pity_siren", 0))
 	# гаранты: карточка с прогресс-барами, подписи цветом редкости
