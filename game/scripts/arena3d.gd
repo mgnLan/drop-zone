@@ -6512,7 +6512,7 @@ func _build_ui() -> void:
 	_style_bar(ap_bar, Color(0.2, 0.8, 1.0))
 	# --- ростер отряда: горизонтальный ряд прямоугольных портретов-иконок под карточкой ---
 	var roster := HBoxContainer.new()
-	roster.position = Vector2(12, 224)
+	roster.position = Vector2(12, 158)
 	roster.add_theme_constant_override("separation", 6)
 	layer.add_child(roster)
 	_ui.squad_rows = []
@@ -6679,7 +6679,7 @@ func _build_ui() -> void:
 	if minf(_vw(), _vh()) < 700.0:
 		chat.visible = false
 		ct2.visible = true
-	# --- панель выбранного бойца: справа ПОЛОСА иконок 40 px без подложки и рамки
+	# --- панель выбранного бойца: ПОЛОСА иконок 40 px с тёмной плашкой (HUD v1)
 	# (docs/EDITS_V1.md п.3): бинт/аптечка (с остатком), перезарядка, ×4, счётчик карт;
 	# вся текстовая сводка (уровень/опыт/владение/вес/патроны) — тултип по иконке оружия ---
 	var fp := PanelContainer.new()
@@ -6687,8 +6687,8 @@ func _build_ui() -> void:
 	fp.anchor_right = 0.0
 	fp.offset_left = 8.0
 	fp.offset_right = 56.0
-	# вертикальная колонка под карточкой бойца (y≈48–152) — поле слева свободно
-	fp.offset_top = 215.0
+	# вертикальная колонка под ростером (y≈222+) — вплотную к карточке и аватарам
+	fp.offset_top = 222.0
 	fp.offset_bottom = 640.0
 	fp.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	fp.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -6707,8 +6707,8 @@ func _build_ui() -> void:
 	fcp.anchor_right = 0.0
 	fcp.offset_left = 64.0
 	fcp.offset_right = 384.0
-	fcp.offset_top = 215.0
-	fcp.offset_bottom = 305.0
+	fcp.offset_top = 222.0
+	fcp.offset_bottom = 312.0
 	fcp.add_theme_stylebox_override("panel", _frame_box())
 	fcp.visible = false
 	layer.add_child(fcp)
@@ -6861,7 +6861,7 @@ func _refresh_turn_lbl() -> void:
 	_refresh_squad()
 
 func _refresh_fighter_panel() -> void:
-	# ПОЛОСА иконок 40 px без подложки и рамки (docs/EDITS_V1.md п.3):
+	# ПОЛОСА иконок 40 px на тёмной плашке (docs/EDITS_V1.md п.3 + HUD v1 — заметность):
 	# бинт/аптечка (с остатком), перезарядка, очередь ×4, счётчик шоу-карт «×N»;
 	# текстовая сводка (уровень/опыт/владение/вес/патроны) — тултип по иконке оружия
 	if _selected < 0 or not _ui.has("fighter_panel"):
@@ -6886,7 +6886,7 @@ func _refresh_fighter_panel() -> void:
 		var px := int(f.get("prof", {}).get(cls3, 0))
 		info += "\nВладение «%s»: ур. %d (%s)" % [CLASS_NAMES[cls3], plv, "МАКС" if plv >= 3 else "%d/%d" % [px, PROF_XP[plv]]]
 	info += "\nЗащита: %d · Вес: %.1f/%.1f кг" % [_defense(f), _load_weight(f), _carry_limit(f)]
-	# --- фабрика иконок: flat-кнопка 40×40, лёгкий hover-фон, без рамок ---
+	# --- фабрика иконок: 40×40, тёмная плашка + циановая кайма, лёгкий hover-фон ---
 	var hov := StyleBoxFlat.new()
 	hov.bg_color = Color(1, 1, 1, 0.08)
 	hov.set_corner_radius_all(8)
@@ -6902,8 +6902,18 @@ func _refresh_fighter_panel() -> void:
 		b.custom_minimum_size = Vector2(40, 40)
 		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		b.tooltip_text = tip
-		b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-		b.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
+		var nrm := StyleBoxFlat.new()
+		nrm.bg_color = Color(0.03, 0.06, 0.11, 0.78)
+		nrm.border_color = Color(0.30, 0.80, 1.0, 0.50)
+		nrm.set_border_width_all(1)
+		nrm.set_corner_radius_all(8)
+		b.add_theme_stylebox_override("normal", nrm)
+		var dsb := StyleBoxFlat.new()
+		dsb.bg_color = Color(0.03, 0.06, 0.11, 0.45)
+		dsb.border_color = Color(0.30, 0.80, 1.0, 0.20)
+		dsb.set_border_width_all(1)
+		dsb.set_corner_radius_all(8)
+		b.add_theme_stylebox_override("disabled", dsb)
 		b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 		b.add_theme_stylebox_override("hover", hov)
 		b.add_theme_stylebox_override("pressed", prs)
