@@ -574,44 +574,42 @@ func _tutorial_on_win() -> void:
 
 # ---------- мобильный UI: масштаб через stretch (project.godot: canvas_items) ----------
 func _apply_display_scale() -> void:
-	# Пропорции канваса (мини-ТЗ владельца, разворот тикета #8): EXPAND тянул сцену
-	# на всё окно без сохранения пропорций — персонажи плыли на ландшафтных окнах.
-	# KEEP (классический letterbox): игра масштабируется по минимальной стороне,
-	# аспект 16:9 сохраняется всегда; высокое окно → тёмные поля сверху/снизу,
-	# широкое → поля по бокам. Поля цветом default clear (≈ фон body из
-	# head_include, тёмный градиент арены — выглядит как подложка, как на
-	# экране загрузки). KEEP_WIDTH не подходит: на высоком окне он расширяет
-	# viewport по вертикали, игра занимает всю высоту без полос.
-	# Ставим в рантайме, чтобы не трогать общий project.godot (десктоп/редактор).
-	# Мобильное исключение (владелец): на портрете телефона (360×800 и т.п.)
-	# KEEP дал бы узкую полоску 16:9 посреди экрана — телефоны ломаются.
-	# Ширина >= 700 CSS px — десктоп/iframe ВК: классический letterbox KEEP.
-	# Узкие экраны: KEEP_WIDTH — игра на всю ширину и высоту (фуллскрин).
-	# Масштаб UI весь идёт через _vw()/_vh() = get_visible_rect() — эффективный
-	# вьюпорт после letterbox, не DisplayServer.window_get_size(); при смене
-	# аспекта size_changed переприменяет раскладку через call_deferred.
-	# ВНИМАНИЕ: условие ниже — ТОЛЬКО по _css_win_w() (реальная ширина окна
-	# браузера). Через _vw() нельзя: visible_rect в design-юнитах (≈1000),
-	# условие всегда давало KEEP — на портрете телефона игра сжималась
-	# в полоску 16:9 посреди экрана (гейт 360×800, 2026-10-16).
+	# Десктоп сохраняет холст 1280×720 и letterbox. На узком экране прежний холст
+	# уменьшал весь UI в 1280 / CSS-width раз: шрифт 16 становился ≈4,5 CSS px
+	# на телефоне 360 px. Здесь 1 design-юнит соответствует 1 CSS px, поэтому
+	# читаемость обеспечивает система координат, а не случайный множитель шрифтов.
 	var win := get_window()
-	if win != null:
-		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-		if _css_win_w() >= 700.0:
-			win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
-		else:
-			win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH
+	if win == null:
+		return
+	win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	var css_w := maxf(320.0, _css_win_w())
+	if css_w >= 700.0:
+		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		if win.content_scale_size != Vector2i(1280, 720):
+			win.content_scale_size = Vector2i(1280, 720)
+	else:
+		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP_WIDTH
+		var css_h := maxf(480.0, _css_win_h())
+		var target := Vector2i(maxi(320, roundi(css_w)), maxi(480, roundi(css_h)))
+		if win.content_scale_size != target:
+			win.content_scale_size = target
 
 func _css_win_w() -> float:
-	# реальная ширина окна в CSS-пикселях (не design-юниты вьюпорта)
+	# Реальная ширина окна в CSS px; visible_rect зависит от content_scale_size.
 	if OS.has_feature("web"):
 		var jw = JavaScriptBridge.eval("window.innerWidth || 0")
 		if jw != null and float(jw) > 0.0:
 			return float(jw)
-	return get_viewport().get_visible_rect().size.x / _dpr()
+	return float(DisplayServer.window_get_size().x) / _dpr()
+
+func _css_win_h() -> float:
+	if OS.has_feature("web"):
+		var jh = JavaScriptBridge.eval("window.innerHeight || 0")
+		if jh != null and float(jh) > 0.0:
+			return float(jh)
+	return float(DisplayServer.window_get_size().y) / _dpr()
 
 func _dpr() -> float:
-	# в браузере viewport считается в device-пикселях — переводим в CSS-пиксели
 	if OS.has_feature("web"):
 		var d = JavaScriptBridge.eval("window.devicePixelRatio || 1")
 		if d != null and float(d) > 0.01:
@@ -619,22 +617,24 @@ func _dpr() -> float:
 	return 1.0
 
 func _vw() -> float:
-	# логическая ширина экрана в CSS-пикселях
-	return get_viewport().get_visible_rect().size.x / _dpr()
+	# visible_rect уже выражен в design-юнитах; повторно делить на DPR нельзя.
+	return get_viewport().get_visible_rect().size.x
 
 func _vh() -> float:
-	return get_viewport().get_visible_rect().size.y / _dpr()
+	return get_viewport().get_visible_rect().size.y
 
 func _mob() -> bool:
-	# узкий экран — компактные раскладки (по реальной ширине окна, не вьюпорта)
 	return _css_win_w() < 520.0
 
-func _menu_w() -> float:
-	# ширина колонки меню в design-юнитах. Десктоп: узкая центральная колонка 460.
-	# Мобильный: юнит ≠ CSS px (design-ширина 1280 на 360 CSS — масштаб 0.28),
-	# 460 юнитов = треть экрана; берём 94 % ширины вьюпорта — колонка на всю ширину.
+func _menu_content_w(ratio: float) -> float:
 	if _mob():
-		return get_viewport().get_visible_rect().size.x * 0.94
+		# 24 px — края ScrollContainer, ещё 40 px — внутренние поля PanelContainer.
+		return maxf(240.0, _vw() - 64.0)
+	return _vw() * ratio
+
+func _menu_w() -> float:
+	if _mob():
+		return _menu_content_w(0.94)
 	return 460.0
 
 # ---------- rewarded-реклама: мост к VK/MAX Ads ----------
@@ -643,6 +643,7 @@ func _menu_w() -> float:
 # Награда возвращается через вызов window.__dz_ad_reward() из оболочки.
 var _sponsor_used := false      # один дроп за бой
 var _ad_reward_cb: Callable = Callable()   # награда за текущий просмотр (ставится перед show)
+var _web_menu_cb = null                    # держим JS callback живым всё время работы сцены
 
 func _setup_rewarded_bridge() -> void:
 	if not OS.has_feature("web"):
@@ -655,6 +656,9 @@ func _setup_rewarded_bridge() -> void:
 	# бесшовный вход ВК: оболочка после GetUserInfo шлёт {id, name}
 	var vk_cb := JavaScriptBridge.create_callback(_on_vk_ready)
 	JavaScriptBridge.get_interface("window").set("__dz_vk_ready", vk_cb)
+	# HTML-витрина главного меню: действия приходят из DOM, логика остаётся здесь.
+	_web_menu_cb = JavaScriptBridge.create_callback(_on_web_menu_action)
+	JavaScriptBridge.get_interface("window").set("__dz_menu_action", _web_menu_cb)
 	# оболочка могла ответить раньше, чем мы установили колбэк — проверяем готовность
 	var pre = JavaScriptBridge.eval("(function(){ return window.dzVK ? JSON.stringify(window.dzVK) : ''; })()", true)
 	if pre != null and str(pre) != "":
@@ -667,6 +671,65 @@ func _setup_rewarded_bridge() -> void:
 		_vk_bridge_error = str(bridge_err)
 		if _auth_status != null and is_instance_valid(_auth_status):
 			_auth_status.text = ("Мост ВК: " + _vk_bridge_error).left(160)
+
+func _on_web_menu_action(args: Array) -> void:
+	if args.is_empty():
+		return
+	var action := str(args[0])
+	if action.begins_with("mode:"):
+		var mode_id := int(action.get_slice(":", 1))
+		if mode_id >= 1 and mode_id <= 6:
+			_start_mode(mode_id)
+		return
+	match action:
+		"squad": _show_menu_squad()
+		"heroes": _show_menu_heroes()
+		"deck": _show_menu_deck()
+		"showbiz": _show_menu_showbiz()
+		"shop": _show_menu_shop()
+		"chests": _show_menu_chests()
+		"bp": _show_menu_bp()
+		"progress": _show_menu_progress()
+		"med": _show_menu_med()
+		"profile": _show_menu_profile()
+		"settings": _show_menu_settings()
+		"rating": _show_menu_rating()
+
+func _web_main_menu(show: bool) -> void:
+	if not OS.has_feature("web"):
+		return
+	if not show:
+		JavaScriptBridge.eval("if(window.dzMainMenu){window.dzMainMenu(false);}", true)
+		return
+	_stamina_update()
+	var daily: Dictionary = _profile.get("daily", {})
+	var prog: Dictionary = daily.get("prog", {})
+	var done: Dictionary = daily.get("done", {})
+	var missions: Array = []
+	for qid in ["wins2", "crates5", "dmg200"]:
+		var q: Dictionary = DAILY_QUESTS[qid]
+		missions.append({
+			"id": qid, "name": str(q["name"]),
+			"value": int(prog.get(qid, 0)), "target": int(q["target"]),
+			"reward": _daily_reward_txt(q).trim_suffix(", "),
+			"done": int(done.get(qid, 0)) == 1,
+		})
+	var now := float(Time.get_unix_time_from_system())
+	var reaper_left := maxf(0.0, float(_profile.get("reaper_ts", 0.0)) - now)
+	var payload := {
+		"name": str(_profile.names[0]),
+		"coins": int(_profile.get("coins", 0)),
+		"shards": int(_profile.get("shards", 0)),
+		"stamina": int(float(_profile.get("stamina", 100.0))),
+		"wins": int(_profile.get("wins", 0)),
+		"slots": int(_profile.get("unlocked_slots", 2)),
+		"max_level": _max_squad_lvl(),
+		"vip": int(_profile.get("vip", 0)),
+		"rating": int(_profile.get("pvp_rating", 1000)),
+		"reaper_days": int(ceil(reaper_left / 86400.0)),
+		"missions": missions,
+	}
+	JavaScriptBridge.eval("if(window.dzMenuProfile){window.dzMenuProfile(" + JSON.stringify(payload) + ");}if(window.dzMainMenu){window.dzMainMenu(true);}", true)
 
 func _on_order_event(args: Array) -> void:
 	if args.is_empty() or not (args[0] is Dictionary):
@@ -781,9 +844,12 @@ func _on_buy_result(d: Dictionary) -> void:
 		_save_profile()
 		_sync_push = true
 	_sfx_play("levelup")
-	_log("Пак монет начислен сервером: +%d монет" % int(d.get("credited", 0)))
+	if bool(d.get("duplicate", false)):
+		_log("Покупка уже подтверждена — баланс актуален")
+	else:
+		_log("Пак монет начислен сервером: +%d монет" % int(d.get("credited", 0)))
 	if _menu_open:
-		_show_menu_shop()
+		_refresh_menu_screen("shop")
 
 func _server_credit_bp(order_id: String) -> void:
 	# покупка Premium-пропуска: активирует bp_owned только сервер (верификация order_id у ВК)
@@ -802,7 +868,7 @@ func _on_buybp_result(d: Dictionary) -> void:
 	_sfx_play("levelup")
 	_log("Premium Battle Pass активен! Премиум-награды доступны к получению")
 	if _menu_open:
-		_show_menu_bp()
+		_refresh_menu_screen("bp")
 
 func _buy_bp_pass() -> void:
 	# покупка пропуска: в ВК — VKWebAppShowOrderBox через мост оболочки; вне ВК — dev-выдача
@@ -815,7 +881,7 @@ func _buy_bp_pass() -> void:
 	else:
 		_profile.bp_owned = 1
 		_save_profile()
-		_show_menu_bp()
+		_refresh_menu_screen("bp")
 
 func _show_rewarded_ad(on_reward: Callable = Callable()) -> void:
 	# on_reward — что выдать за просмотр; пусто — спонсорский дроп (боевой бонус)
@@ -1041,18 +1107,22 @@ func _uitest_tour() -> void:
 	# сообщение с эмодзи в чат — скрин-гейт цветных эмодзи (тикет #7)
 	_menu_chat_local[0].append("Вы: проверка 😀 🔥 💀 👍 ❤️")
 	_render_menu_chat()
-	var scr := ["lobby", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "battle", "battle", "battle", "main"]
+	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
 		from = clampi(int(str(fq)), 0, scr.size() - 1)
 	scr = scr.slice(from)
+	# ?uifreeze=1 — один стабильный экран для скриншот-гейта без смены по таймеру.
+	var freeze_q = JavaScriptBridge.eval("window.location.search.indexOf('uifreeze') >= 0")
+	if freeze_q != null and bool(freeze_q) and not scr.is_empty():
+		scr = scr.slice(0, 1)
 	var t := 3.0
 	for s in scr:
 		# отдельный таймер на каждый экран — ошибка в одном не рвёт весь тур
 		get_tree().create_timer(t).timeout.connect(_uitest_show.bind(s))
 		t += 3.0
-	if "main" not in scr:
+	if "main" not in scr and not (freeze_q != null and bool(freeze_q)):
 		get_tree().create_timer(t).timeout.connect(_uitest_show.bind("main"))
 
 func _uitest_pick_fighter() -> void:
@@ -1067,6 +1137,29 @@ func _uitest_pick_fighter() -> void:
 
 func _uitest_show(s: String) -> void:
 	match s:
+		"daily":
+			_login_reward_txt = "День 2 серии входа: бинт ×2"
+			_show_menu_main()
+		"emoji":
+			_ui.menu_chat_input.text = "Проверка "
+			_ui.menu_chat_input.caret_column = _ui.menu_chat_input.text.length()
+			var sent_before: int = _menu_chat_local[_menu_chat_tab].size()
+			_toggle_emoji_panel(_ui.menu_chat_input, _ui.menu_chat_panel)
+			var ekey := "emoji_panel_%d" % _ui.menu_chat_panel.get_instance_id()
+			var first_emoji: Button = _ui[ekey].get_child(0).get_child(0)
+			first_emoji.pressed.emit()
+			var insert_ok: bool = _ui.menu_chat_input.text == "Проверка 😀"
+			var not_sent: bool = _menu_chat_local[_menu_chat_tab].size() == sent_before
+			print("EMOJI_INSERT_TEST в-поле=", insert_ok, " не-отправлено=", not_sent)
+		"result":
+			# Изолированный визуальный гейт CTA; профиль браузерного тура временный.
+			if _ui.has("menu_layer") and is_instance_valid(_ui.menu_layer):
+				_ui.menu_layer.visible = false
+			_menu_open = false
+			for tf in _fighters:
+				if int(tf.team) == 1:
+					tf.alive = false
+			_check_end()
 		"squad": _show_menu_squad()
 		"progress": _show_menu_progress()
 		"bp": _show_menu_bp()
@@ -1077,6 +1170,16 @@ func _uitest_show(s: String) -> void:
 		"profile": _show_menu_profile()
 		"med": _show_menu_med()
 		"settings": _show_menu_settings()
+		"deck":
+			var icons_ok := true
+			for cid_t in SHOW_CARDS:
+				var icon_name: String = str(CARD_PNG_BY_ID.get(cid_t, ""))
+				if icon_name.is_empty() or not ResourceLoader.exists("res://assets/icons/png256/%s.png" % icon_name):
+					icons_ok = false
+			_profile.show_cards = SHOW_CARDS.keys()
+			_profile.show_deck = ["ukazka", "radar", "piro"]
+			print("CARD_ICONS_TEST все-12-загружаются=", icons_ok)
+			_refresh_menu_screen("deck")
 		"battle":
 			# скрин-гейт боевой полосы иконок (docs/EDITS_V1.md п.3): арена уже под меню —
 			# прячем слой лобби (как автостарт после перезагрузки), выбираем бойца отряда
@@ -1089,6 +1192,9 @@ func _uitest_show(s: String) -> void:
 			_refresh_turn_lbl()
 			call_deferred("_uitest_pick_fighter")
 		"lobby", "main": _show_menu_main()
+	# Маркер только для автоматического скриншот-тура: браузер ждёт реальную
+	# отрисовку запрошенного экрана, а не пытается угадать загрузку по таймеру.
+	print("UITEST_SCREEN=" + s)
 
 func _auth_watchdog() -> void:
 	# через 7 с в автовходе — если экран входа всё ещё висит, значит цепочка ВК
@@ -1411,9 +1517,10 @@ func _build_auth(auto: bool) -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	if ResourceLoader.exists("res://assets/ui/menu_bg.jpg"):
-		bg.texture = load("res://assets/ui/menu_bg.jpg")
+	if ResourceLoader.exists("res://assets/ui/menu_splash_clean.jpg"):
+		bg.texture = load("res://assets/ui/menu_splash_clean.jpg")
 	layer.add_child(bg)
+	_apply_menu_theme(bg)
 	var dim := ColorRect.new()
 	dim.color = Color(0.02, 0.03, 0.06, 0.72)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1443,18 +1550,24 @@ func _build_auth(auto: bool) -> void:
 	# скролл на ВСЕХ разрешениях: макс. высота = вьюпорт - лого - отступы
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(_menu_w(),
-		minf(500.0, vh2 - logo.custom_minimum_size.y - 60.0))
+		minf(500.0, vh2 - logo.custom_minimum_size.y - 40.0))
+	_apply_menu_theme(scroll)
 	col.add_child(scroll)
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_theme_stylebox_override("panel", _frame_box())
+	var panel_style := _card_style()
+	panel_style.bg_color = Color("#0b1421f5")
+	panel_style.border_color = Color("#3a566d")
+	panel_style.set_content_margin_all(18)
+	panel.add_theme_stylebox_override("panel", panel_style)
 	scroll.add_child(panel)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 12)
+	vb.add_theme_constant_override("separation", 10)
 	panel.add_child(vb)
-	var t := Label.new()
-	t.text = "Вход в аккаунт"
-	t.add_theme_font_size_override("font_size", 22)
+	var access := _card_label("ДОСТУП БОЙЦА", 10, Color("#55d9e8"), true)
+	access.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(access)
+	var t := _card_label("Вход в аккаунт", 24, Color("#f3f7fb"), true)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(t)
 	if auto:
@@ -1474,7 +1587,7 @@ func _build_auth(auto: bool) -> void:
 		vks.bg_color = Color(0.0, 0.47, 1.0, 0.95)   # фирменный синий ВК
 		vks.border_color = Color(0.35, 0.65, 1.0, 0.9)
 		vks.set_border_width_all(2)
-		vks.set_corner_radius_all(12)
+		vks.set_corner_radius_all(4)
 		vkb.add_theme_stylebox_override("normal", vks)
 		vkb.pressed.connect(func():
 			_vk_login_tried = false
@@ -1499,32 +1612,41 @@ func _build_auth(auto: bool) -> void:
 	pw.secret = true
 	pw.custom_minimum_size = Vector2(0, 52)
 	vb.add_child(pw)
-	# статус и подсказка — фиксированная высота, кнопки не прыгают
-	var st := Label.new()
-	st.text = ""
-	st.custom_minimum_size = Vector2(0, 24)
-	st.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+	for input in [em, pw]:
+		var inp := input as LineEdit
+		inp.add_theme_font_size_override("font_size", 15)
+		inp.add_theme_color_override("font_color", Color("#edf4fb"))
+		inp.add_theme_color_override("font_placeholder_color", Color("#71879c"))
+		inp.add_theme_color_override("caret_color", Color("#55d9e8"))
+		for state in ["normal", "focus"]:
+			var es := StyleBoxFlat.new()
+			es.bg_color = Color("#0a121e")
+			es.border_color = Color("#55d9e8") if state == "focus" else Color("#2b3e52")
+			es.set_border_width_all(1)
+			es.set_corner_radius_all(8)
+			es.content_margin_left = 14
+			es.content_margin_right = 14
+			inp.add_theme_stylebox_override(state, es)
+	# Статусы компактны; при ошибке появляется текст, а не пустая серая полоса.
+	var st := _card_label("", 12, Color("#ef9292"))
 	st.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	st.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(st)
 	_auth_status = st
-	var hint := Label.new()
-	hint.text = ""
-	hint.custom_minimum_size = Vector2(0, 34)
-	hint.add_theme_font_size_override("font_size", 12)
-	hint.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	var hint := _card_label("", 12, Color("#83cbd8"))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(hint)
 	_auth_hint = hint
-	var li := _menu_button("ВОЙТИ")
+	var li := _menu_button("ВОЙТИ В ИГРУ  →")
 	li.custom_minimum_size = Vector2(0, 52)
-	var lis := StyleBoxFlat.new()
-	lis.bg_color = Color(0.72, 0.16, 0.20, 0.95)
-	lis.border_color = Color(1.0, 0.45, 0.25, 0.9)
-	lis.set_border_width_all(2)
-	lis.set_corner_radius_all(12)
-	li.add_theme_stylebox_override("normal", lis)
+	for state in ["normal", "hover", "pressed", "focus"]:
+		var ls := _menu_button_state(false, "hover" if state == "focus" else state)
+		ls.bg_color = Color("#1a4657") if state == "normal" else Color("#245e70")
+		ls.border_color = Color("#55d9e8")
+		li.add_theme_stylebox_override(state, ls)
+	li.add_theme_color_override("font_color", Color("#e9fcff"))
+	li.add_theme_color_override("font_hover_color", Color("#ffffff"))
 	li.pressed.connect(func():
 		_auth_email = em.text.strip_edges()
 		if _auth_email.find("@") < 0 or pw.text == "":
@@ -1537,13 +1659,9 @@ func _build_auth(auto: bool) -> void:
 	vb.add_child(li)
 	var rg := _menu_button("РЕГИСТРАЦИЯ")
 	rg.custom_minimum_size = Vector2(0, 52)
-	# прозрачная кнопка с белой обводкой
-	var rgs := StyleBoxFlat.new()
-	rgs.bg_color = Color(0, 0, 0, 0)
-	rgs.border_color = Color(1, 1, 1, 0.8)
-	rgs.set_border_width_all(1)
-	rgs.set_corner_radius_all(12)
-	rg.add_theme_stylebox_override("normal", rgs)
+	# Вторичное действие — спокойная карточка в общей геометрии меню.
+	for state in ["normal", "hover", "pressed", "focus"]:
+		rg.add_theme_stylebox_override(state, _menu_button_state(false, "hover" if state == "focus" else state))
 	rg.pressed.connect(func():
 		_auth_email = em.text.strip_edges()
 		if _auth_email.find("@") < 0:
@@ -1559,11 +1677,11 @@ func _build_auth(auto: bool) -> void:
 	vb.add_child(rg)
 	var gs := _menu_button("Играть как гость")
 	gs.custom_minimum_size = Vector2(0, 40)
-	# мелкая серая текст-ссылка, не кнопка
-	gs.flat = true
-	gs.add_theme_font_size_override("font_size", 13)
-	gs.add_theme_color_override("font_color", Color(0.72, 0.76, 0.82))
-	gs.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	# Гостевой вход остаётся текстовым, но читается как явное действие.
+	gs.add_theme_font_size_override("font_size", 14)
+	gs.add_theme_color_override("font_color", Color("#a9bdce"))
+	gs.add_theme_color_override("font_hover_color", Color("#55d9e8"))
+	gs.add_theme_color_override("font_pressed_color", Color("#ffffff"))
 	gs.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	gs.pressed.connect(func():
 		_auth_close()
@@ -1571,9 +1689,7 @@ func _build_auth(auto: bool) -> void:
 	)
 	vb.add_child(gs)
 	_auth_guest = gs
-	var note := Label.new()
-	note.text = "Вход мгновенный — по аккаунту ВКонтакте. Прогресс синхронизируется между устройствами." if _vk_env() else "Аккаунт синхронизирует прогресс между устройствами."
-	note.add_theme_font_size_override("font_size", 12)
+	var note := _card_label("Вход мгновенный — по аккаунту ВКонтакте. Прогресс синхронизируется между устройствами." if _vk_env() else "Аккаунт синхронизирует прогресс между устройствами.", 11, Color("#71879c"))
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
@@ -1582,23 +1698,23 @@ func _build_auth(auto: bool) -> void:
 const STAT_KEYS := ["str", "agi", "end", "per", "int", "lck"]
 const STAT_NAMES := {"str": "Сила", "agi": "Ловкость", "end": "Выносливость",
 	"per": "Восприятие", "int": "Интеллект", "lck": "Удача"}
-const STAT_HINTS := {"str": "+2 кг веса/очко; СИЛ 4+ для тяжёлого оружия",
-	"agi": "+1 ОД за 3 очка (макс +3); +0.5% уклонения/очко",
-	"end": "+1 HP за очко", "per": "+1 обзор за 2 очка",
-	"int": "+0.1% точности за очко", "lck": "+0.1% к криту за очко (база 5%, x1.5 урон)"}
+const STAT_HINTS := {"str": "+2 кг к переносимому весу; от 4 — тяжёлое оружие",
+	"agi": "+1 очко действия за 3 очка (макс. +3); +0,5% к уклонению",
+	"end": "+1 к здоровью за очко", "per": "+1 к обзору за 2 очка",
+	"int": "+0,1% к точности за очко", "lck": "+0,1% к шансу критического удара; крит ×1,5 урона"}
 const STAT_POINTS := 5        # очков на распределение каждому бойцу
 const SLOT3_LVL := 35    # слот 3 — запасной, за 35 уровень любого бойца
 # слот 4 — ТОЛЬКО по подписке ВИП и после открытия слота 3 (на механику не влияем, открываем возможности)
 # таланты: ранг N стоит N очков (1/2/3); очко талантов — каждые 3 уровня бойца
 const TALENTS := [
-	{"id": "reload1", "icon": "bolt", "name": "Быстрая перезарядка", "max": 1, "desc": "Перезарядка стоит 1 ОД"},
+	{"id": "reload1", "icon": "bolt", "name": "Быстрая перезарядка", "max": 1, "desc": "Перезарядка стоит 1 очко действия"},
 	{"id": "sapper", "icon": "bomb", "name": "Сапёр", "max": 1, "desc": "Бочки взводятся с 1 попадания, взрыв +25%"},
-	{"id": "steady", "icon": "shield", "name": "Устойчивость", "max": 1, "desc": "Тяжёлое оружие (6+ ОД / str_req) — на 1 ОД дешевле"},
-	{"id": "marathon", "icon": "boot", "name": "Марафон", "max": 1, "desc": "+1 ОД максимум"},
+	{"id": "steady", "icon": "shield", "name": "Устойчивость", "max": 1, "desc": "Тяжёлое оружие тратит на 1 очко действия меньше"},
+	{"id": "marathon", "icon": "boot", "name": "Марафон", "max": 1, "desc": "+1 очко действия каждый ход"},
 	{"id": "medic", "icon": "medkit", "name": "Полевой врач", "max": 3, "desc": "+25% к лечению аптечкой за ранг"},
-	{"id": "scout", "icon": "eye", "name": "Разведчик", "max": 3, "desc": "+1 обзор за ранг"},
-	{"id": "mule", "icon": "backpack", "name": "Тягловый", "max": 3, "desc": "+2 кг носимого веса за ранг"},
-	{"id": "lucky", "icon": "clover", "name": "Фартовый", "max": 3, "desc": "+2% к шансу крита за ранг"},
+	{"id": "scout", "icon": "eye", "name": "Разведчик", "max": 3, "desc": "+1 к обзору за ранг"},
+	{"id": "mule", "icon": "backpack", "name": "Тягловый", "max": 3, "desc": "+2 кг к переносимому весу за ранг"},
+	{"id": "lucky", "icon": "clover", "name": "Фартовый", "max": 3, "desc": "+2% к шансу критического удара за ранг"},
 ]
 const TALENT_RESET_COST := 1800  # Хвост v1 §4.4: ×3 — монет за сброс талантов (слив экономики)
 # владение оружием: опыт класса = нанесённый урон; пороги уровней 100/250/500
@@ -1633,7 +1749,7 @@ const MQ_LOGIN_XP := 20
 const MQ_LOGIN_COINS := 5
 const MQ_WEEK_XP := 75
 const MQ_WEEK_COINS := 20
-const SEASON_START_UTC := 1790985600   # 2026-10-03 00:00 UTC — старт сезона 1
+const SEASON_START_UTC := 1793318400   # 2026-10-30 00:00 UTC — тестовый перезапуск цикла 1
 const SEASON_DAYS := 60                # сезон длится 60 дней (конец: 2026-12-02)
 const BP_SEASON_LIVE := false          # false — заглушка «СКОРО!»; запускаем, когда наберём игроков
 # дневной пул: 4 миссии ротируются по дате + 5-я — всегда реклама
@@ -1664,12 +1780,13 @@ const MQ_WEEK_LIST := [
 ]
 var _mq_acc := {"damage": 0, "loot": 0, "heals": 0, "grenades": 0, "lvlups": 0}   # накапливается в бою, сливается в конце
 var _chests_opened := 0       # ящиков открыто игроком за текущий бой
-# паки монет за реальные деньги; итоговый объём = coins (бонусов нет) — привязка: 29₽≈1 лечение, 199₽=1 переподготовка, 399₽≈2 недели игры
+# Паки монет за реальные деньги. Цена для игрока финальная, комиссия ВК не добавляется сверху.
+# Цена одной монеты снижается с ростом пакета: 0,860 → 0,732 → 0,666 → 0,613 ₽.
 const COIN_PACKS := [
-	{"coins": 150, "bonus": 0, "price": 29},
-	{"coins": 750, "bonus": 0, "price": 99},
-	{"coins": 1800, "bonus": 0, "price": 199},
-	{"coins": 3750, "bonus": 0, "price": 399},
+	{"coins": 150, "bonus": 0, "price": 129},
+	{"coins": 750, "bonus": 0, "price": 549},
+	{"coins": 1800, "bonus": 0, "price": 1199},
+	{"coins": 3750, "bonus": 0, "price": 2299},
 ]
 const PAYMENTS_ENABLED := true   # VK: ShowOrderBox -> серверная верификация order_id; вне ВК — dev-начисление
 const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неоновая»", "price": 200},
@@ -1682,14 +1799,19 @@ const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неон
 ]
 
 func _shop_owned(kind: String, idx: int) -> bool:
+	if kind not in ["frame", "nick_color", "outfit"] or idx < 0:
+		return false
 	var key := "owned_frames" if kind == "frame" else ("owned_colors" if kind == "nick_color" else "owned_outfits")
 	var arr: Array = _profile.get(key, [1, 0, 0])
 	return idx < arr.size() and int(arr[idx]) == 1
 
 func _shop_equipped(kind: String, idx: int) -> bool:
-	return int(_profile.get(kind, 0)) == idx
+	return kind in ["frame", "nick_color", "outfit"] and int(_profile.get(kind, 0)) == idx
 
 func _shop_equip(kind: String, idx: int) -> void:
+	# Базовый вариант доступен всегда; платный — только после покупки или дропа.
+	if kind not in ["frame", "nick_color", "outfit"] or idx < 0 or (idx > 0 and not _shop_owned(kind, idx)):
+		return
 	if kind == "frame":
 		_profile.frame = idx
 	elif kind == "outfit":
@@ -1713,7 +1835,7 @@ func _shop_equip_cell(kind: String, idx: int, cell: VBoxContainer) -> void:
 	eq.add_theme_font_size_override("font_size", 11)
 	eq.pressed.connect(func():
 		_shop_equip(kind, idx)
-		_show_menu_chests()
+		_refresh_menu_screen("chests")
 	)
 	cell.add_child(eq)
 
@@ -1730,14 +1852,22 @@ func _buy_coin_pack(pi: int) -> void:
 		_profile.coins = int(_profile.get("coins", 0)) + int(pk["coins"]) + int(pk.get("bonus", 0))
 		_sfx_play("cash")
 		_save_profile()
-		_show_menu_shop()
+		_refresh_menu_screen("shop")
 
 func _shop_buy(si: int) -> void:
+	if si < 0 or si >= SHOP_ITEMS.size():
+		return
 	var it: Dictionary = SHOP_ITEMS[si]
 	var kind := str(it["kind"])
 	var idx := int(it["idx"])
 	var price := int(it["price"])
+	# Повторный вызов не должен списать монеты за уже полученный предмет.
+	if _shop_owned(kind, idx):
+		_shop_equip(kind, idx)
+		return
 	if int(_profile.get("coins", 0)) < price:
+		var missing := price - int(_profile.get("coins", 0))
+		_toast("coin", "Недостаточно монет: не хватает %d" % missing)
 		return
 	_profile.coins = int(_profile.get("coins", 0)) - price
 	var key := "owned_frames" if kind == "frame" else ("owned_colors" if kind == "nick_color" else "owned_outfits")
@@ -2024,6 +2154,7 @@ func _load_profile() -> void:
 		"pity": [0, 0, 0],            # открытий без эпика/легенды/мифика
 		"chests_total": 0,            # сундуков открыто всего
 		"owned_teleports": [1, 1, 0], # телепорты: луч, дыра, шторм (BP)
+		"bp_season_start": 0,         # идентификатор цикла; сохраняется, чтобы сброс был одноразовым
 		"bp_xp": 0,                   # сезонный опыт Battle Pass
 		"bp_owned": 0,                # 1 = пропуск куплен
 		"bp_claimed_free": [],        # забранные награды free-ленты
@@ -2047,6 +2178,7 @@ func _load_profile() -> void:
 		"squad_heroes": [-1, -1, -1, -1],  # герой на слот отряда (-1 = базовый боец)
 		"craft_dups": 0,              # дублей косметики подряд (3 = крафт редкостью выше)
 		"pvp_rating": 1000,           # рейтинг ASYNC PvP (кэш отображения, источник правды — сервер)
+		"pvp_allow_offline": false,   # отдельное согласие: отряд может быть соперником, пока игрок офлайн
 		"daily_pvp_win": "",          # дата первой PvP-победы дня (бонус +100 монет)
 	}
 	var cfg := ConfigFile.new()
@@ -2078,6 +2210,7 @@ func _load_profile() -> void:
 	_profile.frame = int(cfg.get_value("player", "frame", 0))
 	_profile.nick_color = int(cfg.get_value("player", "nick_color", 0))
 	_profile.unlocked_slots = int(cfg.get_value("player", "unlocked_slots", 2))
+	_profile.battle_slots = cfg.get_value("player", "battle_slots", [1, 1, 1, 1])
 	_profile.onboarded = int(cfg.get_value("player", "onboarded", 0))
 	_profile.coins = int(cfg.get_value("player", "coins", 0))
 	_profile.stamina = float(cfg.get_value("player", "stamina", 100.0))
@@ -2097,6 +2230,7 @@ func _load_profile() -> void:
 	_profile.pity_siren = int(cfg.get_value("player", "pity_siren", 0))
 	_profile.chests_total = int(cfg.get_value("player", "chests_total", 0))
 	_profile.owned_teleports = cfg.get_value("player", "owned_teleports", [1, 1, 0])
+	_profile.bp_season_start = int(cfg.get_value("player", "bp_season_start", 0))
 	_profile.bp_xp = int(cfg.get_value("player", "bp_xp", 0))
 	_profile.bp_owned = int(cfg.get_value("player", "bp_owned", 0))
 	_profile.bp_claimed_free = cfg.get_value("player", "bp_claimed_free", [])
@@ -2112,6 +2246,7 @@ func _load_profile() -> void:
 	_profile.squad_heroes = cfg.get_value("player", "squad_heroes", [-1, -1, -1, -1])
 	_profile.craft_dups = int(cfg.get_value("player", "craft_dups", 0))
 	_profile.total_battles = int(cfg.get_value("player", "total_battles", 0))
+	_profile.pvp_allow_offline = bool(cfg.get_value("player", "pvp_allow_offline", false))
 	_profile_normalize()
 	_mq_check()
 
@@ -2141,6 +2276,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "frame", _profile.frame)
 	cfg.set_value("player", "nick_color", _profile.nick_color)
 	cfg.set_value("player", "unlocked_slots", _profile.unlocked_slots)
+	cfg.set_value("player", "battle_slots", _profile.get("battle_slots", [1, 1, 1, 1]))
 	cfg.set_value("player", "onboarded", int(_profile.get("onboarded", 0)))
 	cfg.set_value("player", "coins", int(_profile.get("coins", 0)))
 	cfg.set_value("player", "stamina", float(_profile.get("stamina", 100.0)))
@@ -2158,6 +2294,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "pity_siren", int(_profile.get("pity_siren", 0)))
 	cfg.set_value("player", "chests_total", int(_profile.get("chests_total", 0)))
 	cfg.set_value("player", "owned_teleports", _profile.get("owned_teleports", [1, 1, 0]))
+	cfg.set_value("player", "bp_season_start", int(_profile.get("bp_season_start", 0)))
 	cfg.set_value("player", "bp_xp", int(_profile.get("bp_xp", 0)))
 	cfg.set_value("player", "bp_owned", int(_profile.get("bp_owned", 0)))
 	cfg.set_value("player", "bp_claimed_free", _profile.get("bp_claimed_free", []))
@@ -2173,6 +2310,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "squad_heroes", _profile.get("squad_heroes", [-1, -1, -1, -1]))
 	cfg.set_value("player", "craft_dups", int(_profile.get("craft_dups", 0)))
 	cfg.set_value("player", "total_battles", int(_profile.get("total_battles", 0)))
+	cfg.set_value("player", "pvp_allow_offline", bool(_profile.get("pvp_allow_offline", false)))
 	cfg.set_value("player", "login_streak", _profile.get("login_streak", {"last": "", "n": 0}))
 	cfg.set_value("player", "daily", _profile.get("daily", {"daily_reset": "", "prog": {}, "done": {}}))
 	cfg.save("user://profile.cfg")
@@ -2628,14 +2766,19 @@ func _house_of(c: Vector2i) -> int:
 	return -1
 
 func _can_enter(from: Vector2i, to: Vector2i) -> bool:
-	# внутрь дома — только через дверь или из другой клетки того же дома
-	var hk := _key(to)
-	if not _house_at.has(hk):
-		return true
-	var h: int = _house_at[hk]
-	if _house_at.get(_key(from), -1) == h:
-		return true
-	return from == _houses[h].door
+	# Стена работает в обе стороны: войти и выйти можно только через свою дверь.
+	# Проверка обязательна и для свободной целевой клетки — иначе можно выйти сквозь стену.
+	var from_key := _key(from)
+	var to_key := _key(to)
+	if _house_at.has(from_key):
+		var from_h := int(_house_at[from_key])
+		if _house_at.has(to_key):
+			return int(_house_at[to_key]) == from_h
+		return to == _houses[from_h].door
+	if _house_at.has(to_key):
+		var to_h := int(_house_at[to_key])
+		return from == _houses[to_h].door
+	return true
 
 func _update_house_fade() -> void:
 	# дом с бойцом внутри становится полупрозрачным
@@ -3085,6 +3228,55 @@ func _bar_tex() -> Texture2D:
 		_bar_texture = ImageTexture.create_from_image(img)
 	return _bar_texture
 
+func _battle_lineup(m: int = -1) -> Array:
+	# СОСТАВ v1: слоты, идущие в бой — активные по порядку, максимум = режим;
+	# минимум один (если игрок снял все галочки — страховка: первый слот)
+	var need := _player_count() if m < 0 else (clampi(int(_profile.get("unlocked_slots", 1)), 1, 4) if m >= 5 else m)
+	var flags: Array = _profile.get("battle_slots", [1, 1, 1, 1])
+	var act: Array = []
+	var n := clampi(int(_profile.get("unlocked_slots", 1)), 1, 4)
+	for i in n:
+		if i >= flags.size() or int(flags[i]) == 1:
+			act.append(i)
+	if act.is_empty():
+		act.append(0)
+	return act.slice(0, need)
+
+func _battle_slots_row() -> HBoxContainer:
+	# галочки «В бой» по слотам: снял — боец в резерве; минимум одна галочка всегда
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var flags: Array = _profile.get("battle_slots", [1, 1, 1, 1])
+	var n := clampi(int(_profile.get("unlocked_slots", 1)), 1, 4)
+	var lab := Label.new()
+	lab.text = "В бой:"
+	lab.add_theme_font_size_override("font_size", 12)
+	row.add_child(lab)
+	for i in n:
+		var cb := CheckBox.new()
+		cb.text = str(_profile.names[i])
+		cb.add_theme_font_size_override("font_size", 12)
+		cb.button_pressed = i >= flags.size() or int(flags[i]) == 1
+		cb.tooltip_text = "Снять галочку — боец останется в резерве (не идёт в бой)"
+		var fi: int = i
+		cb.toggled.connect(func(on: bool):
+			var fl2: Array = _profile.get("battle_slots", [1, 1, 1, 1]).duplicate()
+			while fl2.size() < 4:
+				fl2.append(1)
+			fl2[fi] = 1 if on else 0
+			var any := false
+			for k in n:
+				if int(fl2[k]) == 1:
+					any = true
+			if not any:
+				fl2[fi] = 1
+				cb.set_pressed_no_signal(true)
+			_profile.battle_slots = fl2
+			_save_profile()
+		)
+		row.add_child(cb)
+	return row
+
 # ---------------- БОЙЦЫ 4v4 ----------------
 func _player_count() -> int:
 	# режимы 5 «Арена лидеров» и 6 «Жнец»: весь доступный отряд (1–4 бойца)
@@ -3105,7 +3297,7 @@ func _spawn_teams() -> void:
 	var lo := 2
 	var hi := _grid_n - 3
 	var mid := _grid_n / 2
-	for i in _player_count():
+	for i in _battle_lineup():
 		var cell := _free_cell_sector(lo, mid - 4, mid + 4, hi)
 		# стартовое оружие: нож (всегда) + выбранный в отряде пистолет; стволы — трофеи с поля боя
 		var sidearm: String = SIDEARMS[clampi(int(_profile.sidearm[i]), 0, SIDEARMS.size() - 1)]
@@ -4131,9 +4323,10 @@ func _reachable(from: Vector2i, ap: int) -> Dictionary:
 			var k := _key(n)
 			if _unit_at.has(k):
 				continue
-			if _occupied.has(k):
-				if not _house_at.has(k) or not _can_enter(cur, n):
-					continue
+			if not _can_enter(cur, n):
+				continue
+			if _occupied.has(k) and not _house_at.has(k):
+				continue
 			if not res.has(n):
 				res[n] = cost + 1
 				queue.append(n)
@@ -4328,7 +4521,7 @@ func _med_doctor(i: int) -> void:
 	_save_profile()
 	_log("Доктор вылечил %s: +%d HP (%d/%d)" % [_profile.names[i], nh - h, nh, mx])
 	if _menu_open:
-		_show_menu_med()
+		_refresh_menu_screen("med")
 
 func _move_fighter(i: int, cell: Vector2i, path: Array = []) -> void:
 	var f = _fighters[i]
@@ -4464,6 +4657,7 @@ func _hit_chance(a: Vector2i, b: Vector2i, w_range := 0, flash := false) -> floa
 
 func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist := -1.0, pierce := 0.0) -> int:
 	var d = _fighters[victim]
+	var hp_before := int(d.hp)
 	var real: int
 	if pierce > 0.0:
 		# пробитие (огонь, спецэффекты): доля урона проходит напрямую
@@ -4479,9 +4673,12 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 	if _crowd_fury:
 		# ТОЛПА ТРЕБУЕТ КРОВИ: урон всех +25%
 		real = maxi(1, int(round(real * 1.25)))
-	d.hp = maxi(0, d.hp - real)
+	# Статистика, миссии, XP и владение получают фактически снятые HP,
+	# а не теоретический overkill. Возвращаем тоже фактический урон.
+	var applied := mini(real, maxi(0, hp_before))
+	d.hp = maxi(0, hp_before - applied)
 	if int(d.team) == 0:
-		_dmg_taken += real   # триумф 1×1 «победа без урона / на последнем издыхании»
+		_dmg_taken += applied   # триумф 1×1 «победа без урона / на последнем издыхании»
 	if _mode == 6 and d.get("boss", false) and d.alive and int(d.hp) > 0:
 		# фазы Жнеца: на 66%/33% HP — карта в руку игрока
 		var frac := float(d.hp) / maxf(1.0, float(d.max_hp))
@@ -4498,14 +4695,14 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 	if pierce <= 0.0:
 		_wear_armor(victim, dmg)
 	if src_idx >= 0 and src_idx < _fighters.size():
-		_fighters[src_idx].dmg = int(_fighters[src_idx].get("dmg", 0)) + real
+		_fighters[src_idx].dmg = int(_fighters[src_idx].get("dmg", 0)) + applied
 		if _fighters[src_idx].team == 0:
-			_mq_acc["damage"] = int(_mq_acc.get("damage", 0)) + real
+			_mq_acc["damage"] = int(_mq_acc.get("damage", 0)) + applied
 	_sfx_play("hit")
 	var arm_txt := ""
 	if dmg > real:
 		arm_txt = " (броня -%d)" % (dmg - real)
-	_log("%s -> %s: %d урона%s (HP %d)" % [src_name, d.name, real, arm_txt, d.hp])
+	_log("%s -> %s: %d урона%s (HP %d)" % [src_name, d.name, applied, arm_txt, d.hp])
 	if d.hp <= 0:
 		_kill(victim)
 		if int(d.team) == 1 and src_idx >= 0 and src_idx < _fighters.size():
@@ -4525,7 +4722,7 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 				_log("%s: адреналин — +1 ОД!" % k.name)
 	else:
 		_spawn_burst(d.node.position + Vector3(0, 1.0, 0), Color(0.55, 0.05, 0.08))
-	return real
+	return applied
 
 func _shoot(att: int, def: int) -> void:
 	var a = _fighters[att]
@@ -4631,7 +4828,10 @@ func _shoot(att: int, def: int) -> void:
 				continue
 			for i in burst:
 				if _rng.randf() < 0.35:
-					_apply_damage(vi, maxi(1, int(w.get("damage", 10) * 0.5 * (1.0 + 0.03 * pl))), a.name, att, vd)
+					# Броня дополнительной цели зависит от дистанции до СТРЕЛКА;
+					# vd — расстояние до основной цели и нужно только для радиуса разлёта.
+					var spread_dist := Vector2(a.cell.x - v.cell.x, a.cell.y - v.cell.y).length()
+					_apply_damage(vi, maxi(1, int(w.get("damage", 10) * 0.5 * (1.0 + 0.03 * pl))), a.name, att, spread_dist)
 	if total > 0:
 		var real: int = _apply_damage(def, total, a.name, att, dist)
 		_gain_xp(att, _xp_hit() + real)
@@ -5512,7 +5712,12 @@ func _after_action() -> void:
 # ---------- ШОУ-КАРТЫ ----------
 # пул 12 карт (пак 1.1): у каждой карты rarity — веса ролла по тирам
 const CARD_ICON_BY_RARITY := {"common": "bolt", "medium": "eye", "rare": "bomb", "legendary": "chest"}
-const CARD_PNG_BY_ID := {"sofit": "card_sofit", "ten": "card_ten", "molot": "card_molot", "rezerv": "card_rezerv", "reklama": "card_pauza", "teleport": "card_teleport"}
+const CARD_PNG_BY_ID := {
+	"sofit": "card_sofit", "ten": "card_ten", "molot": "card_molot",
+	"rezerv": "card_rezerv", "reklama": "card_pauza", "teleport": "card_teleport",
+	"ukazka": "card_ukazka", "radar": "card_radar", "piro": "card_piro",
+	"airdrop": "card_airdrop", "sponsor": "card_sponsor", "stavka": "card_stavka",
+}
 const SHOW_CARDS := {
 	# частые (common)
 	"sofit": {"name": "Софит", "desc": "Прожектор зала высвечивает врага: виден 1 ход даже в тумане", "target": "enemy", "rarity": "common"},
@@ -6046,9 +6251,10 @@ func _bot_step(i: int, target: Vector2i) -> bool:
 			continue
 		if not _in_zone(n) and _in_zone(f.cell):
 			continue
-		if _occupied.has(k):
-			if not _house_at.has(k) or not _can_enter(f.cell, n):
-				continue
+		if not _can_enter(f.cell, n):
+			continue
+		if _occupied.has(k) and not _house_at.has(k):
+			continue
 		var nd := Vector2(n.x - target.x, n.y - target.y).length()
 		if nd < best_d:
 			best_d = nd
@@ -6068,8 +6274,10 @@ func _check_end() -> void:
 		_game_over = true
 		_deselect()
 		# прогресс бойцов игрока сохраняется в профиль
-		for pi in _player_count():
-			var pf = _fighters[pi]
+		var lineup := _battle_lineup()
+		for k in lineup.size():
+			var pi: int = lineup[k]
+			var pf = _fighters[k]
 			_profile.stats[pi] = pf.stats
 			_profile.lvl[pi] = int(pf.lvl)
 			_profile.xp[pi] = int(pf.xp)
@@ -6161,7 +6369,7 @@ func _check_end() -> void:
 			var pf: Dictionary = _pvp_fight
 			_pvp_fight = {}   # бой закрыт локально — повторная отправка невозможна
 			_pvp_call("pvp_result.php", {"token": _auth_token, "fight_id": str(pf.get("fight_id", "")),
-				"outcome": "win" if win else "lose", "turns": _turn, "dmg_dealt": pvp_dmg, "dmg_taken": 0},
+				"outcome": "win" if win else "lose", "turns": _turn, "dmg_dealt": pvp_dmg, "dmg_taken": _dmg_taken},
 				func(rd: Dictionary) -> void:
 					if not bool(rd.get("ok", false)):
 						return
@@ -6181,21 +6389,43 @@ func _check_end() -> void:
 		_save_profile()
 		var msg := "ПОБЕДА! Арена ваша!" if blue == 0 else "Поражение. Шоу окончено."
 		_log(msg)
+		# Результат боя — отдельный экран: HTML-лобби не должно перекрывать его кнопки.
+		_web_main_menu(false)
+		_menu_open = false
+		if _ui.has("menu_layer") and is_instance_valid(_ui.menu_layer):
+			_ui.menu_layer.visible = false
 		if _ui.has("layer"):
 			var wrap := CenterContainer.new()
 			wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
 			_ui.layer.add_child(wrap)
+			var result_scroll := ScrollContainer.new()
+			result_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			result_scroll.custom_minimum_size = Vector2(min(570.0, _vw() * 0.96), maxf(220.0, _vh() - 32.0))
+			wrap.add_child(result_scroll)
 			var panel := PanelContainer.new()
 			panel.custom_minimum_size = Vector2(min(540.0, _vw() * 0.94), 0)
+			panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			panel.add_theme_stylebox_override("panel", _frame_box())
-			wrap.add_child(panel)
+			result_scroll.add_child(panel)
 			var vb := VBoxContainer.new()
+			vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			panel.add_child(vb)
+			var result_head := HBoxContainer.new()
+			vb.add_child(result_head)
 			var l := Label.new()
 			l.text = msg
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			l.add_theme_font_size_override("font_size", 24 if _mob() else 32)
 			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			vb.add_child(l)
+			result_head.add_child(l)
+			var close_result := Button.new()
+			close_result.text = "×"
+			close_result.tooltip_text = "Закрыть и перейти в лобби"
+			close_result.custom_minimum_size = Vector2(46, 42)
+			close_result.add_theme_font_size_override("font_size", 26)
+			_style_menu_button(close_result)
+			close_result.pressed.connect(_go_lobby)
+			result_head.add_child(close_result)
 			var sub := Label.new()
 			sub.text = "Раундов: %d · Зона: фаза %d" % [_turn, _zone_phase]
 			sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -6219,10 +6449,13 @@ func _check_end() -> void:
 					pd.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 					vb.add_child(pd)
 					_pvp_delta_lbl = pd
-				# удвоение награды за просмотр ролика
+				# Главный CTA результатов: награда и условие читаются до нажатия.
 				var bdouble := Button.new()
-				bdouble.text = "Удвоить награду ×2 (ролик)"
-				bdouble.custom_minimum_size = Vector2(280, 42)
+				bdouble.text = "УДВОИТЬ НАГРАДУ ×2 · ЗА ПРОСМОТР"
+				bdouble.custom_minimum_size = Vector2(0, 52)
+				bdouble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				bdouble.tooltip_text = "Посмотри короткий ролик и получи ещё столько же монет"
+				_style_menu_button(bdouble, true)
 				bdouble.add_theme_font_size_override("font_size", 16)
 				var rw_coins: int = int(_battle_reward.coins)
 				bdouble.pressed.connect(func():
@@ -6295,12 +6528,14 @@ func _check_end() -> void:
 
 # ---------- интерфейс ----------
 func _build_ui() -> void:
-	# кириллический шрифт Manrope + монохромные эмодзи Noto Emoji как fallback
+	# Кириллица Manrope; цветной Noto Emoji идёт первым, монохромный — лишь запасной.
 	if ResourceLoader.exists("res://assets/fonts/Manrope.ttf"):
 		var fv := FontVariation.new()
 		fv.base_font = load("res://assets/fonts/Manrope.ttf")
+		if ResourceLoader.exists("res://assets/fonts/NotoEmojiColor.ttf"):
+			fv.fallbacks.append(load("res://assets/fonts/NotoEmojiColor.ttf"))
 		if ResourceLoader.exists("res://assets/fonts/NotoEmojiStatic.ttf"):
-			fv.fallbacks = [load("res://assets/fonts/NotoEmojiStatic.ttf")]
+			fv.fallbacks.append(load("res://assets/fonts/NotoEmojiStatic.ttf"))
 		ThemeDB.fallback_font = fv
 		ThemeDB.fallback_font_size = 16
 	var layer := CanvasLayer.new()
@@ -6326,11 +6561,16 @@ func _build_ui() -> void:
 	_ensure_http()   # сам добавляет _http в дерево; повторный add_child = ошибка репарента
 	# табличка хода — по центру сверху: ход, счёт, таймер; под ней золотая кнопка «Новый уровень»
 	var turn_plate := PanelContainer.new()
-	turn_plate.anchor_left = 0.5
-	turn_plate.anchor_right = 0.5
-	var plate_half := minf(190.0, _vw() * 0.46)
-	turn_plate.offset_left = -plate_half
-	turn_plate.offset_right = plate_half
+	if _mob():
+		# Слева отдельная колонка шириной до кнопок справа: без наложения HUD.
+		turn_plate.offset_left = 8.0
+		turn_plate.offset_right = maxf(170.0, _vw() - 166.0)
+	else:
+		turn_plate.anchor_left = 0.5
+		turn_plate.anchor_right = 0.5
+		var plate_half := minf(190.0, _vw() * 0.46)
+		turn_plate.offset_left = -plate_half
+		turn_plate.offset_right = plate_half
 	turn_plate.offset_top = 8.0
 	turn_plate.offset_bottom = 56.0
 	var tps := _frame_box()
@@ -6359,17 +6599,23 @@ func _build_ui() -> void:
 	var lvl_note := Button.new()
 	lvl_note.text = ""
 	lvl_note.visible = false
-	lvl_note.anchor_left = 0.5
-	lvl_note.anchor_right = 0.5
-	lvl_note.offset_left = -120.0
-	lvl_note.offset_right = 120.0
-	lvl_note.offset_top = 62.0
-	lvl_note.offset_bottom = 90.0
+	if _mob():
+		lvl_note.offset_left = 8.0
+		lvl_note.offset_right = maxf(170.0, _vw() - 166.0)
+		lvl_note.offset_top = 170.0
+		lvl_note.offset_bottom = 198.0
+	else:
+		lvl_note.anchor_left = 0.5
+		lvl_note.anchor_right = 0.5
+		lvl_note.offset_left = -120.0
+		lvl_note.offset_right = 120.0
+		lvl_note.offset_top = 62.0
+		lvl_note.offset_bottom = 90.0
 	var lns := StyleBoxFlat.new()
 	lns.bg_color = Color(0.30, 0.21, 0.04, 0.92)
 	lns.border_color = Color(1.0, 0.85, 0.35, 0.95)
 	lns.set_border_width_all(2)
-	lns.set_corner_radius_all(12)
+	lns.set_corner_radius_all(4)
 	lns.shadow_color = Color(1.0, 0.75, 0.2, 0.55)
 	lns.shadow_size = 9
 	lvl_note.add_theme_stylebox_override("normal", lns)
@@ -6480,7 +6726,7 @@ func _build_ui() -> void:
 	_ui.sponsor_btn = sponsor
 	# --- карточка бойца слева сверху: портрет + HP/AP + рюкзак под анимацией ---
 	var card := PanelContainer.new()
-	card.position = Vector2(12, 48)
+	card.position = Vector2(12, 64) if _mob() else Vector2(12, 48)
 	card.custom_minimum_size = Vector2(0, 100) if _mob() else Vector2(0, 104)   # ширина — по содержимому, без пустот справа
 	var card_sb := _frame_box()
 	card_sb.border_color = Color(1.0, 0.28, 0.34, 0.8)
@@ -6492,7 +6738,7 @@ func _build_ui() -> void:
 	var ch := HBoxContainer.new()
 	card_v.add_child(ch)
 	var pvc := SubViewportContainer.new()
-	pvc.custom_minimum_size = Vector2(42, 56)   # портрет уменьшен в 4 раза по площади — виден, но не загораживает обзор
+	pvc.custom_minimum_size = Vector2(36, 48) if _mob() else Vector2(42, 56)
 	pvc.stretch = true
 	var pv := SubViewport.new()
 	pv.size = Vector2i(172, 248)
@@ -6503,12 +6749,15 @@ func _build_ui() -> void:
 	_ui.card_pvc = pvc
 	# аватар игрока из профиля (заменяет 3D-портрет, если загружен)
 	var ava := TextureRect.new()
-	ava.custom_minimum_size = Vector2(42, 56)
+	ava.custom_minimum_size = Vector2(36, 48) if _mob() else Vector2(42, 56)
 	ava.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ava.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	ava.visible = false
 	ch.add_child(ava)
 	_ui.card_avatar = ava
+	var card_frame := _frame_overlay(int(_profile.get("frame", 0)))
+	ava.add_child(card_frame)
+	_ui.card_frame = card_frame
 	var cvb2 := VBoxContainer.new()
 	cvb2.add_theme_constant_override("separation", 4)
 	ch.add_child(cvb2)
@@ -6519,26 +6768,26 @@ func _build_ui() -> void:
 	hp_row.add_theme_constant_override("separation", 6)
 	cvb2.add_child(hp_row)
 	var hp_l := Label.new()
-	hp_l.custom_minimum_size = Vector2(64, 0)
+	hp_l.custom_minimum_size = Vector2(52, 0) if _mob() else Vector2(64, 0)
 	hp_l.add_theme_font_size_override("font_size", 13)
 	hp_row.add_child(hp_l)
 	var hp_bar := ProgressBar.new()
 	hp_bar.max_value = 100
 	hp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hp_bar.custom_minimum_size = Vector2(140, 12) if _mob() else Vector2(180, 12)
+	hp_bar.custom_minimum_size = Vector2(70, 12) if _mob() else Vector2(180, 12)
 	hp_bar.show_percentage = false
 	hp_row.add_child(hp_bar)
 	var ap_row := HBoxContainer.new()
 	ap_row.add_theme_constant_override("separation", 6)
 	cvb2.add_child(ap_row)
 	var ap_l := Label.new()
-	ap_l.custom_minimum_size = Vector2(64, 0)
+	ap_l.custom_minimum_size = Vector2(52, 0) if _mob() else Vector2(64, 0)
 	ap_l.add_theme_font_size_override("font_size", 13)
 	ap_row.add_child(ap_l)
 	var ap_bar := ProgressBar.new()
 	ap_bar.max_value = 10
 	ap_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ap_bar.custom_minimum_size = Vector2(140, 12) if _mob() else Vector2(180, 12)
+	ap_bar.custom_minimum_size = Vector2(70, 12) if _mob() else Vector2(180, 12)
 	ap_bar.show_percentage = false
 	ap_row.add_child(ap_bar)
 	# иконка рюкзака убрана — дублировала кнопку в панели бойца справа ([I] работает)
@@ -6554,7 +6803,7 @@ func _build_ui() -> void:
 	_style_bar(ap_bar, Color(0.2, 0.8, 1.0))
 	# --- ростер отряда: горизонтальный ряд прямоугольных портретов-иконок под карточкой ---
 	var roster := HBoxContainer.new()
-	roster.position = Vector2(12, 158)
+	roster.position = Vector2(12, 206) if _mob() else Vector2(12, 158)
 	roster.add_theme_constant_override("separation", 6)
 	layer.add_child(roster)
 	_ui.squad_rows = []
@@ -6601,7 +6850,7 @@ func _build_ui() -> void:
 	chat_sb.bg_color = Color(0.14, 0.20, 0.15, 0.78)
 	chat_sb.border_color = Color(0.38, 0.55, 0.40, 0.85)
 	chat_sb.set_border_width_all(1)
-	chat_sb.set_corner_radius_all(10)
+	chat_sb.set_corner_radius_all(4)
 	chat_sb.set_content_margin_all(8)
 	chat.add_theme_stylebox_override("panel", chat_sb)
 	layer.add_child(chat)
@@ -6638,6 +6887,8 @@ func _build_ui() -> void:
 	cvb.add_child(inrow_b)
 	var inp := LineEdit.new()
 	inp.placeholder_text = "Сообщение… (вкладки чатов, пока локально)"
+	inp.add_theme_font_override("font", _font_chat())
+	inp.add_theme_font_size_override("font_size", 12)
 	inp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inp.text_submitted.connect(func(_t): _battle_chat_send(inp))
 	var inp_sb2 := StyleBoxFlat.new()
@@ -6673,7 +6924,7 @@ func _build_ui() -> void:
 	emtr2.set_anchors_preset(Control.PRESET_CENTER)
 	emtr2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	emb2.add_child(emtr2)
-	emb2.pressed.connect(func(): _toggle_emoji_panel(inp, chat, _battle_chat_send))
+	emb2.pressed.connect(func(): _toggle_emoji_panel(inp, chat))
 	inp.add_child(emb2)
 	var sendb2 := Button.new()
 	sendb2.text = "»"
@@ -6729,8 +6980,8 @@ func _build_ui() -> void:
 	fp.anchor_right = 0.0
 	fp.offset_left = 8.0
 	fp.offset_right = 100.0
-	# вертикальная колонка под ростером (y≈222+) — вплотную к карточке и аватарам
-	fp.offset_top = 222.0
+	# На телефоне панель начинается ниже компактной карточки, заметки и ростера.
+	fp.offset_top = 272.0 if _mob() else 222.0
 	fp.offset_bottom = 640.0
 	fp.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	fp.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -6750,8 +7001,8 @@ func _build_ui() -> void:
 	fcp.anchor_right = 0.0
 	fcp.offset_left = 104.0
 	fcp.offset_right = 424.0
-	fcp.offset_top = 222.0
-	fcp.offset_bottom = 312.0
+	fcp.offset_top = 272.0 if _mob() else 222.0
+	fcp.offset_bottom = 362.0 if _mob() else 312.0
 	fcp.add_theme_stylebox_override("panel", _frame_box())
 	fcp.visible = false
 	layer.add_child(fcp)
@@ -6872,6 +7123,7 @@ func _render_chat() -> void:
 	for line in data:
 		var l := Label.new()
 		l.text = line
+		l.add_theme_font_override("font", _font_chat())
 		l.add_theme_font_size_override("font_size", 12)
 		l.add_theme_color_override("font_color", col)
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -7075,7 +7327,12 @@ func _populate_cards_popup() -> void:
 		cbtn.text = SHOW_CARDS[cid_h]["name"]
 		cbtn.tooltip_text = SHOW_CARDS[cid_h]["desc"] + "\n1 карта/ход на отряд"
 		cbtn.add_theme_font_size_override("font_size", 11)
-		cbtn.custom_minimum_size = Vector2(0, 26)
+		var hrar: String = str(SHOW_CARDS[cid_h].get("rarity", "common"))
+		cbtn.icon = _png_icon(CARD_PNG_BY_ID.get(cid_h, ""))
+		if cbtn.icon == null:
+			cbtn.icon = _icon_tex(CARD_ICON_BY_RARITY.get(hrar, "bolt"))
+		cbtn.icon_max_width = 24
+		cbtn.custom_minimum_size = Vector2(0, 30)
 		cbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cbtn.disabled = _card_played or _busy or _game_over
 		var cid_c: String = cid_h
@@ -7084,6 +7341,8 @@ func _populate_cards_popup() -> void:
 		fcv.add_child(cbtn)
 	var betb := Button.new()
 	betb.text = "Ставка ×1.5"
+	betb.icon = _png_icon("card_stavka")
+	betb.icon_max_width = 24
 	betb.toggle_mode = true
 	betb.button_pressed = _book_bet
 	betb.tooltip_text = "Ставка букмекера: победа — монеты ×1.5, поражение — ×0.5"
@@ -7450,17 +7709,23 @@ func _run_testplay() -> void:
 	_profile.hero_rentals = {}
 	_profile.hero_frags = {}
 	_profile.hero_owned = []
+	_profile.hero_tokens = []
 	_bp_claim(9, false)    # free: аренда «Крот» 3 дн
 	_bp_claim(15, false)   # free: фрагменты «Вдова» ×5
 	_bp_claim(30, false)   # free: «Вдова» ×10 (итого 15)
 	_bp_claim(45, false)   # free: «Вдова» ×15 (итого 30)
-	_bp_claim(50, false)   # free: «Призрак» навсегда
+	_bp_claim(50, false)   # free: токен аренды «Призрак» 30 дн
 	_bp_claim(9, true)     # prem: аренда «Следопыт» 7 дн
 	_bp_claim(30, true)    # prem: аренда «Жнец» 7 дн
-	var bp_own: Array = _profile.get("hero_owned", [])
 	var bp_fr: Dictionary = _profile.get("hero_frags", {})
 	var bp_rent: Dictionary = _profile.get("hero_rentals", {})
-	print("BP_HERO_TEST free-50: «Призрак» owned=", int(bp_own[11]) if bp_own.size() > 11 else 0, " (ожидается 1)")
+	var bp_tokens: Array = _profile.get("hero_tokens", [])
+	var bp_ghost_token := false
+	for bp_tk in bp_tokens:
+		if int(bp_tk.get("hid", -1)) == 11 and int(bp_tk.get("days", 0)) == 30:
+			bp_ghost_token = true
+			break
+	print("BP_HERO_TEST free-50: токен «Призрак» 30 дн=", bp_ghost_token, " (ожидается true)")
 	print("BP_HERO_TEST «Вдова» фрагменты=", int(bp_fr.get("7", 0)), "/45 (ожидается 30)")
 	print("BP_HERO_TEST аренды: Крот=", bp_rent.has("0"), " Следопыт=", bp_rent.has("5"), " Жнец=", bp_rent.has("10"), " (все true)")
 	# --- пак 1.1: SHOW_TEST-дополнение (5 новых карт, тиры, веса) ---
@@ -7470,6 +7735,12 @@ func _run_testplay() -> void:
 		var rar_k: String = str(SHOW_CARDS[ck2].get("rarity", "common"))
 		rar_cnt[rar_k] = int(rar_cnt.get(rar_k, 0)) + 1
 	print("SHOW_TEST пул: всего=", SHOW_CARDS.size(), " частых=", rar_cnt["common"], " средних=", rar_cnt["medium"], " редких=", rar_cnt["rare"], " (ожидается 12/6/3/3)")
+	var card_icons_ok := CARD_PNG_BY_ID.size() == SHOW_CARDS.size()
+	for ck3 in SHOW_CARDS.keys():
+		var icon_name: String = str(CARD_PNG_BY_ID.get(ck3, ""))
+		if icon_name.is_empty() or not ResourceLoader.exists("res://assets/icons/png256/%s.png" % icon_name):
+			card_icons_ok = false
+	print("CARD_ICONS_TEST все-12-загружаются=", card_icons_ok, " (ожидается true)")
 	var roll_ok := true
 	var roll_common := 0
 	for _ri in 600:
@@ -7604,6 +7875,84 @@ func _run_testplay() -> void:
 	print("DAILY_TEST сброс-даты=", dr, " цель-достигнута=", d_done, " выплата-60=", d_pay, " гранд=", dg1.size() == 1, " (все true)")
 	print("DAILY_TEST серия: день3=", st_n == 3, " +150=", st_pay, " пропуск->день1=", st_reset, " (все true)")
 	_profile.login_streak = {"last": today_t, "n": 1}
+	# --- PREMIUM_UI_TEST: одноразовый сброс BP, уникальные рамки и защита покупок ---
+	_profile.bp_season_start = 0
+	_profile.bp_xp = 900
+	_profile.bp_owned = 1
+	_profile.bp_claimed_free = [9, 15]
+	_profile.bp_claimed_prem = [30]
+	_bp_season_sync()
+	var bp_first: bool = int(_profile.bp_xp) == 0 and int(_profile.bp_owned) == 0 and _profile.bp_claimed_free.is_empty() and _profile.bp_claimed_prem.is_empty()
+	_profile.bp_xp = 321
+	_profile.bp_owned = 1
+	_profile.bp_claimed_free = [9]
+	_bp_season_sync()
+	var bp_second: bool = int(_profile.bp_xp) == 321 and int(_profile.bp_owned) == 1 and _profile.bp_claimed_free == [9]
+	var bp_cfg := ConfigFile.new()
+	var bp_saved: bool = bp_cfg.load("user://profile.cfg") == OK and int(bp_cfg.get_value("player", "bp_season_start", 0)) == SEASON_START_UTC
+	print("BP_RESET_TEST первый-сброс=", bp_first, " повтор-сохраняет=", bp_second, " id-на-диске=", bp_saved, " (все true)")
+	var frame_paths := {}
+	var frames_ok := FRAME_PNG_FILES.size() == 30
+	for fi in range(1, FRAME_PNG_FILES.size()):
+		var fp := _frame_png(fi)
+		frames_ok = frames_ok and ResourceLoader.exists(fp) and not frame_paths.has(fp)
+		frame_paths[fp] = true
+	print("FRAMES_TEST уникальные-и-загружаются=", frames_ok, " файлов=", frame_paths.size(), " (true/29; плюс базовый вариант)")
+	var shop_profile: Dictionary = _profile.duplicate(true)
+	_profile.owned_frames = [1, 0, 0]
+	_profile.frame = 0
+	_profile.coins = 1000
+	_shop_equip("frame", 28)
+	var equip_guard := int(_profile.frame) == 0
+	_profile.frame = 1
+	_shop_equip("frame", 0)
+	var base_equip := int(_profile.frame) == 0
+	_shop_buy(0)
+	var purchase_ok: bool = int(_profile.coins) == 800 and _shop_owned("frame", 1) and int(_profile.frame) == 1
+	_shop_buy(0)
+	var duplicate_free := int(_profile.coins) == 800
+	_profile.coins = 100
+	_shop_buy(1)
+	var insufficient_ok: bool = int(_profile.coins) == 100 and not _shop_owned("frame", 2) and int(_profile.frame) == 1
+	_save_profile()
+	_load_profile()
+	var persist_ok: bool = int(_profile.coins) == 100 and _shop_owned("frame", 1) and int(_profile.frame) == 1
+	var drop_new: bool = not _owned_grant("frame", 3) and _shop_owned("frame", 3)
+	_shop_equip("frame", 3)
+	var drop_equip := int(_profile.frame) == 3
+	var drop_duplicate: bool = _owned_grant("frame", 3)
+	var chest_duplicate_ok := false
+	for chest_seed in range(128):
+		_profile.owned_frames = [1, 0, 0, 1]
+		_profile.shards = 0
+		_profile.pity = [0, 0, 0]
+		_profile.pity_siren = 0
+		_profile.craft_dups = 0
+		_profile.chests_total = 0
+		seed(chest_seed)
+		_chest_roll()
+		if _chest_last_rarity == 0 and _chest_last.begins_with("Рамка «Камуфляж»"):
+			chest_duplicate_ok = int(_profile.shards) == RARITY_SHARD_DUP[0] and _chest_last.contains("дубликат → +5 осколков") and int(_profile.craft_dups) == 1
+			break
+	_profile = shop_profile
+	_save_profile()
+	print("SHOP_GUARD_TEST закрыто-не-надевается=", equip_guard, " база-доступна=", base_equip, " покупка-200=", purchase_ok, " дубль-без-списания=", duplicate_free, " нехватка-защищена=", insufficient_ok, " сохранение=", persist_ok, " (все true)")
+	print("CHEST_OWNED_TEST новый-дроп=", drop_new, " экипировка=", drop_equip, " повтор-это-дубль=", drop_duplicate, " осколки-один-раз=", chest_duplicate_ok, " (все true)")
+	# --- COMBAT_MATH_TEST: overkill не раздувает статистику, миссии и возврат урона ---
+	var math_victim = _fighters[4]
+	math_victim.alive = true
+	math_victim.hp = 7
+	math_victim.guard = 0
+	math_victim.armor = {"helmets": null, "body": null, "pants": null}
+	f0.alive = true
+	_crowd_fury = false
+	var src_dmg_before := int(f0.get("dmg", 0))
+	var mq_dmg_before := int(_mq_acc.get("damage", 0))
+	var math_applied := _apply_damage(4, 100, "COMBAT_MATH_TEST", 0, 2.0)
+	var overkill_ok: bool = math_applied == 7 and int(math_victim.hp) == 0
+	overkill_ok = overkill_ok and int(f0.get("dmg", 0)) == src_dmg_before + 7
+	overkill_ok = overkill_ok and int(_mq_acc.get("damage", 0)) == mq_dmg_before + 7
+	print("COMBAT_MATH_TEST overkill100->HP7: возврат/статистика/миссия=7, HP=0 — ", overkill_ok, " (ожидается true)")
 	print("TESTPLAY_SAVED")
 	get_tree().quit()
 
@@ -7660,6 +8009,10 @@ func _run_testmenu(mobile := false, sfx := "") -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_shop%s.png" % sfx)
+	_show_menu_showbiz()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://test_showbiz%s.png" % sfx)
 	_show_menu_chests()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -7822,6 +8175,40 @@ func _run_testlos() -> void:
 	get_tree().quit()
 
 func _run_testhouses() -> void:
+	# Регрессия: из любой внутренней клетки нельзя попасть наружу иначе, чем через дверь.
+	var nav_ok := not _houses.is_empty()
+	var transitions := 0
+	for hi in _houses.size():
+		var h: Dictionary = _houses[hi]
+		var door: Vector2i = h.door
+		var inside := Vector2i(-1, -1)
+		for hc in h.cells:
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var adjacent: Vector2i = hc + d
+				if adjacent != door and not _house_at.has(_key(adjacent)):
+					inside = hc
+					break
+			if inside.x >= 0:
+				break
+		if inside.x < 0:
+			nav_ok = false
+			continue
+		nav_ok = nav_ok and _can_enter(door, inside) and _can_enter(inside, door)
+		var reach := _reachable(inside, 1)
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var outside: Vector2i = inside + d
+			if outside == door or _house_at.has(_key(outside)):
+				continue
+			if outside.x < 0 or outside.y < 0 or outside.x >= _grid_n or outside.y >= _grid_n:
+				continue
+			transitions += 1
+			if _can_enter(inside, outside) or reach.has(outside):
+				nav_ok = false
+	nav_ok = nav_ok and transitions > 0
+	print("HOUSE_NAV_TEST saved=", nav_ok, " houses=", _houses.size(), " wall_exits=", transitions)
+	if DisplayServer.get_name() == "headless":
+		get_tree().quit(0 if nav_ok else 1)
+		return
 	# каждую модель по очереди в центр, 4 скриншота с 4 сторон — видно, где проём двери
 	# далеко от арены, чтобы ничего не заслоняло (арена ≈ ±40 по осям)
 	var base := Vector3(0, 0, 140)
@@ -7858,7 +8245,7 @@ func _run_testhouses() -> void:
 		await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://test_house_yaw90_fromX.png")
 	print("HOUSE_SHOT yaw90_fromX")
-	get_tree().quit()
+	get_tree().quit(0 if nav_ok else 1)
 
 # ============================================================
 # ---------------- ЗВУК ----------------
@@ -7960,8 +8347,8 @@ class DzPereliv:
 	var priority := false
 
 	func _ready() -> void:
+		# Общая дизайн-система лобби: PNG-кнопки старой темы больше не перекрывают стили.
 		_fit_text()
-		_apply_bg()
 
 	func _bg(n: String) -> Texture2D:
 		var pth := "res://assets/ui/buttons/%s.png" % n
@@ -8017,7 +8404,7 @@ class DzPereliv:
 		sbs.border_color = Color("#28d8ff", 0.9)
 		sbs.set_border_width_all(2)
 		sbs.set_corner_radius_all(int(r))
-		sbs.draw(self, Rect2(1.5, 1.5, w - 3.0, h - 3.0))
+		sbs.draw(get_canvas_item(), Rect2(1.5, 1.5, w - 3.0, h - 3.0))
 
 func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow: Color) -> StyleBoxTexture:
 	var sb := StyleBoxTexture.new()
@@ -8032,45 +8419,59 @@ func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow
 	sb.content_margin_bottom = 11.0
 	return sb
 
+func _menu_button_state(accent: bool, state: String) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.set_corner_radius_all(4)
+	sb.set_border_width_all(1)
+	sb.content_margin_left = 18.0
+	sb.content_margin_right = 18.0
+	sb.content_margin_top = 10.0
+	sb.content_margin_bottom = 10.0
+	sb.shadow_offset = Vector2(0, 2)
+	sb.shadow_size = 4
+	if accent:
+		sb.bg_color = Color("#d8ba75")
+		sb.border_color = Color("#f3dfa9")
+		sb.shadow_color = Color(0.91, 0.76, 0.43, 0.16)
+		if state == "hover":
+			sb.bg_color = Color("#ecd59c")
+		elif state == "pressed":
+			sb.bg_color = Color("#b79550")
+		elif state == "disabled":
+			sb.bg_color = Color("#4b463b")
+			sb.border_color = Color("#82745a66")
+			sb.shadow_size = 0
+	else:
+		sb.bg_color = Color("#122131")
+		sb.border_color = Color("#63809a70")
+		sb.shadow_color = Color(0, 0, 0, 0.24)
+		if state == "hover":
+			sb.bg_color = Color("#1b3548")
+			sb.border_color = Color("#55d9e8b0")
+		elif state == "pressed":
+			sb.bg_color = Color("#0b1825")
+			sb.border_color = Color("#55d9e880")
+		elif state == "disabled":
+			sb.bg_color = Color("#111821")
+			sb.border_color = Color("#53607144")
+			sb.shadow_size = 0
+	return sb
+
 func _style_menu_button(b: Button, accent := false) -> void:
 	b.pressed.connect(_sfx_play.bind("click"))
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	if b is DzPereliv:
-		# «Перелив v2»: фоны и перелив — внутри класса (docs/BUTTONS_V2.md)
-		# Хвост v1 §1: шрифт Unbounded 15 px (fallback Russo One — внутри _font_unbounded)
 		(b as DzPereliv).priority = accent
 		b.add_theme_font_override("font", _font_unbounded())
-		b.add_theme_color_override("font_color", Color("#f2f6ff"))
-		b.add_theme_color_override("font_hover_color", Color("#f2f6ff"))
-		b.add_theme_color_override("font_pressed_color", Color("#f2f6ff"))
-		b.add_theme_color_override("font_disabled_color", Color(0.42, 0.46, 0.53, 0.7))
-		b.add_theme_font_size_override("font_size", 15)
-		return
-	var top := Color(0.16, 0.38, 0.52)
-	var bottom := Color(0.05, 0.11, 0.22)
-	var border := Color(0.42, 0.88, 1.0)
-	var glow := Color(0.25, 0.72, 1.0, 0.85)
-	var fcol := Color(0.93, 0.97, 1.0)
-	if accent:
-		top = Color(1.0, 0.80, 0.36)
-		bottom = Color(0.86, 0.44, 0.10)
-		border = Color(1.0, 0.92, 0.62)
-		glow = Color(1.0, 0.62, 0.18, 0.95)
-		fcol = Color(0.25, 0.12, 0.02)
-	var pre := "ba_" if accent else "bn_"
-	var normal := _grad_button_sb(pre + "n", top, bottom, border, glow)
-	var hover := _grad_button_sb(pre + "h", top * 1.16, bottom * 1.16, border, glow)
-	var pressed := _grad_button_sb(pre + "p", top * 0.78, bottom * 0.72, border * 0.85, glow)
-	var disabled := _grad_button_sb(pre + "d", top * 0.55, bottom * 0.5, border * 0.5, glow * 0.3)
-	b.add_theme_stylebox_override("normal", normal)
-	b.add_theme_stylebox_override("hover", hover)
-	b.add_theme_stylebox_override("pressed", pressed)
-	b.add_theme_stylebox_override("disabled", disabled)
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		b.add_theme_stylebox_override(state, _menu_button_state(accent, state))
+	b.add_theme_stylebox_override("focus", _menu_button_state(accent, "hover"))
+	var fcol := Color("#17140d") if accent else Color("#edf4fb")
 	b.add_theme_color_override("font_color", fcol)
 	b.add_theme_color_override("font_hover_color", fcol)
 	b.add_theme_color_override("font_pressed_color", fcol)
 	b.add_theme_color_override("font_disabled_color", Color(fcol.r, fcol.g, fcol.b, 0.45))
-	b.add_theme_font_size_override("font_size", 17)
+	b.add_theme_font_size_override("font_size", 15)
 
 # ---------- иконки предметов: офлайн-рендер из 3D-моделей ----------
 const ICON_ALIAS := {"Molotov": "Grenade", "FireGrenade": "Grenade", "knife_1": "Knife_1"}
@@ -8408,18 +8809,20 @@ func _add_house_windows(hnode: Node3D) -> void:
 		q.scale = Vector3.ONE / hnode.scale  # компенсация масштаба дома
 
 func _frame_box() -> StyleBoxFlat:
-	# рамочка для текстов лобби
+	# Единая спокойная поверхность: графит, тонкая стальная кайма, мягкая глубина.
+	# Cyan остаётся у выбранных элементов, а не светится на каждой панели.
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.03, 0.05, 0.09, 0.92)
-	sb.border_color = Color(0.16, 0.85, 1.0, 0.85)
-	sb.set_border_width_all(2)
-	sb.shadow_color = Color(0.16, 0.85, 1.0, 0.22)
-	sb.shadow_size = 6
-	sb.set_corner_radius_all(6)
-	sb.content_margin_left = 10.0
-	sb.content_margin_right = 10.0
-	sb.content_margin_top = 5.0
-	sb.content_margin_bottom = 5.0
+	sb.bg_color = Color("#0c1420e8")
+	sb.border_color = Color("#50657a80")
+	sb.set_border_width_all(1)
+	sb.shadow_color = Color(0, 0, 0, 0.32)
+	sb.shadow_size = 5
+	sb.shadow_offset = Vector2(0, 2)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 12.0
+	sb.content_margin_right = 12.0
+	sb.content_margin_top = 7.0
+	sb.content_margin_bottom = 7.0
 	return sb
 
 func _framed_label(txt: String, fsize := 14) -> PanelContainer:
@@ -8516,11 +8919,10 @@ func _png_icon(n: String) -> Texture2D:
 	return null
 
 func _frame_png(fi: int) -> String:
-	# Рамки v2: путь к арт-рамке 256×256; fi=0 (Стандарт) — голый аватар, 12+ — по циклу 1..11
-	if fi <= 0:
+	# У каждой рамки собственный арт: никаких циклических повторов 12+.
+	if fi <= 0 or fi >= FRAME_PNG_FILES.size():
 		return ""
-	var idx: int = 1 + ((fi - 1) % 11)
-	return "res://assets/ui/frames256/%s.png" % FRAME_PNG_FILES[idx]
+	return "res://assets/ui/frames256/%s.png" % FRAME_PNG_FILES[fi]
 
 func _frame_overlay(fi: int) -> TextureRect:
 	# Рамки v2: TextureRect рамки поверх ячейки аватара (inset 0, expand, якоря к краям)
@@ -8536,10 +8938,10 @@ func _icon_chip(n: String, size := 40, tex: Texture2D = null) -> PanelContainer:
 	# тёмная скруглённая подложка с белой пиктограммой (tex — готовая PNG вместо SVG)
 	var pc := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1, 1, 1, 0.07)
-	sb.border_color = Color(1, 1, 1, 0.10)
+	sb.bg_color = Color("#55d9e80c")
+	sb.border_color = Color("#7b93a82e")
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(10)
+	sb.set_corner_radius_all(8)
 	pc.add_theme_stylebox_override("panel", sb)
 	pc.custom_minimum_size = Vector2(size + 16, size + 16)
 	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -8589,36 +8991,88 @@ func _reward_card(parent: Container, icon: String, col: Color, val: String, capt
 	parent.add_child(card)
 	return vl
 
+func _apply_menu_theme(root: Control) -> void:
+	# Единая базовая тема лобби: локальные вариации не возвращают системные серые элементы.
+	var theme := Theme.new()
+	theme.default_font_size = 15
+	var scroll_bg := StyleBoxFlat.new()
+	scroll_bg.bg_color = Color("#09111b88")
+	scroll_bg.set_corner_radius_all(3)
+	scroll_bg.content_margin_left = 2
+	scroll_bg.content_margin_right = 2
+	var grab := StyleBoxFlat.new()
+	grab.bg_color = Color("#405a70")
+	grab.set_corner_radius_all(3)
+	grab.content_margin_left = 3
+	grab.content_margin_right = 3
+	var grab_hi := grab.duplicate() as StyleBoxFlat
+	grab_hi.bg_color = Color("#55d9e8")
+	theme.set_stylebox("scroll", "VScrollBar", scroll_bg)
+	theme.set_stylebox("scroll_focus", "VScrollBar", scroll_bg)
+	theme.set_stylebox("grabber", "VScrollBar", grab)
+	theme.set_stylebox("grabber_highlight", "VScrollBar", grab_hi)
+	theme.set_stylebox("grabber_pressed", "VScrollBar", grab_hi)
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color("#080f19")
+	bar_bg.set_corner_radius_all(2)
+	bar_bg.content_margin_top = 2
+	bar_bg.content_margin_bottom = 2
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color("#45b9cb")
+	bar_fill.set_corner_radius_all(2)
+	bar_fill.content_margin_top = 2
+	bar_fill.content_margin_bottom = 2
+	theme.set_stylebox("background", "ProgressBar", bar_bg)
+	theme.set_stylebox("fill", "ProgressBar", bar_fill)
+	theme.set_color("font_color", "Label", Color("#dce6f2"))
+	theme.set_color("font_color", "LineEdit", Color("#edf4fb"))
+	theme.set_color("font_placeholder_color", "LineEdit", Color("#71879c"))
+	theme.set_color("caret_color", "LineEdit", Color("#55d9e8"))
+	theme.set_stylebox("normal", "LineEdit", _menu_button_state(false, "normal"))
+	theme.set_stylebox("focus", "LineEdit", _menu_button_state(false, "hover"))
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		theme.set_stylebox(state, "Button", _menu_button_state(false, state))
+	theme.set_stylebox("focus", "Button", _menu_button_state(false, "hover"))
+	root.theme = theme
+
 func _card_style(hover := false, glow := false) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.05, 0.08, 0.13, 0.80)
-	sb.border_color = Color(1, 1, 1, 0.16)
+	sb.bg_color = Color("#101a28ed")
+	sb.border_color = Color("#66809c45")
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(12)
-	sb.content_margin_left = 14.0
-	sb.content_margin_right = 14.0
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 16.0
+	sb.content_margin_right = 16.0
 	sb.content_margin_top = 12.0
 	sb.content_margin_bottom = 12.0
+	sb.shadow_color = Color(0, 0, 0, 0.22)
+	sb.shadow_size = 5
+	sb.shadow_offset = Vector2(0, 2)
 	if hover:
-		sb.border_color = Color(0.6, 0.85, 1.0, 0.7)
+		sb.bg_color = Color("#16283af5")
+		sb.border_color = Color("#55d9e8b0")
 	if glow:
-		sb.border_color = Color(0.45, 0.8, 1.0, 0.85)
-		sb.set_border_width_all(2)
-		sb.shadow_color = Color(0.35, 0.75, 1.0, 0.35)
-		sb.shadow_size = 12
+		sb.bg_color = Color("#102738f2")
+		sb.border_color = Color("#55d9e8d0")
+		sb.border_width_left = 3
+		sb.shadow_color = Color(0.33, 0.85, 0.91, 0.18)
+		sb.shadow_size = 10
 	return sb
 
 func _section_title(t: String) -> HBoxContainer:
-	# заголовок секции: белый текст + тонкая линия вправо
+	# Небольшой дисплейный ярлык и линия: понятная иерархия без лишних панелей.
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 12)
 	var l := Label.new()
 	l.text = t
-	l.add_theme_font_size_override("font_size", 14)
-	l.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	l.add_theme_font_size_override("font_size", 13)
+	l.add_theme_color_override("font_color", Color("#8edce7"))
+	var sf := _font_head()
+	if sf != null:
+		l.add_theme_font_override("font", sf)
 	hb.add_child(l)
 	var line := ColorRect.new()
-	line.color = Color(1, 1, 1, 0.18)
+	line.color = Color("#55d9e840")
 	line.custom_minimum_size = Vector2(0, 1)
 	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -8638,6 +9092,9 @@ func _screen_title(icon: String, txt: String, tip_id := "") -> HBoxContainer:
 	var l := Label.new()
 	l.text = txt
 	l.add_theme_font_size_override("font_size", 20 if _mob() else 28)
+	if _mob():
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var hf := _font_head()
 	if hf != null:
 		l.add_theme_font_override("font", hf)
@@ -8683,7 +9140,7 @@ func _logo_pulse(logo: CanvasItem) -> void:
 	tw.tween_property(logo, "modulate", Color(0.55, 1.35, 1.6), 0.7).set_trans(Tween.TRANS_SINE)
 	tw.tween_property(logo, "modulate", Color(1, 1, 1), 0.7).set_trans(Tween.TRANS_SINE)
 
-func _chip(icon: String, text: String, tip := "") -> PanelContainer:
+func _chip(icon: String, text: String, tip := "", colorize_nick := false) -> PanelContainer:
 	# чип показателя: SVG-иконка + текст (без эмодзи — надёжно в web)
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _frame_box())
@@ -8709,6 +9166,8 @@ func _chip(icon: String, text: String, tip := "") -> PanelContainer:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", 13)
+	if colorize_nick:
+		_style_nick_label(l)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hb.add_child(l)
 	return pc
@@ -8732,6 +9191,22 @@ func _font_head() -> Font:
 		f = load("res://assets/fonts/RussoOne.ttf")
 	_font_cache["head"] = f
 	return f
+
+func _font_chat() -> Font:
+	if _font_cache.has("chat"):
+		return _font_cache["chat"]
+	var fv := FontVariation.new()
+	if ResourceLoader.exists("res://assets/fonts/Comfortaa.ttf"):
+		fv.base_font = load("res://assets/fonts/Comfortaa.ttf")
+		fv.variation_opentype = {"wght": 500}
+	else:
+		fv.base_font = ThemeDB.fallback_font
+	if ResourceLoader.exists("res://assets/fonts/NotoEmojiColor.ttf"):
+		fv.fallbacks.append(load("res://assets/fonts/NotoEmojiColor.ttf"))
+	if ResourceLoader.exists("res://assets/fonts/NotoEmojiStatic.ttf"):
+		fv.fallbacks.append(load("res://assets/fonts/NotoEmojiStatic.ttf"))
+	_font_cache["chat"] = fv
+	return fv
 
 func _font_mono() -> Font:
 	if _font_cache.has("mono"):
@@ -8816,9 +9291,12 @@ func _show_menu_rating() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(680.0, _vw() * 0.94), 0)
-	vb.add_child(_screen_title("trophy", "Рейтинг · Асинхронные дуэли", ""))
+	vb.custom_minimum_size = Vector2(minf(680.0, _menu_content_w(0.94)), 0)
+	vb.add_child(_screen_title("trophy", "Рейтинг · Дуэли" if _mob() else "Рейтинг · Асинхронные дуэли", ""))
 	var hint := Label.new()
 	hint.text = "Твой отряд против отрядов других игроков: в бою соперника ведёт ИИ строго по его реальным статам, оружию и талантам. Победа +30 монет, поражение +10, первая победа дня +100. Рейтинг — ELO, старт 1000."
 	hint.add_theme_font_size_override("font_size", 13)
@@ -8834,30 +9312,46 @@ func _show_menu_rating() -> void:
 	squad_lbl.text = "Отряд на дуэль: %d %s · бойцы выходят с оружием из экрана «Отряд»" % [
 		n, "боец" if n == 1 else "бойца"]
 	squad_lbl.add_theme_font_size_override("font_size", 13)
+	squad_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(squad_lbl)
-	var go_btn := _menu_button("В БОЙ — НАЙТИ СОПЕРНИКА", true)
+	var consent_btn := CheckButton.new()
+	consent_btn.text = "Мой отряд может сражаться без меня"
+	consent_btn.button_pressed = bool(_profile.get("pvp_allow_offline", false))
+	consent_btn.tooltip_text = "Отдельное разрешение на офлайн-дуэли. Другие игроки смогут вызвать твой отряд, а ИИ будет управлять им по твоим характеристикам. Можно отключить в любой момент."
+	vb.add_child(consent_btn)
+	var consent_status := Label.new()
+	consent_status.text = _pvp_consent_text(consent_btn.button_pressed)
+	consent_status.add_theme_font_size_override("font_size", 12)
+	consent_status.add_theme_color_override("font_color", Color(0.62, 0.72, 0.82))
+	consent_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(consent_status)
+	consent_btn.toggled.connect(func(enabled: bool): _pvp_set_offline_consent(enabled, consent_btn, consent_status))
+	var go_btn := _menu_button("НАЙТИ СОПЕРНИКА" if _mob() else "В БОЙ — НАЙТИ СОПЕРНИКА", true)
 	go_btn.custom_minimum_size = Vector2(0, 56)
 	vb.add_child(go_btn)
 	var status := Label.new()
 	status.add_theme_font_size_override("font_size", 13)
 	status.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(status)
 	if _auth_token == "":
 		go_btn.disabled = true
+		consent_btn.disabled = true
+		consent_status.text = "Войди, чтобы управлять участием отряда в офлайн-дуэлях."
 		status.text = "Нужен вход (ВК или почта) — рейтинг хранится на сервере"
 	elif _tutorial_active():
 		go_btn.disabled = true
 		status.text = "Доступно после обучения (первые 3 боя — тренировка)"
 	go_btn.pressed.connect(func(): _pvp_go(go_btn, status, n))
 	# --- соцслой ВК: позвать друга + нативный лидерборд друзей ---
-	var vk_row := HBoxContainer.new()
+	var vk_row: BoxContainer = VBoxContainer.new() if _mob() else HBoxContainer.new()
 	vk_row.add_theme_constant_override("separation", 8)
 	var invite_b := _menu_button("ПОЗВАТЬ ДРУГА")
 	invite_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	invite_b.tooltip_text = "Поделиться игрой — друг перейдёт сразу в приложение ВК"
 	invite_b.pressed.connect(func(): _vk_send("VKWebAppShare", "{}"))
 	vk_row.add_child(invite_b)
-	var friends_b := _menu_button("ДРУЗЬЯ · ЛИДЕРБОРД ВК")
+	var friends_b := _menu_button("ЛИДЕРБОРД ДРУЗЕЙ" if _mob() else "ДРУЗЬЯ · ЛИДЕРБОРД ВК")
 	friends_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	friends_b.tooltip_text = "Нативная таблица рекордов ВК — кто из друзей выше в рейтинге"
 	friends_b.pressed.connect(func(): _vk_send("VKWebAppShowLeaderboard", '{"user_result": %d}' % int(_profile.get("pvp_rating", 1000))))
@@ -8880,7 +9374,7 @@ func _show_menu_rating() -> void:
 	t0.text = "(загрузка...)"
 	t0.add_theme_font_size_override("font_size", 13)
 	top_box.add_child(t0)
-	_pvp_refresh_rating(rate_lbl, hist_box, top_box)
+	_pvp_refresh_rating(rate_lbl, hist_box, top_box, consent_btn, consent_status)
 
 func _pvp_row_line(txt: String, col: Color) -> Label:
 	var l := Label.new()
@@ -8889,7 +9383,36 @@ func _pvp_row_line(txt: String, col: Color) -> Label:
 	l.add_theme_color_override("font_color", col)
 	return l
 
-func _pvp_refresh_rating(rate_lbl: Label, hist_box: VBoxContainer, top_box: VBoxContainer) -> void:
+func _pvp_consent_text(enabled: bool) -> String:
+	if enabled:
+		return "Разрешено: другие игроки могут вызвать твой отряд, пока ты офлайн. ИИ управляет бойцами; можно отключить в любой момент."
+	return "Запрещено: твой отряд не участвует в чужих офлайн-дуэлях. Ты по-прежнему можешь сам искать соперников."
+
+func _pvp_set_offline_consent(enabled: bool, btn: CheckButton, status: Label) -> void:
+	var previous := bool(_profile.get("pvp_allow_offline", false))
+	btn.set_pressed_no_signal(previous)
+	if _auth_token == "":
+		status.text = "Войди, чтобы управлять участием отряда в офлайн-дуэлях."
+		return
+	btn.disabled = true
+	status.text = "Сохраняю разрешение..."
+	_pvp_call("pvp_push.php", {"token": _auth_token, "snapshot": _pvp_build_snapshot(), "allow_offline": enabled},
+		func(d: Dictionary) -> void:
+			if not is_instance_valid(btn) or not is_instance_valid(status):
+				return
+			btn.disabled = false
+			if not bool(d.get("ok", false)):
+				btn.set_pressed_no_signal(previous)
+				status.text = "Не сохранено: %s\n%s" % [str(d.get("error", "ошибка сервера")), _pvp_consent_text(previous)]
+				return
+			var accepted := bool(d.get("allow_offline", enabled))
+			_profile["pvp_allow_offline"] = accepted
+			_save_profile()
+			btn.set_pressed_no_signal(accepted)
+			status.text = _pvp_consent_text(accepted)
+	)
+
+func _pvp_refresh_rating(rate_lbl: Label, hist_box: VBoxContainer, top_box: VBoxContainer, consent_btn: CheckButton, consent_status: Label) -> void:
 	if _auth_token == "":
 		for c in hist_box.get_children():
 			c.queue_free()
@@ -8902,6 +9425,13 @@ func _pvp_refresh_rating(rate_lbl: Label, hist_box: VBoxContainer, top_box: VBox
 		if not bool(d.get("ok", false)):
 			return
 		_profile.pvp_rating = int(d.get("rating", 1000))
+		var server_consent := bool(d.get("allow_offline", false))
+		_profile["pvp_allow_offline"] = server_consent
+		_save_profile()
+		if is_instance_valid(consent_btn):
+			consent_btn.set_pressed_no_signal(server_consent)
+		if is_instance_valid(consent_status):
+			consent_status.text = _pvp_consent_text(server_consent)
 		if is_instance_valid(rate_lbl):
 			rate_lbl.text = "Твой рейтинг: %d" % int(_profile.pvp_rating)
 		for c in hist_box.get_children():
@@ -8942,7 +9472,8 @@ func _pvp_go(btn: Button, status: Label, size: int) -> void:
 	_pvp_calling = true
 	btn.disabled = true
 	status.text = "Сохраняю отряд..."
-	_pvp_call("pvp_push.php", {"token": _auth_token, "snapshot": _pvp_build_snapshot()},
+	_pvp_call("pvp_push.php", {"token": _auth_token, "snapshot": _pvp_build_snapshot(),
+		"allow_offline": bool(_profile.get("pvp_allow_offline", false))},
 		func(d: Dictionary) -> void:
 			if not bool(d.get("ok", false)):
 				_pvp_calling = false
@@ -9032,6 +9563,7 @@ func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locke
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(0, 72 if glow else 64)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.add_theme_stylebox_override("normal", _card_style(false, glow))
 	b.add_theme_stylebox_override("hover", _card_style(true, glow))
 	b.add_theme_stylebox_override("pressed", _card_style(false, glow))
@@ -9059,31 +9591,137 @@ func _fight_card(icon: String, title: String, sub: String, sub_col: Color, locke
 		vb2.add_child(_card_label(sub, 13, sub_col))
 	return b
 
-func _ctrl_button(icon: String, caption: String) -> Button:
-	# кнопка раздела: иконка на подложке + подпись снизу
-	# Хвост v1 §2 (Б16): значки −18% (92×84 → 76×69, чип 32 → 26), подписи 10 px
+func _demo_mode_card(title: String, sub: String, kicker: String, locked := false, primary := false) -> Button:
+	# Главная по демо-макету: крупная типографика, короткий kicker и стрелка вместо тяжёлой иконки.
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(76, 69)
+	b.custom_minimum_size = Vector2(0, 122 if primary else 96)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var normal := _card_style(false, primary)
+	normal.bg_color = Color("#122b3cdd") if primary else Color("#0b1522ed")
+	normal.border_color = Color("#57e7ff") if primary else Color("#33485f")
+	normal.set_corner_radius_all(3)
+	normal.border_width_left = 3 if primary else 1
+	var hover := _card_style(true, primary)
+	hover.bg_color = Color("#193043f5")
+	hover.set_corner_radius_all(3)
+	b.add_theme_stylebox_override("normal", normal)
+	b.add_theme_stylebox_override("hover", hover)
+	b.add_theme_stylebox_override("focus", hover)
+	b.add_theme_stylebox_override("pressed", hover)
+	if locked:
+		var disabled := _card_style()
+		disabled.bg_color = Color("#0d151fe8")
+		disabled.border_color = Color("#293a4d")
+		b.add_theme_stylebox_override("disabled", disabled)
+		b.disabled = true
+		b.modulate = Color(1, 1, 1, 0.58)
+	if primary:
+		var art := TextureRect.new()
+		art.texture = load("res://assets/ui/menu_splash_clean.jpg")
+		art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		art.set_anchors_preset(Control.PRESET_FULL_RECT)
+		art.modulate = Color(0.5, 0.8, 1.0, 0.18)
+		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(art)
+	var vb := VBoxContainer.new()
+	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vb.offset_left = 16.0
+	vb.offset_right = -16.0
+	vb.offset_top = 12.0
+	vb.offset_bottom = -12.0
+	vb.add_theme_constant_override("separation", 4)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(vb)
+	var top := HBoxContainer.new()
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(top)
+	var kl := _card_label(kicker, 10, Color("#55d9e8"))
+	kl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(kl)
+	var arrow := _card_label("—" if locked else "→", 18, Color("#55d9e8"))
+	top.add_child(arrow)
+	vb.add_child(_card_label(title, 21 if primary else 17, Color("#f3f7fb"), true))
+	var sl := _card_label(sub, 11, Color("#a3b2c5"))
+	sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(sl)
+	return b
+
+func _demo_missions_panel() -> PanelContainer:
+	# Правая колонка демо: три понятные миссии с прогрессом и наградой.
+	var pc := PanelContainer.new()
+	var sb := _card_style()
+	sb.bg_color = Color("#0e1622ed")
+	sb.border_color = Color("#28384a")
+	pc.add_theme_stylebox_override("panel", sb)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	pc.add_child(vb)
+	var head := HBoxContainer.new()
+	vb.add_child(head)
+	var title := _card_label("МИССИИ ДНЯ", 12, Color("#c9d6e5"), true)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	head.add_child(_card_label("3 награды", 10, Color("#e7c985")))
+	var dd: Dictionary = _profile.get("daily", {})
+	var prog: Dictionary = dd.get("prog", {})
+	var done: Dictionary = dd.get("done", {})
+	for qid in ["wins2", "crates5", "dmg200"]:
+		var q: Dictionary = DAILY_QUESTS[qid]
+		var target := int(q["target"])
+		var value := mini(int(prog.get(qid, 0)), target)
+		var is_done := int(done.get(qid, 0)) == 1
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", 5)
+		vb.add_child(box)
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var name_l := _card_label(str(q["name"]), 11, Color("#dce6f2"))
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(name_l)
+		row.add_child(_card_label("Готово" if is_done else "%d / %d" % [value, target], 10, Color("#55d9e8")))
+		var bar := ProgressBar.new()
+		bar.min_value = 0
+		bar.max_value = target
+		bar.value = target if is_done else value
+		bar.show_percentage = false
+		bar.custom_minimum_size = Vector2(0, 4)
+		box.add_child(bar)
+		box.add_child(_card_label("Награда · %s" % _daily_reward_txt(q), 10, Color("#a3b2c5")))
+	return pc
+
+func _ctrl_button(icon: String, caption: String) -> Button:
+	# Навигация — спокойные карточки одной геометрии, а не висящие в воздухе иконки.
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(72, 64)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	var n := StyleBoxFlat.new()
-	n.bg_color = Color(0, 0, 0, 0)
-	n.set_corner_radius_all(10)
+	n.bg_color = Color("#111c29")
+	n.border_color = Color("#29394b")
+	n.set_border_width_all(1)
+	n.set_corner_radius_all(8)
 	var h := StyleBoxFlat.new()
-	h.bg_color = Color(1, 1, 1, 0.08)
-	h.set_corner_radius_all(10)
+	h.bg_color = Color("#142636")
+	h.border_color = Color("#55d9e888")
+	h.set_border_width_all(1)
+	h.set_corner_radius_all(8)
+	var p := n.duplicate() as StyleBoxFlat
+	p.bg_color = Color("#0b1521f2")
 	b.add_theme_stylebox_override("normal", n)
-	b.add_theme_stylebox_override("pressed", n)
+	b.add_theme_stylebox_override("pressed", p)
 	b.add_theme_stylebox_override("focus", h)
 	b.add_theme_stylebox_override("hover", h)
 	var vb2 := VBoxContainer.new()
 	vb2.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb2.add_theme_constant_override("separation", 5)
-	vb2.custom_minimum_size = Vector2(72, 0)
+	vb2.add_theme_constant_override("separation", 4)
+	vb2.custom_minimum_size = Vector2(64, 0)
 	vb2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(vb2)
-	var chip := _icon_chip(icon, 26)
+	var chip := _icon_chip(icon, 22)
 	chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	vb2.add_child(chip)
-	var l := _card_label(caption, 10, Color(0.82, 0.85, 0.9))
+	var l := _card_label(caption, 10, Color("#cbd7e5"))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb2.add_child(l)
@@ -9113,14 +9751,20 @@ func _render_menu_chat() -> void:
 	for line in MENU_CHAT_STUBS[_menu_chat_tab]:
 		var l := Label.new()
 		l.text = line
+		l.add_theme_font_override("font", _font_chat())
 		l.add_theme_font_size_override("font_size", 12)
-		l.modulate = Color(0.7, 0.85, 0.7)
+		l.add_theme_color_override("font_color", Color("#91aabd"))
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_ui.menu_chat_lines.add_child(l)
 	for line2 in _menu_chat_local[_menu_chat_tab]:
 		var l2 := Label.new()
 		l2.text = line2
+		l2.add_theme_font_override("font", _font_chat())
 		l2.add_theme_font_size_override("font_size", 12)
-		l2.modulate = Color(0.85, 0.95, 1.0)
+		l2.add_theme_color_override("font_color", Color("#e3f3fb"))
+		l2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_ui.menu_chat_lines.add_child(l2)
 	if _ui.has("menu_chat_scroll"):
 		# прилипаем к последним сообщениям; set_deferred — после пересчёта раскладки,
@@ -9140,46 +9784,54 @@ func _menu_chat_send(inp: LineEdit) -> void:
 		_menu_chat_local[_menu_chat_tab].pop_front()
 	_render_menu_chat()
 
-func _toggle_emoji_panel(inp: LineEdit, host: Control, send_fn: Callable) -> void:
-	# панель эмодзи над панелью чата (host); одна на каждый чат
+func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
+	# Панель эмодзи — отдельный компактный поповер над полем ввода.
 	var key := "emoji_panel_%d" % host.get_instance_id()
 	if _ui.has(key):
 		_ui[key].visible = not _ui[key].visible
 		return
 	var p := PanelContainer.new()
-	p.custom_minimum_size = Vector2(340, 0)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.05, 0.08, 0.13, 0.95)
-	sb.set_corner_radius_all(8)
+	sb.bg_color = Color(0.035, 0.07, 0.11, 0.98)
+	sb.set_corner_radius_all(4)
 	sb.set_border_width_all(1)
-	sb.border_color = Color(0.3, 0.5, 0.6, 0.8)
+	sb.border_color = Color(0.33, 0.85, 0.91, 0.65)
+	sb.content_margin_left = 8.0
+	sb.content_margin_right = 8.0
+	sb.content_margin_top = 8.0
+	sb.content_margin_bottom = 8.0
+	sb.shadow_color = Color(0, 0, 0, 0.45)
+	sb.shadow_size = 12
 	p.add_theme_stylebox_override("panel", sb)
 	var grid := GridContainer.new()
 	grid.columns = 8
-	grid.add_theme_constant_override("h_separation", 2)
-	grid.add_theme_constant_override("v_separation", 2)
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
 	p.add_child(grid)
 	for em in MENU_EMOJIS:
 		var eb := Button.new()
 		eb.text = em
-		eb.custom_minimum_size = Vector2(40, 34)
-		eb.add_theme_font_size_override("font_size", 18)
+		eb.custom_minimum_size = Vector2(36, 34)
+		eb.add_theme_font_size_override("font_size", 20)
+		_style_menu_button(eb)
+		# У кнопки только эмодзи: цветной шрифт назначаем напрямую, без замены глифов.
+		eb.add_theme_font_override("font", load("res://assets/fonts/NotoEmojiColor.ttf"))
+		eb.add_theme_font_size_override("font_size", 20)
+		eb.tooltip_text = "Вставить в сообщение"
 		var e: String = em
 		eb.pressed.connect(func():
+			# Выбор эмодзи никогда не отправляет сообщение: игрок может дописать текст.
 			inp.insert_text_at_caret(e)
 			inp.grab_focus()
-			# клик по эмодзи сразу отправляет его в чат — иначе игроки не понимают,
-			# «куда нажимать дальше» (жалоба: эмодзи не отправляются)
-			send_fn.call(inp)
 		)
 		grid.add_child(eb)
-	# над чатом: родитель — слой UI (нельзя в PanelContainer — он перезапишет геометрию)
+	# Родитель — слой UI, чтобы контейнер чата не перезаписывал геометрию поповера.
 	var par := host.get_parent()
 	par.add_child(p)
 	p.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	var hr := host.get_rect()
-	p.position = Vector2(hr.position.x, hr.position.y - 108.0)
-	p.size = Vector2(352, 100)
+	p.size = Vector2(332, 92)
+	p.position = Vector2(hr.position.x, maxf(8.0, hr.position.y - p.size.y - 8.0))
 	_ui[key] = p
 
 func _start_mode(m: int) -> void:
@@ -9189,7 +9841,7 @@ func _start_mode(m: int) -> void:
 	# погибший приходит в себя в медцентре с 1 HP и регенерирует; раненых — предупреждаем
 	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
 	var low: Array[String] = []
-	for i in mini(m, 4):
+	for i in _battle_lineup(m):
 		var mx := _fighter_hp_max(i)
 		var h: int = mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
 		if h <= 0:
@@ -9199,11 +9851,14 @@ func _start_mode(m: int) -> void:
 	if low.size() > 0:
 		var dc := ConfirmationDialog.new()
 		dc.title = "Раненые бойцы"
-		dc.dialog_text = "В бой идут раненые:\n" + "\n".join(low) + "\n\nТаких легко убить с одного-двух попаданий. Подлечись в Медцентре (Отряд) или рискни."
+		dc.dialog_text = "В бой идут раненые:\n" + "\n".join(low) + "\n\nТаких легко убить с одного-двух попаданий. Подлечись в Медцентре (Отряд), сними раненого с боя галочкой ниже или рискни."
 		dc.ok_button_text = "Всё равно в бой"
+		dc.get_label().get_parent().add_child(_battle_slots_row())
 		_ui.menu_layer.add_child(dc)
+		_web_main_menu(false)
 		dc.popup_centered()
 		dc.confirmed.connect(func(): _start_mode_go(m))
+		dc.canceled.connect(func(): _web_main_menu(true))
 		return
 	_start_mode_go(m)
 
@@ -9215,8 +9870,12 @@ func _start_mode_go(m: int) -> void:
 Восстанавливается равномерно: 100 за сутки.
 Сейчас: %d/100" % int(float(_profile.get("stamina", 0.0)))
 		_ui.menu_layer.add_child(d)
+		_web_main_menu(false)
 		d.popup_centered()
+		d.confirmed.connect(func(): _web_main_menu(true))
+		d.canceled.connect(func(): _web_main_menu(true))
 		return
+	_web_main_menu(false)
 	_save_mode(m)
 	_an_event("battle_start", {"mode": m, "lvl": _max_squad_lvl()})
 	var cfg := ConfigFile.new()
@@ -9239,14 +9898,14 @@ func _build_menu() -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	if ResourceLoader.exists("res://assets/ui/menu_bg.jpg"):
-		bg.texture = load("res://assets/ui/menu_bg.jpg")
+	if ResourceLoader.exists("res://assets/ui/menu_splash_clean.jpg"):
+		bg.texture = load("res://assets/ui/menu_splash_clean.jpg")
 	layer.add_child(bg)
-	# тёмный градиент поверх арта: затемнение ослаблено (0.68/0.58) — арена читается,
-	# тексты держатся на плашках карточек; раньше 0.88 давало «плёнку» поверх всего лобби
+	_apply_menu_theme(bg)
+	# Арт заставки остаётся виден сверху; ниже затемнение обеспечивает читаемость витрины.
 	var grad := Gradient.new()
-	grad.set_color(0, Color(0.04, 0.07, 0.14, 0.68))
-	grad.set_color(1, Color(0.03, 0.05, 0.10, 0.58))
+	grad.set_color(0, Color(0.015, 0.025, 0.05, 0.24))
+	grad.set_color(1, Color(0.018, 0.032, 0.055, 0.94))
 	var gtex := GradientTexture2D.new()
 	gtex.gradient = grad
 	gtex.fill_from = Vector2(0.5, 0.0)
@@ -9258,6 +9917,12 @@ func _build_menu() -> void:
 	layer.add_child(dim)
 	# --- верхняя панель: лого слева, чипы игрока справа ---
 	var mob_w: bool = _vw() < 520.0
+	var top_bg := ColorRect.new()
+	top_bg.color = Color("#070d16e8")
+	top_bg.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top_bg.offset_bottom = 78.0
+	top_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(top_bg)
 	var top := HBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	top.offset_left = 16.0
@@ -9265,17 +9930,10 @@ func _build_menu() -> void:
 	top.offset_top = 10.0
 	top.offset_bottom = 88.0
 	layer.add_child(top)
-	var logo := TextureRect.new()
-	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	# логотип v2 (docs/EDITS_V1.md п.2): вырезка из splash со свечением, ~210 px по ширине
-	logo.custom_minimum_size = Vector2(124, 30) if mob_w else Vector2(210, 52)
-	if ResourceLoader.exists("res://assets/ui/logo_v2.png"):
-		logo.texture = load("res://assets/ui/logo_v2.png")
-	elif ResourceLoader.exists("res://assets/ui/logo.png"):
-		logo.texture = load("res://assets/ui/logo.png")
+	var logo := _card_label("DROP ZONE // 01", 12, Color("#57e7ff"), true)
+	logo.custom_minimum_size = Vector2(124, 30) if mob_w else Vector2(190, 52)
+	logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top.add_child(logo)
-	_logo_pulse(logo)
 	_ui.menu_logo = logo
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_FILL
@@ -9311,17 +9969,13 @@ func _build_menu() -> void:
 	scroll.offset_bottom = -240.0
 	_ui.menu_scroll = scroll
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	# тикет #5: градиентный стиль кнопок ПО УМОЛЧАНИЮ для всего меню — переопределения
-	# темы на родителе достаются всем потомкам; у кого свои stylebox-переопределения
-	# (кнопки _menu_button, красная «Купить» и т.п.) — они в приоритете, не сломаются
-	var def_n := _grad_button_sb("def_n", Color(0.14, 0.30, 0.44), Color(0.05, 0.11, 0.22), Color(0.35, 0.70, 0.88, 0.75), Color(0.25, 0.72, 1.0, 0.5))
-	var def_h := _grad_button_sb("def_h", Color(0.17, 0.36, 0.52), Color(0.07, 0.13, 0.26), Color(0.42, 0.88, 1.0), Color(0.25, 0.72, 1.0, 0.85))
-	var def_p := _grad_button_sb("def_p", Color(0.10, 0.22, 0.34), Color(0.04, 0.08, 0.17), Color(0.30, 0.60, 0.75), Color(0.25, 0.72, 1.0, 0.4))
-	scroll.add_theme_stylebox_override("normal", def_n)
-	scroll.add_theme_stylebox_override("hover", def_h)
-	scroll.add_theme_stylebox_override("pressed", def_p)
+	# Тема назначается самому контейнеру вкладок, чтобы наследовалась всеми полями и скроллами.
+	_apply_menu_theme(scroll)
 	layer.add_child(scroll)
-	var cc := CenterContainer.new()
+	# Центрируем только по горизонтали. CenterContainer также центрировал короткие
+	# экраны по высоте, из-за чего вся форма прыгала при смене бойца и настроек.
+	var cc := HBoxContainer.new()
+	cc.alignment = BoxContainer.ALIGNMENT_CENTER
 	cc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(cc)
 	var vb := VBoxContainer.new()
@@ -9329,72 +9983,83 @@ func _build_menu() -> void:
 	vb.add_theme_constant_override("separation", 12)
 	cc.add_child(vb)
 	_ui.menu_box = vb
-	# Блок 4: подложка-панель подэкранов — плотная заливка + тонкая рамка акцента
-	# (blur через шейдер недоступен на всех графических уровнях — принята плотная
-	# заливка 0.82 по решению пакета)
+	# Единая «командная палуба» для всех вкладок: плотный navy, стальная кайма,
+	# просторные поля. Плотная заливка надёжна и на Compatibility/WebGL.
 	var mp := PanelContainer.new()
 	mp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var mps := StyleBoxFlat.new()
-	mps.bg_color = Color(0.02, 0.03, 0.06, 0.82)
-	mps.border_color = Color(0.16, 0.85, 1.0, 0.2)
+	mps.bg_color = Color("#080f1af2")
+	mps.border_color = Color("#66809c55")
 	mps.set_border_width_all(1)
-	mps.set_corner_radius_all(10)
-	mps.shadow_color = Color(0, 0, 0, 0.45)
-	mps.shadow_size = 14
-	mps.content_margin_left = 20.0
-	mps.content_margin_right = 20.0
-	mps.content_margin_top = 20.0
-	mps.content_margin_bottom = 20.0
+	mps.set_corner_radius_all(16)
+	mps.shadow_color = Color(0, 0, 0, 0.5)
+	mps.shadow_size = 18
+	mps.shadow_offset = Vector2(0, 6)
+	mps.content_margin_left = 16.0 if mob_w else 24.0
+	mps.content_margin_right = 16.0 if mob_w else 24.0
+	mps.content_margin_top = 18.0 if mob_w else 24.0
+	mps.content_margin_bottom = 18.0 if mob_w else 24.0
 	mp.add_theme_stylebox_override("panel", mps)
 	mp.visible = false
 	cc.add_child(mp)
 	_ui.menu_panel = mp
-	# --- чат лобби: сворачиваемый; в свёрнутом виде — 3 конверта ---
+	# Чат лобби — единая тёмная «рация»: спокойная рамка, cyan у активных действий.
 	var chat := PanelContainer.new()
-	chat.add_theme_stylebox_override("panel", _frame_box())
+	var chat_sb := _frame_box()
+	chat_sb.bg_color = Color(0.025, 0.055, 0.09, 0.88)
+	chat_sb.border_color = Color(0.33, 0.85, 0.91, 0.58)
+	chat_sb.set_corner_radius_all(4)
+	chat_sb.set_content_margin_all(10)
+	chat.add_theme_stylebox_override("panel", chat_sb)
 	chat.anchor_top = 1.0
 	chat.anchor_bottom = 1.0
 	chat.offset_left = 16.0
 	if mob_w:
-		# на телефоне чат — на всю ширину снизу
 		chat.anchor_right = 1.0
 		chat.offset_right = -16.0
 	else:
-		chat.offset_right = 246.0
-	chat.offset_top = -220.0
+		chat.offset_right = 398.0
+	chat.offset_top = -242.0
 	chat.offset_bottom = -10.0
 	layer.add_child(chat)
 	_ui.menu_chat_panel = chat
 	var chat_v := VBoxContainer.new()
+	chat_v.add_theme_constant_override("separation", 6)
 	chat.add_child(chat_v)
 	var head := HBoxContainer.new()
 	chat_v.add_child(head)
 	var htl := Label.new()
-	htl.text = "Чаты"
-	htl.add_theme_font_size_override("font_size", 13)
+	htl.text = "СВЯЗЬ · ЧАТ"
+	htl.add_theme_font_size_override("font_size", 12)
+	htl.add_theme_color_override("font_color", Color("#8edce7"))
+	htl.add_theme_font_override("font", _font_head())
 	htl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(htl)
 	var collapse := Button.new()
 	collapse.text = "—"
-	collapse.custom_minimum_size = Vector2(44, 26)
+	collapse.custom_minimum_size = Vector2(32, 28)
 	collapse.tooltip_text = "Свернуть чат"
+	_style_menu_button(collapse)
+	collapse.add_theme_font_size_override("font_size", 13)
 	collapse.pressed.connect(_toggle_menu_chat)
 	head.add_child(collapse)
 	_ui.menu_chat_collapse = collapse
 	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 4)
+	content.add_theme_constant_override("separation", 6)
 	chat_v.add_child(content)
 	_ui.menu_chat_content = content
 	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 4)
+	tabs.add_theme_constant_override("separation", 5)
 	content.add_child(tabs)
 	_ui.menu_chat_btns = []
 	var tab_names := ["Общий", "Комната", "Клан"]
 	for ti in 3:
 		var tb := Button.new()
 		tb.text = tab_names[ti]
-		tb.custom_minimum_size = Vector2(0, 26)
+		tb.custom_minimum_size = Vector2(0, 28)
 		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_menu_button(tb)
+		tb.add_theme_font_size_override("font_size", 12)
 		var tn: int = ti
 		tb.pressed.connect(func():
 			_menu_chat_tab = tn
@@ -9404,9 +10069,6 @@ func _build_menu() -> void:
 		_ui.menu_chat_btns.append(tb)
 	var lines := VBoxContainer.new()
 	lines.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# область сообщений — прокручиваемая, фиксированной высоты: рамка не растёт,
-	# старые сообщения уходят вверх, новые появляются снизу (как в боевом чате).
-	# минимум 56px — ~2 строки видно сразу, не «полторы обрезанные»
 	var lines_scroll := ScrollContainer.new()
 	lines_scroll.custom_minimum_size = Vector2(0, 56)
 	lines_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -9416,63 +10078,59 @@ func _build_menu() -> void:
 	_ui.menu_chat_lines = lines
 	_ui.menu_chat_scroll = lines_scroll
 	var inrow := HBoxContainer.new()
-	inrow.add_theme_constant_override("separation", 4)
+	inrow.add_theme_constant_override("separation", 6)
 	content.add_child(inrow)
 	var inp := LineEdit.new()
-	inp.placeholder_text = "Сообщение… (пока локально)"
+	inp.placeholder_text = "Сообщение…"
+	inp.custom_minimum_size = Vector2(0, 38)
 	inp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inp.add_theme_font_override("font", _font_chat())
+	inp.add_theme_font_size_override("font_size", 13)
 	inp.text_submitted.connect(func(_t): _menu_chat_send(inp))
 	var inp_sb := StyleBoxFlat.new()
-	inp_sb.bg_color = Color(0.02, 0.03, 0.06, 0.55)
-	inp_sb.border_color = Color("#28d8ff55")
+	inp_sb.bg_color = Color(0.015, 0.035, 0.06, 0.82)
+	inp_sb.border_color = Color("#63809a70")
 	inp_sb.set_border_width_all(1)
-	inp_sb.set_corner_radius_all(6)
-	inp_sb.content_margin_right = 32.0
+	inp_sb.set_corner_radius_all(8)
+	inp_sb.content_margin_left = 10.0
+	inp_sb.content_margin_right = 38.0
 	inp.add_theme_stylebox_override("normal", inp_sb)
-	inp.add_theme_stylebox_override("focus", inp_sb)
+	var inp_focus := inp_sb.duplicate() as StyleBoxFlat
+	inp_focus.border_color = Color("#55d9e8")
+	inp.add_theme_stylebox_override("focus", inp_focus)
 	inrow.add_child(inp)
 	_ui.menu_chat_input = inp
-	# смайл ВНУТРИ поля — 8 px от правого края, по центру
+	# Кнопка эмодзи целиком находится в поле и центрирована по его высоте.
 	var emb := Button.new()
-	emb.tooltip_text = "Эмодзи"
+	emb.tooltip_text = "Вставить эмодзи"
 	emb.anchor_left = 1.0
 	emb.anchor_right = 1.0
 	emb.anchor_top = 0.5
 	emb.anchor_bottom = 0.5
-	emb.offset_left = -28.0
-	emb.offset_right = -8.0
-	emb.offset_top = -11.0
-	emb.offset_bottom = 11.0
-	emb.mouse_filter = Control.MOUSE_FILTER_STOP
-	emb.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-	emb.add_theme_stylebox_override("hover", StyleBoxEmpty.new())
-	emb.add_theme_stylebox_override("pressed", StyleBoxEmpty.new())
-	emb.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	emb.offset_left = -34.0
+	emb.offset_right = -5.0
+	emb.offset_top = -14.0
+	emb.offset_bottom = 14.0
+	emb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	for estate in ["normal", "hover", "pressed", "focus"]:
+		emb.add_theme_stylebox_override(estate, StyleBoxEmpty.new())
 	var emtr := TextureRect.new()
 	emtr.texture = _icon_tex("smile")
 	emtr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	emtr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	emtr.custom_minimum_size = Vector2(18, 18)
+	emtr.custom_minimum_size = Vector2(19, 19)
+	emtr.modulate = Color("#8edce7")
 	emtr.set_anchors_preset(Control.PRESET_CENTER)
 	emtr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	emb.add_child(emtr)
-	emb.pressed.connect(func(): _toggle_emoji_panel(inp, _ui.menu_chat_panel, _menu_chat_send))
+	emb.pressed.connect(func(): _toggle_emoji_panel(inp, _ui.menu_chat_panel))
 	inp.add_child(emb)
-	# отправка — квадратная кнопка
 	var sendb := Button.new()
 	sendb.text = "»"
-	sendb.custom_minimum_size = Vector2(32, 32)
-	sendb.tooltip_text = "Отправить"
-	var ssb := StyleBoxFlat.new()
-	ssb.bg_color = Color("#28d8ff33")
-	ssb.border_color = Color("#28d8ff88")
-	ssb.set_border_width_all(1)
-	ssb.set_corner_radius_all(6)
-	sendb.add_theme_stylebox_override("normal", ssb)
-	sendb.add_theme_stylebox_override("hover", ssb)
-	sendb.add_theme_stylebox_override("pressed", ssb)
-	sendb.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	sendb.add_theme_color_override("font_color", Color("#bfefff"))
+	sendb.custom_minimum_size = Vector2(38, 38)
+	sendb.tooltip_text = "Отправить сообщение"
+	_style_menu_button(sendb, true)
+	sendb.add_theme_font_size_override("font_size", 20)
 	sendb.pressed.connect(func(): _menu_chat_send(inp))
 	inrow.add_child(sendb)
 	var env := HBoxContainer.new()
@@ -9503,9 +10161,8 @@ func _build_menu() -> void:
 		)
 		env.add_child(eb)
 	_render_menu_chat()
-	if mob_w:
-		# на телефоне чат стартует свёрнутым — не перекрывает меню
-		_toggle_menu_chat()
+	# Демо-главная использует всю ширину: чат доступен, но стартует компактной рацией.
+	_toggle_menu_chat()
 	# заставка-приветствие убрана по договорённости с владельцем (показывалась после каждого боя);
 	# новичков ведут контекстные подсказки «?» в заголовках экранов
 	# временная диагностика v6.108: только debug-сборки — в проде не показываем (тикет #9)
@@ -9677,12 +10334,12 @@ func _toggle_menu_chat() -> void:
 	# свёрнутый: заголовок 26 + ряд иконок 34 + отступы рамки ~18 = ~80px. Ширина — по
 	# содержимому (узкая полоса), развёрнутый — полная. Область сообщений развёрнутого —
 	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
-	p.offset_top = -82.0 if _menu_chat_collapsed else -220.0
+	p.offset_top = -82.0 if _menu_chat_collapsed else -242.0
 	if not _mob():
-		p.offset_right = 210.0 if _menu_chat_collapsed else 246.0
-	# нижний край меню едет вслед за чатом: свёрнутый — край -110, развёрнутый — -240
+		p.offset_right = 210.0 if _menu_chat_collapsed else 398.0
+	# Нижний край меню едет вслед за чатом, не перекрывая поле ввода.
 	if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
-		_ui.menu_scroll.offset_bottom = -110.0 if _menu_chat_collapsed else -240.0
+		_ui.menu_scroll.offset_bottom = -110.0 if _menu_chat_collapsed else -262.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
@@ -9780,59 +10437,74 @@ func _style_locked_button(b: Button) -> void:
 	b.add_theme_color_override("font_disabled_color", Color(0.65, 0.7, 0.8))
 
 func _show_menu_showbiz() -> void:
-	# касса шоу (паки монет) + спонсорские контракты; оплата ВК — «скоро» (модерация)
+	# Единый актуальный каталог VK: никаких старых SKU и кнопок-заглушек.
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(560.0, _menu_content_w(0.92)), 0)
 	vb.add_child(_screen_title("coin", "Касса шоу", ""))
-	vb.add_child(_inv_section("ПАКИ МОНЕТ — оплата звёздами ВК"))
-	for pk in CASH_PRICES.keys():
+	vb.add_child(_inv_section("ПАКИ МОНЕТ — оплата через VK"))
+	var pnames := ["Разведчик", "Штурмовик", "Легенда шоу", "Королевский"]
+	for pi in COIN_PACKS.size():
+		var pk: Dictionary = COIN_PACKS[pi]
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
+		row.add_theme_constant_override("separation", 10)
 		vb.add_child(row)
 		var lb := Label.new()
-		var amount := int(str(pk).split("_")[1])
-		var pnames := {100: "Разведчик", 500: "Штурмовик", 1200: "Легенда шоу"}
-		lb.text = ("Пак «%s» — %d монет" % [pnames[amount], amount]) if pnames.has(amount) else ("%d монет" % amount)
-		lb.add_theme_font_size_override("font_size", 13)
+		lb.text = "Пак «%s» — %d монет" % [pnames[pi], int(pk["coins"])]
+		lb.add_theme_font_size_override("font_size", 14)
 		lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(lb)
-		var buy := _menu_button("%d ★" % int(CASH_PRICES[pk]), true)
+		var buy := _menu_button("%d руб" % int(pk["price"]), true)
+		buy.custom_minimum_size = Vector2(140, 40)
 		var bfm := _font_mono()
 		if bfm != null:
 			buy.add_theme_font_override("font", bfm)
-		buy.tooltip_text = "Покупка откроется после модерации платежей ВК"
-		buy.pressed.connect(func(): _log("Касса шоу: платежи появятся после модерации"))
+		buy.disabled = not PAYMENTS_ENABLED
+		var pi2: int = pi
+		buy.pressed.connect(func(): _buy_coin_pack(pi2))
 		row.add_child(buy)
-	vb.add_child(_inv_section("СПОНСОРСКИЕ КОНТРАКТЫ"))
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("separation", 8)
-	vb.add_child(crow)
-	var cl := Label.new()
-	cl.text = "Контракт на сезон: +50% XP и мягкая кривая уровней 20+ на 10 боёв"
-	cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	crow.add_child(cl)
-	var cbtn := _menu_button("%d ★" % CONTRACT_PRICE, true)
-	var cfm := _font_mono()
-	if cfm != null:
-		cbtn.add_theme_font_override("font", cfm)
-	if _contract_on():
-		cbtn.text = "АКТИВЕН (тест)"
-		cbtn.disabled = true
-	cbtn.tooltip_text = "Покупка откроется после модерации платежей ВК"
-	cbtn.pressed.connect(func(): _log("Контракты: платежи появятся после модерации"))
-	crow.add_child(cbtn)
+	vb.add_child(_inv_section("PREMIUM BATTLE PASS"))
+	var brow := HBoxContainer.new()
+	brow.add_theme_constant_override("separation", 10)
+	vb.add_child(brow)
+	var bl := Label.new()
+	bl.text = "Premium · сезон 1 — две ленты наград"
+	bl.add_theme_font_size_override("font_size", 14)
+	bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	brow.add_child(bl)
+	var bb := _menu_button("Premium — 399 руб", true)
+	bb.custom_minimum_size = Vector2(140, 40)
+	if int(_profile.get("bp_owned", 0)) == 1:
+		bb.text = "АКТИВЕН"
+		bb.disabled = true
+	else:
+		bb.pressed.connect(_buy_bp_pass)
+	brow.add_child(bb)
+	var note := Label.new()
+	note.text = "Начисление выполняется один раз после подтверждения заказа сервером VK."
+	note.add_theme_font_size_override("font_size", 12)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note)
 
 func _show_menu_deck() -> void:
 	# колода: 3 слота на бой; коллекция — карты за триумф/Жнеца
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(560.0, _menu_content_w(0.92)), 0)
 	vb.add_child(_screen_title("bolt", "Шоу-карты — колода на бой", ""))
 	var hint := Label.new()
 	hint.text = "Карты из ящиков сгорают после боя. Карты за триумф и Жнеца остаются в коллекции — выбери 3 на бой."
@@ -9855,6 +10527,12 @@ func _show_menu_deck() -> void:
 			var cid: String = str(deck[i])
 			b.text = SHOW_CARDS[cid]["name"]
 			b.add_theme_font_size_override("font_size", 13)
+			var brar: String = str(SHOW_CARDS[cid].get("rarity", "common"))
+			b.icon = _png_icon(CARD_PNG_BY_ID.get(cid, ""))
+			if b.icon == null:
+				b.icon = _icon_tex(CARD_ICON_BY_RARITY.get(brar, "bolt"))
+			b.icon_max_width = 40
+			b.expand_icon = true
 			var v: String = cid
 			var csb := StyleBoxFlat.new()
 			csb.bg_color = Color(0.02, 0.03, 0.06, 0.6)
@@ -9876,7 +10554,7 @@ func _show_menu_deck() -> void:
 					dk.remove_at(bi)
 					_profile.show_deck = dk
 					_save_profile()
-				_show_menu_deck())
+				_refresh_menu_screen("deck"))
 		else:
 			b.text = "+"
 			b.add_theme_font_size_override("font_size", 22)
@@ -9914,7 +10592,7 @@ func _show_menu_deck() -> void:
 			row.add_theme_constant_override("separation", 8)
 			vb.add_child(row)
 			var crar: String = str(SHOW_CARDS[cid3].get("rarity", "common"))
-			var cchip := _icon_chip(CARD_ICON_BY_RARITY.get(crar, "bolt"), 22, _png_icon(CARD_PNG_BY_ID.get(cid3, "")))
+			var cchip := _icon_chip(CARD_ICON_BY_RARITY.get(crar, "bolt"), 40, _png_icon(CARD_PNG_BY_ID.get(cid3, "")))
 			row.add_child(cchip)
 			var lbv := VBoxContainer.new()
 			lbv.add_theme_constant_override("separation", 0)
@@ -9947,7 +10625,7 @@ func _show_menu_deck() -> void:
 				dk2.append(cidc2)
 				_profile.show_deck = dk2
 				_save_profile()
-				_show_menu_deck())
+				_refresh_menu_screen("deck"))
 			row.add_child(add)
 
 func _show_menu_main() -> void:
@@ -9957,6 +10635,9 @@ func _show_menu_main() -> void:
 		_save_profile()   # подхват слотов (уровень/ВИП открылись вне боя)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
 	# чипы игрока в верхней панели
 	if _ui.has("menu_chips"):
@@ -9997,7 +10678,7 @@ func _show_menu_main() -> void:
 			acc_tip = "Твой аккаунт. Вход через ВК — прогресс сохраняется на сервере"
 		elif _auth_email != "":
 			acc_tip = "Твой аккаунт. Прогресс сохраняется на сервере"
-		ch.add_child(_chip("person", acc_name if acc_name != "" else "Гость", acc_tip))
+		ch.add_child(_chip("person", acc_name if acc_name != "" else str(_profile.names[0]), acc_tip, _auth_email == ""))
 		_stamina_update()
 		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
 		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
@@ -10012,9 +10693,21 @@ func _show_menu_main() -> void:
 	season_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 	season_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(season_lbl)
-	var dq_row := HBoxContainer.new()
-	dq_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	dq_row.add_theme_constant_override("separation", 10)
+	season_lbl.hide()   # сезон представлен золотой карточкой справа, без дублирующей строки
+	# На телефоне четыре длинные подписи в HBox расширяли всё лобби за экран.
+	# Две адаптивные колонки сохраняют информацию и не влияют на ширину остальных карточек.
+	var dq_row: Container
+	if _mob():
+		var dq_grid := GridContainer.new()
+		dq_grid.columns = 2
+		dq_grid.add_theme_constant_override("h_separation", 10)
+		dq_grid.add_theme_constant_override("v_separation", 4)
+		dq_row = dq_grid
+	else:
+		var dq_h := HBoxContainer.new()
+		dq_h.alignment = BoxContainer.ALIGNMENT_CENTER
+		dq_h.add_theme_constant_override("separation", 10)
+		dq_row = dq_h
 	var dd: Dictionary = _profile.get("daily", {})
 	var dprog: Dictionary = dd.get("prog", {})
 	var ddone: Dictionary = dd.get("done", {})
@@ -10028,6 +10721,10 @@ func _show_menu_main() -> void:
 			ql.text = "%s: %d/%d" % [str(q2["name"]), int(dprog.get(qid2, 0)), int(q2["target"])]
 			ql.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
 		ql.add_theme_font_size_override("font_size", 12)
+		if _mob():
+			ql.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			ql.custom_minimum_size.x = floorf((_menu_w() - 10.0) * 0.5)
+			ql.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ql.tooltip_text = "Награда: %s+%d XP (ежедневно, сброс в 00:00)" % [_daily_reward_txt(q2), int(q2["xp"])]
 		dq_row.add_child(ql)
 	var st2: Dictionary = _profile.get("login_streak", {})
@@ -10035,25 +10732,117 @@ func _show_menu_main() -> void:
 	sl.text = "🔥 вход: день %d/7" % int(st2.get("n", 0))
 	sl.add_theme_font_size_override("font_size", 12)
 	sl.add_theme_color_override("font_color", Color(1.0, 0.7, 0.3))
+	if _mob():
+		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sl.custom_minimum_size.x = floorf((_menu_w() - 10.0) * 0.5)
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.tooltip_text = "Серия входов: пропустишь день — серия сгорит. День 7 — средняя карта в колоду!"
 	dq_row.add_child(sl)
 	vb.add_child(dq_row)
-	# попап награды ежедневного входа (один раз за день)
+	dq_row.hide()   # те же три задачи показаны прогресс-барами в правой панели
+	# Центральный знак из загрузочной заставки — основной визуальный якорь лобби.
+	var hero_sign := TextureRect.new()
+	hero_sign.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hero_sign.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	hero_sign.texture = load("res://assets/ui/logo.png")
+	hero_sign.custom_minimum_size = Vector2(0, 86 if _mob() else 142)
+	hero_sign.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(hero_sign)
+	var sign_rule := ColorRect.new()
+	sign_rule.color = Color("#57e7ff88")
+	sign_rule.custom_minimum_size = Vector2(0, 1)
+	sign_rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(sign_rule)
+	# Заголовок из демо: вместо набора мелких строк — один ясный призыв к бою.
+	var hero_head := HBoxContainer.new()
+	hero_head.add_theme_constant_override("separation", 16)
+	vb.add_child(hero_head)
+	var hero_text := VBoxContainer.new()
+	hero_text.add_theme_constant_override("separation", 3)
+	hero_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hero_head.add_child(hero_text)
+	hero_text.add_child(_card_label("БОЕВАЯ ГОТОВНОСТЬ", 11, Color("#55d9e8"), true))
+	hero_text.add_child(_card_label("Выбери свою арену", 24, Color("#f3f7fb"), true))
+	hero_text.add_child(_card_label("Отряд готов. Следующий бой — за наградами шоу.", 12, Color("#a3b2c5")))
+	var season_chip := PanelContainer.new()
+	var scs := StyleBoxFlat.new()
+	scs.bg_color = Color("#e7c9850c")
+	scs.border_color = Color("#e7c98544")
+	scs.set_border_width_all(1)
+	scs.set_corner_radius_all(6)
+	scs.set_content_margin_all(8)
+	season_chip.add_theme_stylebox_override("panel", scs)
+	season_chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	season_chip.add_child(_card_label(_season_ui_text(), 10, Color("#e7c985")))
+	hero_head.add_child(season_chip)
+	if _mob():
+		season_chip.hide()
+	# Подарок за вход — собственная полупрозрачная сцена, а не системное серое окно.
 	if _login_reward_txt != "" and not _test_run():
+		_web_main_menu(false)
 		var lr := _login_reward_txt
 		_login_reward_txt = ""
-		var dlg := AcceptDialog.new()
-		dlg.title = "Ежедневный вход"
-		dlg.dialog_text = lr + "\nЗаходи каждый день — награды растут!"
-		_ui.menu_layer.add_child(dlg)
-		dlg.popup_centered()
-	# --- секция БОЙ: карточки режимов (иконки-пиктограммы) ---
-	var m1 := _fight_card("fighter1", "1×1 · Дуэль", "Соло-тренировка против бота", Color(0.72, 0.78, 0.86), false, true)
+		var overlay := ColorRect.new()
+		overlay.color = Color(0.015, 0.025, 0.05, 0.58)
+		overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_ui.menu_layer.add_child(overlay)
+		var center := CenterContainer.new()
+		center.set_anchors_preset(Control.PRESET_FULL_RECT)
+		center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		overlay.add_child(center)
+		var dlg := PanelContainer.new()
+		dlg.custom_minimum_size = Vector2(minf(390.0, _vw() - 36.0), 0)
+		var dsb := _card_style(false, true)
+		dsb.bg_color = Color(0.035, 0.075, 0.12, 0.88)
+		dsb.border_color = Color(0.33, 0.85, 0.91, 0.82)
+		dsb.content_margin_left = 24.0
+		dsb.content_margin_right = 24.0
+		dsb.content_margin_top = 22.0
+		dsb.content_margin_bottom = 22.0
+		dlg.add_theme_stylebox_override("panel", dsb)
+		center.add_child(dlg)
+		var dv := VBoxContainer.new()
+		dv.add_theme_constant_override("separation", 14)
+		dlg.add_child(dv)
+		var dhead := HBoxContainer.new()
+		dhead.add_theme_constant_override("separation", 10)
+		dv.add_child(dhead)
+		var dicon := TextureRect.new()
+		dicon.texture = _icon_tex("ticket")
+		dicon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		dicon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		dicon.custom_minimum_size = Vector2(26, 26)
+		dicon.modulate = Color("#55d9e8")
+		dhead.add_child(dicon)
+		var dtitle := _mk_label("ЕЖЕДНЕВНЫЙ ВХОД", 18)
+		var dfont := _font_head()
+		if dfont != null:
+			dtitle.add_theme_font_override("font", dfont)
+		dtitle.add_theme_color_override("font_color", Color("#e9faff"))
+		dhead.add_child(dtitle)
+		var dtext := _mk_label(lr, 16)
+		dtext.add_theme_color_override("font_color", Color("#e3edf7"))
+		dtext.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		dv.add_child(dtext)
+		var dhint := _mk_label("Заходи каждый день — награды растут!", 13)
+		dhint.add_theme_color_override("font_color", Color("#91aabd"))
+		dhint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		dv.add_child(dhint)
+		var ok := _menu_button("ОК · ЗАБРАТЬ", true)
+		ok.custom_minimum_size = Vector2(0, 48)
+		ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ok.pressed.connect(func():
+			overlay.queue_free()
+			_web_main_menu(true)
+		)
+		dv.add_child(ok)
+	# --- секция БОЙ: карточки по интерактивному демо-макету ---
+	var m1 := _demo_mode_card("1 × 1 · Дуэль", "Соло против бота · вход свободный", "ОСНОВНОЙ РЕЖИМ", false, true)
 	m1.pressed.connect(func(): _start_mode(1))
-	var m2 := _fight_card("fighter2", "2×2 · Пара", "Ты и напарник против пары ботов", Color(1.0, 0.78, 0.28), false)
+	var m2 := _demo_mode_card("2 × 2 · Пара", "Ты и напарник против пары", "КОМАНДНЫЙ БОЙ")
 	m2.pressed.connect(func(): _start_mode(2))
 	var lock3: bool = _profile.unlocked_slots < 3
-	var m3 := _fight_card("swords", "3×3 · Тройка", "Сначала слот №3 (35 ур. любого бойца)" if lock3 else "Трое против троих — командный бой", Color(1.0, 0.78, 0.28), lock3)
+	var m3 := _demo_mode_card("3 × 3 · Тройка", "Открой третий слот отряда" if lock3 else "Трое против троих · командный бой", "35 УРОВЕНЬ" if lock3 else "КОМАНДНЫЙ БОЙ", lock3)
 	if lock3:
 		m3.tooltip_text = "Откроется на 35 ур. любого бойца (сейчас максимум: %d)" % _max_squad_lvl()
 	if not lock3:
@@ -10062,14 +10851,14 @@ func _show_menu_main() -> void:
 	var s4 := "Только по подписке ВИП"
 	if int(_profile.get("vip", 0)) == 1:
 		s4 = "Сначала слот №3 (35 ур.)" if _profile.unlocked_slots < 3 else "ВИП-доступ активен"
-	var m4 := _fight_card("fighter4", "4×4 · Отряд", s4, Color(1.0, 0.78, 0.28), lock4)
+	var m4 := _demo_mode_card("4 × 4 · Отряд", s4, "ОТРЯДНЫЙ БОЙ", lock4)
 	if lock4:
 		m4.tooltip_text = "Только по подписке ВИП" if int(_profile.get("vip", 0)) != 1 else "Сначала открой слот №3 (35 ур. любого бойца, сейчас: %d)" % _max_squad_lvl()
 	if not lock4:
 		m4.pressed.connect(func(): _start_mode(4))
 	# --- АРЕНА ЛИДЕРОВ: нужен 25 ур., 4 команды × 4 = 16 врагов ---
 	var lock5: bool = _max_squad_lvl() < 25
-	var m5 := _fight_card("trophy", "Арена лидеров", "Нужен 25 ур. любого бойца" if lock5 else "4 команды по 4 = 16 врагов · монеты 15+2·уб.", Color(1.0, 0.62, 0.2), lock5)
+	var m5 := _demo_mode_card("Арена лидеров", "Нужен 25 ур. любого бойца" if lock5 else "16 врагов · повышенные награды", "СОБЫТИЕ", lock5)
 	if lock5:
 		m5.tooltip_text = "Откроется на 25 ур. любого бойца (сейчас максимум: %d)" % _max_squad_lvl()
 	if not lock5:
@@ -10078,10 +10867,10 @@ func _show_menu_main() -> void:
 	var now5 := Time.get_unix_time_from_system()
 	var rts := float(_profile.get("reaper_ts", 0.0))
 	var lock6 := rts > now5
-	var rtxt := "Рейд-босс: фазы, карты в руку, монеты 25+2·уб."
+	var rtxt := "Фазы, карты и особый трофей"
 	if lock6:
 		rtxt = "Жнец вернётся через %d дн." % int(ceil((rts - now5) / 86400.0))
-	var m6 := _fight_card("skull", "Жнец", rtxt, Color(0.78, 0.4, 0.95), lock6, false, "boss_zhnets")
+	var m6 := _demo_mode_card("Жнец", rtxt, "РЕЙД-БОСС", lock6)
 	if lock6:
 		m6.tooltip_text = rtxt
 	if not lock6:
@@ -10114,56 +10903,89 @@ func _show_menu_main() -> void:
 	# давал треть дизайн-ширины и лобби сжималось в узкую колонку, v6.145)
 	var cw4: float = _css_win_w()
 	if cw4 >= 980.0:
-		vb.custom_minimum_size = Vector2(minf(1100.0, _vw() * 0.92), 0)
+		vb.custom_minimum_size = Vector2(minf(1100.0, _menu_content_w(0.92)), 0)
 	elif cw4 >= 620.0:
 		# среднее окно (десктоп-панель ВК): две колонки — бой слева, управление справа
-		vb.custom_minimum_size = Vector2(minf(940.0, _vw() * 0.94), 0)
+		vb.custom_minimum_size = Vector2(minf(940.0, _menu_content_w(0.94)), 0)
 	else:
 		vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	if cw4 >= 620.0:
-		# две-три колонки — бой | управление | миссии: всё лобби помещается без скролла
+		# Демо-компоновка: широкая витрина режимов слева, командная колонка 268 px справа.
 		var two := HBoxContainer.new()
 		two.add_theme_constant_override("separation", 16)
 		vb.add_child(two)
 		var col_l2 := VBoxContainer.new()
-		col_l2.custom_minimum_size = Vector2(minf(300.0, _vw() * 0.34), 0)
-		col_l2.add_theme_constant_override("separation", 8)
+		col_l2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_l2.add_theme_constant_override("separation", 10)
 		two.add_child(col_l2)
-		col_l2.add_child(_section_title("БОЙ"))
 		col_l2.add_child(_opp_switch())
 		col_l2.add_child(m1)
-		col_l2.add_child(m2)
-		col_l2.add_child(m3)
-		col_l2.add_child(m4)
-		var col_r2 := VBoxContainer.new()
-		col_r2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		col_r2.add_theme_constant_override("separation", 8)
-		two.add_child(col_r2)
-		col_r2.add_child(_section_title("УПРАВЛЕНИЕ"))
-		var flow := FlowContainer.new()
-		flow.add_theme_constant_override("h_separation", 6)
-		flow.add_theme_constant_override("v_separation", 6)
-		flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		col_r2.add_child(flow)
+		var mode_grid := GridContainer.new()
+		mode_grid.columns = 2
+		mode_grid.add_theme_constant_override("h_separation", 10)
+		mode_grid.add_theme_constant_override("v_separation", 10)
+		mode_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_l2.add_child(mode_grid)
+		for mode in [m2, m3, m4, m5]:
+			mode_grid.add_child(mode)
+		col_l2.add_child(m6)
+		var side := VBoxContainer.new()
+		side.custom_minimum_size = Vector2(268, 0)
+		side.add_theme_constant_override("separation", 12)
+		two.add_child(side)
+		side.add_child(_demo_missions_panel())
+		var quick_panel := PanelContainer.new()
+		var qsb := _card_style()
+		qsb.bg_color = Color("#0e1622ed")
+		qsb.border_color = Color("#28384a")
+		quick_panel.add_theme_stylebox_override("panel", qsb)
+		side.add_child(quick_panel)
+		var qv := VBoxContainer.new()
+		qv.add_theme_constant_override("separation", 10)
+		quick_panel.add_child(qv)
+		qv.add_child(_card_label("УПРАВЛЕНИЕ", 12, Color("#c9d6e5"), true))
+		var quick := GridContainer.new()
+		quick.columns = 3
+		quick.add_theme_constant_override("h_separation", 6)
+		quick.add_theme_constant_override("v_separation", 6)
+		qv.add_child(quick)
 		for cb in ctrls:
-			flow.add_child(cb)
-		# третья колонка — миссии дня (на среднем окне под колонками, см. низ функции)
-		if cw4 >= 860.0:
-			var col_m2 := VBoxContainer.new()
-			col_m2.custom_minimum_size = Vector2(minf(330.0, _vw() * 0.36), 0)
-			col_m2.add_theme_constant_override("separation", 8)
-			two.add_child(col_m2)
-			col_m2.add_child(_section_title("МИССИИ ДНЯ"))
-			var dq := _daily_box(true)
-			dq.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			col_m2.add_child(dq)
+			quick.add_child(cb)
+		var season := Button.new()
+		season.custom_minimum_size = Vector2(0, 112)
+		season.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var ssb := _card_style()
+		ssb.bg_color = Color("#211d16ed")
+		ssb.border_color = Color("#e7c98555")
+		var shb := _card_style(true)
+		shb.bg_color = Color("#2b2419f2")
+		shb.border_color = Color("#e7c985aa")
+		season.add_theme_stylebox_override("normal", ssb)
+		season.add_theme_stylebox_override("hover", shb)
+		season.add_theme_stylebox_override("focus", shb)
+		season.add_theme_stylebox_override("pressed", shb)
+		season.pressed.connect(_show_menu_bp)
+		side.add_child(season)
+		var sv := VBoxContainer.new()
+		sv.set_anchors_preset(Control.PRESET_FULL_RECT)
+		sv.offset_left = 16.0
+		sv.offset_right = -16.0
+		sv.offset_top = 14.0
+		sv.offset_bottom = -12.0
+		sv.add_theme_constant_override("separation", 6)
+		sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		season.add_child(sv)
+		sv.add_child(_card_label("Battle Pass · сезон 1", 14, Color("#e7c985"), true))
+		sv.add_child(_card_label("Новый тестовый цикл. Прогресс начинается с чистого листа.", 10, Color("#a3b2c5")))
+		sv.add_child(_card_label("Премиальные награды и эксклюзивная косметика →", 10, Color("#e7c985")))
 	else:
-		vb.add_child(_section_title("БОЙ"))
 		vb.add_child(_opp_switch())
 		vb.add_child(m1)
 		vb.add_child(m2)
 		vb.add_child(m3)
 		vb.add_child(m4)
+		vb.add_child(m5)
+		vb.add_child(m6)
 		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
 		var grid := GridContainer.new()
 		grid.columns = 3
@@ -10172,9 +10994,7 @@ func _show_menu_main() -> void:
 		vb.add_child(grid)
 		for cb in ctrls:
 			grid.add_child(cb)
-	if cw4 < 860.0:
-		vb.add_child(_section_title("МИССИИ ДНЯ"))
-		vb.add_child(_daily_box())
+		vb.add_child(_demo_missions_panel())
 
 # ---------- полный экран: браузер (вкл/выкл), в ВК ещё и расширение окна ----------
 func _request_fullscreen() -> void:
@@ -10219,6 +11039,17 @@ func _menu_back_show(on: bool) -> void:
 	if not _ui.has("menu_back") or not is_instance_valid(_ui.menu_back):
 		return
 	_ui.menu_back.visible = on
+	# На телефоне кнопка занимает отдельную строку под чипами, а не перекрывает их.
+	if _mob():
+		_ui.menu_back.offset_top = 96.0 if on else 12.0
+		_ui.menu_back.offset_bottom = 146.0 if on else 54.0
+		if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
+			_ui.menu_scroll.offset_top = 156.0 if on else 90.0
+	else:
+		_ui.menu_back.offset_top = 12.0
+		_ui.menu_back.offset_bottom = 54.0
+		if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
+			_ui.menu_scroll.offset_top = 90.0
 	# HOTFIX_BACK_V1: подложка-панель (сиблинг слоя, поверх по z) перекрывала
 	# кнопку — она была видима, но мертва для клика (софтлок подэкранов).
 	# Инвариант: «Назад» ВСЕГДА последний сиблинг = верхний z и первой получает клик.
@@ -10240,11 +11071,16 @@ func _menu_back_show(on: bool) -> void:
 		elif not on and vb2.get_parent() != mp2.get_parent():
 			vb2.reparent(mp2.get_parent())
 			mp2.visible = false
+	# В Web главное лобби отрисовывает DOM поверх canvas; подэкраны — Godot.
+	_web_main_menu(not on)
 
 func _show_menu_settings() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("gear", "Настройки"))
@@ -10254,7 +11090,7 @@ func _show_menu_settings() -> void:
 	var gl := Label.new()
 	gl.text = "Графика:"
 	vb.add_child(gl)
-	var grow := HBoxContainer.new()
+	var grow: BoxContainer = VBoxContainer.new() if _mob() else HBoxContainer.new()
 	grow.add_theme_constant_override("separation", 8)
 	vb.add_child(grow)
 	var names := ["Низкая", "Средняя", "Высокая"]
@@ -10264,7 +11100,7 @@ func _show_menu_settings() -> void:
 		var lv: int = i
 		b.pressed.connect(func():
 			_apply_graphics(lv)
-			_show_menu_settings()
+			_refresh_menu_screen("settings")
 		)
 		grow.add_child(b)
 	var srow := HBoxContainer.new()
@@ -10277,10 +11113,10 @@ func _show_menu_settings() -> void:
 	st.selected = _settings.sound
 	st.pressed.connect(func():
 		_settings.sound = not _settings.sound
-		_show_menu_settings()
+		_refresh_menu_screen("settings")
 	)
 	srow.add_child(st)
-	var tprow := HBoxContainer.new()
+	var tprow: BoxContainer = VBoxContainer.new() if _mob() else HBoxContainer.new()
 	tprow.add_theme_constant_override("separation", 8)
 	vb.add_child(tprow)
 	var tpl := Label.new()
@@ -10299,7 +11135,7 @@ func _show_menu_settings() -> void:
 			tb2.pressed.connect(func():
 				_profile.teleport = tid
 				_save_profile()
-				_show_menu_settings()
+				_refresh_menu_screen("settings")
 			)
 		tprow.add_child(tb2)
 	var note := Label.new()
@@ -10334,7 +11170,7 @@ func _show_menu_settings() -> void:
 	fb_row.add_child(fb_status)
 	vb.add_child(fb_row)
 	# Блок 8: футер — юридические ссылки одной строкой, без кнопочного стиля
-	var foot := HBoxContainer.new()
+	var foot: BoxContainer = VBoxContainer.new() if _mob() else HBoxContainer.new()
 	foot.alignment = BoxContainer.ALIGNMENT_CENTER
 	foot.add_theme_constant_override("separation", 18)
 	var priv := Label.new()
@@ -10389,18 +11225,31 @@ const FRAME_NAMES := ["Стандарт", "Неоновая", "Золотая", 
 	"Хром", "Янтарь", "Кислота", "Мороз", "Буря", "Пепел", "Рубин", "Оникс", "Азур", "Коралл", "Мята",
 	"Ирис", "Медь", "Сталь", "Вольфрам", "Звезда", "Комета", "Галактика"]
 const FRAME_ACCENTS_POOL := [Color("#8a93a6"), Color(0.2, 0.9, 1.0), Color("#d4af37"), Color(0.35, 0.5, 0.25), Color(0.85, 0.7, 0.4), Color(0.2, 1.0, 0.5), Color(1.0, 0.45, 0.1), Color(0.9, 0.9, 0.95), Color(1.0, 0.5, 1.0)]
-# Рамки v2: файл арт-рамки по индексу 1..11 (frames256); 0 — без рамки
-const FRAME_PNG_FILES := ["", "f01_neon", "f02_gold", "f03_camo", "f04_desert", "f05_crypto", "f06_flame", "f07_ghost", "f08_lilac", "f09_veteran", "f10_elite", "f11_legend"]
+# Собственный файл для каждой рамки 1..29; 0 — аватар без дополнительной рамки.
+const FRAME_PNG_FILES := ["", "f01_neon", "f02_gold", "f03_camo", "f04_desert", "f05_crypto", "f06_flame", "f07_ghost", "f08_lilac", "f09_veteran", "f10_elite", "f11_legend",
+	"f12_chrome", "f13_amber", "f14_acid", "f15_frost", "f16_storm", "f17_ash", "f18_ruby", "f19_onyx", "f20_azure", "f21_coral", "f22_mint",
+	"f23_iris", "f24_copper", "f25_steel", "f26_tungsten", "f27_star", "f28_comet", "f29_galaxy"]
 const NICK_COLORS := [Color(1, 1, 1), Color(1, 0.35, 0.45), Color("#d4af37"), Color(0.2, 0.9, 0.45), Color(0.5, 0.8, 1.0), Color(0.7, 0.4, 1.0), Color(1.0, 0.55, 0.2), Color(0.85, 0.12, 0.18), Color(1.0, 0.5, 1.0),
-	Color("#6b8e23"), Color(0.2, 0.85, 0.75), Color(0.25, 0.55, 0.85), Color("#a4e635"), Color(1.0, 0.72, 0.55), Color("#3a3f4b"),
+	Color("#9ebd45"), Color(0.2, 0.85, 0.75), Color(0.25, 0.55, 0.85), Color("#a4e635"), Color(1.0, 0.72, 0.55), Color("#9aa4b2"),
 	Color(0.93, 0.93, 0.9), Color(0.75, 0.5, 0.3), Color(0.8, 0.82, 0.88), Color(0.62, 0.68, 0.78), Color(0.75, 0.45, 0.95), Color(0.95, 0.65, 0.35),
-	Color(0.75, 0.15, 0.3), Color(0.2, 0.75, 0.45), Color(0.2, 0.4, 0.9), Color(0.85, 0.9, 0.95), Color(1.0, 0.5, 0.4), Color(1.0, 0.25, 0.7),
-	Color(0.8, 0.65, 1.0), Color(0.6, 1.0, 0.85), Color(0.98, 0.92, 0.75), Color(0.5, 0.35, 0.25), Color(0.25, 0.28, 0.45), Color(1.0, 0.6, 0.75),
+	Color(0.75, 0.15, 0.3), Color(0.2, 0.75, 0.45), Color(0.35, 0.55, 1.0), Color(0.85, 0.9, 0.95), Color(1.0, 0.5, 0.4), Color(1.0, 0.25, 0.7),
+	Color(0.8, 0.65, 1.0), Color(0.6, 1.0, 0.85), Color(0.98, 0.92, 0.75), Color(0.78, 0.60, 0.45), Color(0.54, 0.58, 0.78), Color(1.0, 0.6, 0.75),
 	Color(0.85, 0.95, 1.0), Color(1.0, 0.35, 0.15), Color(0.75, 1.0, 0.2), Color(1.0, 0.45, 0.85), Color(0.25, 0.85, 0.55), Color(0.55, 0.95, 1.0), Color(0.9, 0.9, 1.0)]
 const NICK_COLOR_NAMES := ["Белый", "Красный", "Золотой", "Изумруд", "Ледяной", "Фиолет", "Закат", "Кровавый", "Сиреневый",
 	"Оливковый", "Бирюза", "Морская", "Лайм", "Персик", "Графит", "Жемчуг", "Бронза", "Серебро", "Платина", "Аметист", "Топаз",
 	"Гранат", "Нефрит", "Сапфир", "Опал", "Коралл", "Фуксия", "Лаванда", "Мята", "Крем", "Кофе", "Ночь", "Рассвет",
 	"Полярный", "Магма", "Кислотный", "Неон-роза", "Бензин", "Кибер", "Призрачный"]
+
+func _nick_color_value() -> Color:
+	return NICK_COLORS[clampi(int(_profile.get("nick_color", 0)), 0, NICK_COLORS.size() - 1)]
+
+func _style_nick_label(label: Label, fighter_idx := 0) -> void:
+	if fighter_idx != 0:
+		return
+	label.add_theme_color_override("font_color", _nick_color_value())
+	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
 
 # ---- сундуки шоу: редкости, гаранты (pity), осколки ----
 const CHEST_PRICE := 150
@@ -10530,10 +11379,50 @@ const HEROES := [
 		"mods": {"agi": 4, "per": 2, "str": -3, "end": -1}, "perk": "Легенды говорят: он стреляет первым"},
 ]
 
+func _refresh_menu_screen(screen: String) -> void:
+	# Обновление данных не должно выбрасывать игрока в начало длинного экрана.
+	# Сохраняем и внешний ScrollContainer, и независимые колонки «Отряда».
+	var previous_screen := str(_ui.menu_box.get_meta("refresh_screen", ""))
+	# Прямой вход в раздел (кнопка HTML-меню) раньше не ставил маркер: первое
+	# обновление теряло прокрутку, хотя последующие уже сохраняли её.
+	var keep: bool = previous_screen.is_empty() or previous_screen == screen
+	var outer_y := 0
+	var inner_y: Array = []
+	if keep:
+		if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
+			outer_y = int(_ui.menu_scroll.scroll_vertical)
+		for sc in _ui.menu_box.find_children("*", "ScrollContainer", true, false):
+			inner_y.append(int(sc.scroll_vertical))
+	match screen:
+		"squad": _show_menu_squad()
+		"chests": _show_menu_chests()
+		"shop": _show_menu_shop()
+		"profile": _show_menu_profile()
+		"settings": _show_menu_settings()
+		"med": _show_menu_med()
+		"deck": _show_menu_deck()
+		"bp": _show_menu_bp()
+		_:
+			return
+	_ui.menu_box.set_meta("refresh_screen", screen)
+	if not keep:
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
+		_ui.menu_scroll.scroll_vertical = outer_y
+	var scrolls: Array = _ui.menu_box.find_children("*", "ScrollContainer", true, false)
+	for i in mini(inner_y.size(), scrolls.size()):
+		scrolls[i].scroll_vertical = int(inner_y[i])
+
+
 func _show_menu_squad() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("squad", "Отряд — создание бойцов", "squad"))
@@ -10542,7 +11431,8 @@ func _show_menu_squad() -> void:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 4)
 	vb.add_child(tabs)
-	var slot_w := floorf((_vw() * 0.92 - 30.0) / 4.0) if _mob() else 96.0
+	vb.add_child(_battle_slots_row())
+	var slot_w := floorf((_menu_w() - 12.0) / 4.0) if _mob() else 96.0
 	for i in 4:
 		var b := Button.new()
 		if i < _profile.unlocked_slots:
@@ -10566,7 +11456,7 @@ func _show_menu_squad() -> void:
 		var fi: int = i
 		b.pressed.connect(func():
 			_squad_edit = fi
-			_show_menu_squad()
+			_refresh_menu_screen("squad")
 		)
 		tabs.add_child(b)
 	if _squad_edit >= _profile.unlocked_slots:
@@ -10587,7 +11477,7 @@ func _show_menu_squad() -> void:
 	var nrow := HBoxContainer.new()
 	vb.add_child(nrow)
 	var nl := Label.new()
-	nl.text = "Ник:"
+	nl.text = "Имя бойца:"
 	if not _mob():
 		nl.add_theme_font_size_override("font_size", 12)
 	nrow.add_child(nl)
@@ -10595,6 +11485,9 @@ func _show_menu_squad() -> void:
 	ne.text = _profile.names[_squad_edit]
 	ne.custom_minimum_size = Vector2(200, 0)
 	ne.max_length = 16
+	ne.tooltip_text = "Это имя видно в бою и списке отряда."
+	if _squad_edit == 0:
+		ne.add_theme_color_override("font_color", _nick_color_value())
 	ne.text_changed.connect(func(txt: String):
 		var clean := txt.strip_edges()
 		if clean != "":
@@ -10615,7 +11508,7 @@ func _show_menu_squad() -> void:
 		wrow = HBoxContainer.new()
 	vb.add_child(wrow)
 	var wl := Label.new()
-	wl.text = "Оружие:"
+	wl.text = "Пистолет:"
 	if not _mob():
 		wl.add_theme_font_size_override("font_size", 12)
 	wrow.add_child(wl)
@@ -10625,13 +11518,13 @@ func _show_menu_squad() -> void:
 		wb.text = _sel(str(wd.get("name", SIDEARMS[wi])), int(_profile.sidearm[_squad_edit]) == wi)
 		if not _mob():
 			wb.add_theme_font_size_override("font_size", 12)
-		wb.tooltip_text = "Урон %d · %d ОД · обойма %d · дальность %d" % [
+		wb.tooltip_text = "Стартовое оружие. Нож есть всегда, остальное можно найти в бою.\nУрон %d · выстрел %d оч. действия · обойма %d · дальность %d" % [
 			int(wd.get("damage", 0)), int(wd.get("ap_cost", 0)), int(wd.get("ammo", 0)), int(wd.get("range", 0))]
 		var wv: int = wi
 		wb.pressed.connect(func():
 			_profile.sidearm[_squad_edit] = wv
 			_save_profile()
-			_show_menu_squad()
+			_refresh_menu_screen("squad")
 		)
 		wrow.add_child(wb)
 	# --- класс бойца: перк — стиль игры, класс задаёт модель ---
@@ -10646,7 +11539,7 @@ func _show_menu_squad() -> void:
 		crow3 = HBoxContainer.new()
 	vb.add_child(crow3)
 	var cl3 := Label.new()
-	cl3.text = "Класс:"
+	cl3.text = "Роль в бою:"
 	if not _mob():
 		cl3.add_theme_font_size_override("font_size", 12)
 	crow3.add_child(cl3)
@@ -10655,14 +11548,20 @@ func _show_menu_squad() -> void:
 		cb.text = _sel(FIGHTER_CLASSES[ci]["name"], int(_profile.cls[_squad_edit]) == ci)
 		if not _mob():
 			cb.add_theme_font_size_override("font_size", 12)
-		cb.tooltip_text = str(FIGHTER_CLASSES[ci]["desc"])
+		cb.tooltip_text = "Особый навык роли:\n" + str(FIGHTER_CLASSES[ci]["desc"]).replace("+1 ОД", "+1 очко действия")
 		var cv: int = ci
 		cb.pressed.connect(func():
 			_profile.cls[_squad_edit] = cv
 			_save_profile()
-			_show_menu_squad()
+			_refresh_menu_screen("squad")
 		)
 		crow3.add_child(cb)
+	var class_hint := Label.new()
+	class_hint.text = str(FIGHTER_CLASSES[int(_profile.cls[_squad_edit])]["desc"]).replace("+1 ОД", "+1 очко действия")
+	class_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	class_hint.add_theme_font_size_override("font_size", 11 if not _mob() else 12)
+	class_hint.add_theme_color_override("font_color", Color(0.58, 0.68, 0.78))
+	vb.add_child(class_hint)
 	# --- герой слота: цикл «— базовый боец —» → доступные герои → снова базовый ---
 	# герой в бою задаёт модель, оружие, класс и статы (дефолт + моды) вместо базового бойца
 	var sh_arr: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
@@ -10677,7 +11576,7 @@ func _show_menu_squad() -> void:
 	var hrow := HBoxContainer.new()
 	vb.add_child(hrow)
 	var hl := Label.new()
-	hl.text = "Герой:"
+	hl.text = "Особый герой:"
 	if not _mob():
 		hl.add_theme_font_size_override("font_size", 12)
 	hrow.add_child(hl)
@@ -10690,8 +11589,13 @@ func _show_menu_squad() -> void:
 		var md := int(hmods.get(mk, 0))
 		if md != 0:
 			mod_parts.append("%s %+d" % [STAT_NAMES[mk], md])
-	hb.text = _sel("— базовый боец — ▾" if hid0 < 0 else str(HEROES[hid0]["name"]) + " ▾", hid0 >= 0)
-	# селектор, а не надпись: рамка-чип; выбранный герой — акцентная подсветка (аудит, ч.3)
+	hb.text = _sel("Без героя · свой боец" if hid0 < 0 else str(HEROES[hid0]["name"]), hid0 >= 0)
+	hb.icon = _icon_tex("chevron")
+	hb.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hb.add_theme_constant_override("icon_max_width", 16)
+	hb.custom_minimum_size = Vector2(220, 34)
+	hb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	# SVG вместо символа ▾: последний отсутствует в Manrope и превращался в «тофу».
 	var hbs := StyleBoxFlat.new()
 	if hid0 >= 0:
 		hbs.bg_color = Color(0.12, 0.30, 0.44)
@@ -10704,7 +11608,7 @@ func _show_menu_squad() -> void:
 	hb.add_theme_stylebox_override("normal", hbs)
 	hb.add_theme_stylebox_override("hover", hbs)
 	hb.add_theme_stylebox_override("pressed", hbs)
-	hb.tooltip_text = ("В бою выходит базовый боец слота (класс, оружие и статы из этого экрана)." if hid0 < 0
+	hb.tooltip_text = ("Свой боец без особого навыка.\nКласс, оружие и характеристики настраиваются на этом экране.\nНажатие переключает доступных героев; новые открываются в разделе «Герои»." if hid0 < 0
 		else "%s\n%s\nМоды: %s\nВ бою заменяет класс, оружие и статы слота." % [
 			HEROES[hid0]["perk"], FIGHTER_CLASSES[int(HEROES[hid0]["cls"])]["desc"],
 			(", ".join(mod_parts) if mod_parts.size() > 0 else "нет")])
@@ -10719,7 +11623,7 @@ func _show_menu_squad() -> void:
 		sh2[_squad_edit] = nxt
 		_profile.squad_heroes = sh2
 		_save_profile()
-		_show_menu_squad()
+		_refresh_menu_screen("squad")
 	)
 	hrow.add_child(hb)
 	var hfr: Dictionary = _profile.get("hero_frags", {})
@@ -10730,6 +11634,13 @@ func _show_menu_squad() -> void:
 		hfl.add_theme_font_size_override("font_size", 12)
 		hfl.add_theme_color_override("font_color", Color(0.65, 0.7, 0.8))
 		hrow.add_child(hfl)
+	var hero_hint := Label.new()
+	hero_hint.text = ("Свой боец: без особого навыка. Класс, оружие и характеристики настраиваются выше." if hid0 < 0
+		else "Особый герой: в бою заменяет класс, оружие и характеристики этого слота; действует его навык.")
+	hero_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hero_hint.add_theme_font_size_override("font_size", 11 if not _mob() else 12)
+	hero_hint.add_theme_color_override("font_color", Color(0.58, 0.68, 0.78))
+	vb.add_child(hero_hint)
 	# --- пол и внешность (только для основного бойца, слот 0) ---
 	if _squad_edit == 0:
 		var grow2 := HBoxContainer.new()
@@ -10748,7 +11659,7 @@ func _show_menu_squad() -> void:
 			gb.pressed.connect(func():
 				_profile.gender = gv
 				_save_profile()
-				_show_menu_squad()
+				_refresh_menu_screen("squad")
 			)
 			grow2.add_child(gb)
 		var srow := HBoxContainer.new()
@@ -10780,14 +11691,14 @@ func _show_menu_squad() -> void:
 			sb.pressed.connect(func():
 				_profile.skin = sv
 				_save_profile()
-				_show_menu_squad()
+				_refresh_menu_screen("squad")
 			)
 			srow.add_child(sb)
 		# камуфляж отряда — свотчи цветов; не купленные показываем с замком
 		var orow: Container
 		if _mob():
 			# сетка 3 колонки, подпись над ней — надёжнее FlowContainer
-			vb.add_child(_mk_label("Камуфляж:", 14))
+			vb.add_child(_mk_label("Окраска костюма:", 14))
 			var og := GridContainer.new()
 			og.columns = 3
 			og.add_theme_constant_override("h_separation", 4)
@@ -10798,7 +11709,7 @@ func _show_menu_squad() -> void:
 			var ow2 := VBoxContainer.new()
 			ow2.add_theme_constant_override("separation", 2)
 			var ol := Label.new()
-			ol.text = "Камуфляж:"
+			ol.text = "Окраска костюма:"
 			ol.add_theme_font_size_override("font_size", 12)
 			ow2.add_child(ol)
 			var oh := FlowContainer.new()
@@ -10812,18 +11723,19 @@ func _show_menu_squad() -> void:
 		var owned_of: Array = _profile.get("owned_outfits", [1, 0, 0, 0, 0])
 		for oi in OUTFIT_SKINS.size():
 			var ob := Button.new()
-			ob.custom_minimum_size = Vector2(0, 26)   # OTRYAD_V1: 30->26
 			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
+			# Открытый камуфляж всегда вмещает название; закрытый остаётся компактным.
+			ob.custom_minimum_size = Vector2(100 if owned_ofi else 42, 34)
 			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "?"
-			ob.modulate = Color(1, 1, 1) if owned_ofi else Color(0.4, 0.4, 0.45)
 			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
-			ob.add_theme_font_size_override("font_size", 11)   # OTRYAD_V1: 12->11
+			ob.add_theme_font_size_override("font_size", 12)
+			ob.add_theme_color_override("font_color", Color("#dceaf5"))
+			ob.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 			var os: StyleBoxFlat = StyleBoxFlat.new()
-			os.bg_color = Color("#141824") if owned_ofi else Color(0.10, 0.11, 0.14, 0.9)
+			os.bg_color = Color("#141f2d") if owned_ofi else Color(0.055, 0.075, 0.105, 0.9)
 			if not owned_ofi:
-				# закрытый камуфляж — тусклая подложка, не кликабелен
 				ob.add_theme_color_override("font_color", Color(0.45, 0.5, 0.58))
-			os.set_corner_radius_all(15)
+			os.set_corner_radius_all(8)
 			if int(_profile.get("outfit", 0)) == oi:
 				os.bg_color = Color("#28d8ff22")
 				os.border_color = Color("#28d8ff")
@@ -10840,13 +11752,13 @@ func _show_menu_squad() -> void:
 				ob.pressed.connect(func():
 					_profile.outfit = ov
 					_save_profile()
-					_show_menu_squad()
+					_refresh_menu_screen("squad")
 				)
 			orow.add_child(ob)
 		# СКИНЫ БОЙЦОВ: 3 базовых + 3 из Battle Pass (закрыты до запуска сезона)
 		var skin_row: Control
 		if _mob():
-			vb.add_child(_mk_label("Скин:", 14))
+			vb.add_child(_mk_label("Облик бойца:", 14))
 			var sg := GridContainer.new()
 			sg.columns = 3
 			sg.add_theme_constant_override("h_separation", 4)
@@ -10857,7 +11769,7 @@ func _show_menu_squad() -> void:
 			var sw2 := VBoxContainer.new()
 			sw2.add_theme_constant_override("separation", 2)
 			var skin_lbl := Label.new()
-			skin_lbl.text = "Скин:"
+			skin_lbl.text = "Облик бойца:"
 			skin_lbl.add_theme_font_size_override("font_size", 12)
 			sw2.add_child(skin_lbl)
 			var sh := FlowContainer.new()
@@ -10902,7 +11814,7 @@ func _show_menu_squad() -> void:
 				skb.pressed.connect(func():
 					_profile.fighter_skin = skv
 					_save_profile()
-					_show_menu_squad()
+					_refresh_menu_screen("squad")
 				)
 			skin_row.add_child(skb)
 		# цвет ника (монетизация) — 9 цветных квадратов (переносятся на узких экранах)
@@ -10911,7 +11823,7 @@ func _show_menu_squad() -> void:
 		crow.add_theme_constant_override("v_separation", 4)
 		vb.add_child(crow)
 		var cl := Label.new()
-		cl.text = "Цвет ника:"
+		cl.text = "Цвет имени:"
 		crow.add_child(cl)
 		for ci in NICK_COLOR_NAMES.size():
 			var cb := Button.new()
@@ -10934,7 +11846,7 @@ func _show_menu_squad() -> void:
 				if cv == 0 or _shop_owned("nick_color", cv):
 					_profile.nick_color = cv
 					_save_profile()
-					_show_menu_squad()
+					_refresh_menu_screen("squad")
 			)
 			crow.add_child(cb)
 		# рамка аватара (монетизация) — 9 пресетов сеткой; на десктопе компактнее (6 колонок, 2 ряда)
@@ -10958,7 +11870,7 @@ func _show_menu_squad() -> void:
 		if fpp1 != "" and _png_icon(fpp1) != null:
 			favw.add_child(_frame_overlay(int(_profile.frame)))   # Рамки v2
 		frh.add_child(favw)
-		frh.add_child(_mk_label("Рамка: · аватар — в «Личные настройки»" if not _mob() else "Рамка:", 12))
+		frh.add_child(_mk_label("Рамка аватара · аватар — в «Личных настройках»" if not _mob() else "Рамка аватара:", 12))
 		# OTRYAD_V1 p.3: рамки — FlowContainer (перенос при нехватке ширины)
 		var fgrid := FlowContainer.new()
 		fgrid.add_theme_constant_override("h_separation", 4)
@@ -10979,7 +11891,7 @@ func _show_menu_squad() -> void:
 				if fv == 0 or _shop_owned("frame", fv):
 					_profile.frame = fv
 					_save_profile()
-					_show_menu_squad()
+					_refresh_menu_screen("squad")
 			)
 			fgrid.add_child(fb)
 		if _mob():
@@ -10991,7 +11903,7 @@ func _show_menu_squad() -> void:
 	# десктоп: две колонки — внешность слева, статы/таланты справа; мобильный: всё в одну колонку как раньше
 	var vs: Container = vb
 	if not _mob():
-		vb.custom_minimum_size = Vector2(minf(1000.0, _vw() * 0.94), 0)
+		vb.custom_minimum_size = Vector2(minf(1000.0, _menu_content_w(0.94)), 0)
 		var sep: int = clampi(int(vb.get_theme_constant("separation")) - 4, 4, 10)
 		var body := HBoxContainer.new()
 		body.add_theme_constant_override("separation", 24)
@@ -11044,7 +11956,7 @@ func _show_menu_squad() -> void:
 	stps.bg_color = Color(0.02, 0.03, 0.06, 0.82)
 	stps.border_color = Color(0.16, 0.85, 1.0, 0.2)
 	stps.set_border_width_all(1)
-	stps.set_corner_radius_all(10)
+	stps.set_corner_radius_all(4)
 	stps.content_margin_left = 10.0    # OTRYAD_V1: 14/12 -> 10/8
 	stps.content_margin_right = 10.0
 	stps.content_margin_top = 8.0
@@ -11057,7 +11969,7 @@ func _show_menu_squad() -> void:
 	var st: Dictionary = _profile.stats[_squad_edit]
 	var left := _stat_points_left(st, _profile.lvl[_squad_edit])
 	var pl := Label.new()
-	pl.text = "Уровень %d (опыт %d/%d) · Свободно очков: %d" % [_profile.lvl[_squad_edit], _profile.xp[_squad_edit], _xp_need(_profile.lvl[_squad_edit]), left]
+	pl.text = "Уровень %d · опыт %d/%d · очков характеристик: %d" % [_profile.lvl[_squad_edit], _profile.xp[_squad_edit], _xp_need(_profile.lvl[_squad_edit]), left]
 	pl.add_theme_font_size_override("font_size", 17 if _mob() else 14)   # OTRYAD_V1: -1 px
 	var plf := _font_mono()
 	if plf != null:
@@ -11077,28 +11989,28 @@ func _show_menu_squad() -> void:
 		row.add_child(lb)
 		var minus := Button.new()
 		minus.text = "−"
-		# вердикт владельца: вложенные очки не снимаются (иначе бесплатный ресpec кнопкой «−»);
-		# полный сброс статов — только «Переподготовка» за 600 монет ниже
+		# Вложенные очки не снимаются по одному; полный сброс — отдельной кнопкой ниже.
 		minus.disabled = true
-		minus.tooltip_text = "Очко вложено навсегда. Сброс всех статов — «Переподготовка» ниже (600 монет)"
+		minus.tooltip_text = "Вложенные очки нельзя снять по одному. Полный сброс — кнопкой «Сбросить характеристики» ниже."
 		if not _mob():
 			minus.add_theme_font_size_override("font_size", 13)
 		var kk: String = k
 		minus.pressed.connect(func():
 			_profile.stats[_squad_edit][kk] -= 1
 			_save_profile()
-			_show_menu_squad()
+			_refresh_menu_screen("squad")
 		)
 		row.add_child(minus)
 		var plus := Button.new()
 		plus.text = "+"
 		plus.disabled = left <= 0
+		plus.tooltip_text = "Добавить 1 очко характеристики" if left > 0 else "Свободных очков нет. Новые очки даются с уровнями бойца."
 		if not _mob():
 			plus.add_theme_font_size_override("font_size", 13)
 		plus.pressed.connect(func():
 			_profile.stats[_squad_edit][kk] += 1
 			_save_profile()
-			_show_menu_squad()
+			_refresh_menu_screen("squad")
 		)
 		row.add_child(plus)
 		var hint := Label.new()
@@ -11110,7 +12022,7 @@ func _show_menu_squad() -> void:
 	for k2 in STAT_KEYS:
 		invested += int(st.get(k2, 0))
 	if invested > 0:
-		var rstat := _menu_button("Переподготовка (сброс статов) — %d монет" % RETRAIN_STATS_COST, true)
+		var rstat := _menu_button("Сбросить характеристики — %d монет" % RETRAIN_STATS_COST, true)
 		rstat.add_theme_font_size_override("font_size", 15)   # OTRYAD_V1: -1 px
 		rstat.icon = _icon_tex("coin")
 		rstat.add_theme_constant_override("icon_max_width", 16)
@@ -11118,18 +12030,18 @@ func _show_menu_squad() -> void:
 		rstat.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
 		rstat.add_theme_color_override("icon_pressed_color", Color(0.12, 0.08, 0.02))
 		rstat.disabled = int(_profile.get("coins", 0)) < RETRAIN_STATS_COST
-		rstat.tooltip_text = "Вернёт %d вложенных очков для перераспределения" % invested
+		rstat.tooltip_text = "Вернёт все %d вложенных очков, чтобы распределить их заново" % invested
 		rstat.pressed.connect(func():
 			if int(_profile.get("coins", 0)) >= RETRAIN_STATS_COST:
 				_profile.coins = int(_profile.coins) - RETRAIN_STATS_COST
 				for k4 in STAT_KEYS:
 					_profile.stats[_squad_edit][k4] = 0
 				_save_profile()
-				_show_menu_squad()
+				_refresh_menu_screen("squad")
 		)
 		vs.add_child(rstat)
 	var tl2 := Label.new()
-	tl2.text = "Таланты — очков: %d (+1 каждые 3 уровня)" % int(_profile.tpts[_squad_edit])
+	tl2.text = "Очки талантов: %d · +1 каждые 3 уровня" % int(_profile.tpts[_squad_edit])
 	tl2.add_theme_font_size_override("font_size", 14)   # OTRYAD_V1: -1 px
 	tl2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.45))
 	vs.add_child(tl2)
@@ -11158,11 +12070,19 @@ func _show_menu_squad() -> void:
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
-		# кнопка покупки ранга — стиль «Перелив v2» (docs/BUTTONS_V2.md, чек-лист «Таланты»)
+		# Компактная кнопка ранга: одинаковые 68×34 для «+1» и «МАКС».
 		var tb := _menu_button("")
-		tb.custom_minimum_size = Vector2(64, 36)
-		tb.add_theme_font_size_override("font_size", 13)
+		tb.custom_minimum_size = Vector2(68, 34)
+		tb.add_theme_font_size_override("font_size", 12)
 		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		for tstate in ["normal", "hover", "pressed", "disabled", "focus"]:
+			var tsb := _menu_button_state(false, "hover" if tstate == "focus" else tstate)
+			tsb.content_margin_left = 8.0
+			tsb.content_margin_right = 8.0
+			tsb.content_margin_top = 4.0
+			tsb.content_margin_bottom = 4.0
+			tb.add_theme_stylebox_override(tstate, tsb)
+		tb.add_theme_color_override("font_disabled_color", Color("#8093a5"))
 		var cost := cur + 1
 		if cur >= int(tal["max"]):
 			tb.text = "МАКС"
@@ -11179,7 +12099,7 @@ func _show_menu_squad() -> void:
 					_profile.tpts[_squad_edit] = int(_profile.tpts[_squad_edit]) - price
 					_profile.talents[_squad_edit][tid2] = c2 + 1
 					_save_profile()
-					_show_menu_squad()
+					_refresh_menu_screen("squad")
 			)
 		trow.add_child(tb)
 		var dind := HBoxContainer.new()
@@ -11215,7 +12135,7 @@ func _show_menu_squad() -> void:
 				_profile.tpts[_squad_edit] = int(_profile.tpts[_squad_edit]) + spent
 				_profile.talents[_squad_edit] = {}
 				_save_profile()
-				_show_menu_squad()
+				_refresh_menu_screen("squad")
 		)
 		vs.add_child(rst)
 	var sum := Label.new()
@@ -11426,8 +12346,11 @@ func _show_menu_med() -> void:
 	_med_tick()
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(560.0, _vw() * 0.92), 0)
+	vb.custom_minimum_size = Vector2(minf(560.0, _menu_content_w(0.92)), 0)
 	vb.add_child(_screen_title("shield", "Медцентр", "med"))
 	_maybe_auto_tip("med")
 	var info := Label.new()
@@ -11447,6 +12370,7 @@ func _show_menu_med() -> void:
 		var nm := Label.new()
 		nm.text = _profile.names[i]
 		nm.custom_minimum_size = Vector2(90, 0)
+		_style_nick_label(nm, i)
 		row.add_child(nm)
 		# полоска HP — градиент; раненые (<60%) — оранжевый сигнал
 		var hb := ProgressBar.new()
@@ -11511,7 +12435,7 @@ func _show_menu_med() -> void:
 					ha[hi] = -1
 					_profile.hp = ha
 					_save_profile()
-					_show_menu_med()
+					_refresh_menu_screen("med")
 			)
 			row.add_child(bheal)
 			var bheal_s := Button.new()
@@ -11528,7 +12452,7 @@ func _show_menu_med() -> void:
 					ha2[hi] = -1
 					_profile.hp = ha2
 					_save_profile()
-					_show_menu_med()
+					_refresh_menu_screen("med")
 			)
 			row.add_child(bheal_s)
 	# --- запасные бойцы: ручная ротация ---
@@ -11567,7 +12491,7 @@ func _show_menu_med() -> void:
 			var sidx: int = si
 			sb.pressed.connect(func():
 				_reserve_swap(ridx, sidx)
-				_show_menu_med()
+				_refresh_menu_screen("med")
 			)
 			rrow.add_child(sb)
 	# наём: максимум ОДНА активная аренда (решение Антона) — взял бойца, жди конца срока.
@@ -11593,7 +12517,7 @@ func _show_menu_med() -> void:
 				for mmsg2 in _mq_event("hire", 1):
 					_log("Миссия: " + mmsg2)
 				_save_profile()
-				_show_menu_med()
+				_refresh_menu_screen("med")
 		)
 		vb.add_child(bhire)
 	else:
@@ -11651,8 +12575,11 @@ func _show_menu_progress() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.95), 0)
+	vb.custom_minimum_size = Vector2(minf(760.0, _menu_content_w(0.95)), 0)
 	vb.add_child(_screen_title("trophy", "Прогрессия", "progress"))
 	_maybe_auto_tip("progress")
 	# текущее состояние главного бойца (самого прокачанного)
@@ -11698,6 +12625,7 @@ func _show_menu_progress() -> void:
 	xp_lbl.text = "Опыт %d/%d (убийство +50/+30/+18, попадание +XP за урон — по режиму)" % [int(_profile.xp[bi]), _xp_need(lvl)]
 	xp_lbl.add_theme_font_size_override("font_size", 12)
 	xp_lbl.add_theme_color_override("font_color", Color("#9aa7bd"))
+	xp_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(xp_lbl)
 	# лестница: по каждому тиру — веха входа и ряды уровней с наградами
 	var scroll := ScrollContainer.new()
@@ -11735,9 +12663,9 @@ func _show_menu_progress() -> void:
 			rw.custom_minimum_size = Vector2(0, 0)
 			rw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			list.add_child(rw)
-		# уровни тира — чипами с фоном: на десктопе 6 в строке, на мобиле 3
+		# Телефон: два полных чипа в строке вместо трёх обрезанных.
 		var rows := GridContainer.new()
-		rows.columns = 3 if _mob() else 6
+		rows.columns = 2 if _mob() else 6
 		rows.add_theme_constant_override("h_separation", 6)
 		rows.add_theme_constant_override("v_separation", 6)
 		list.add_child(rows)
@@ -11900,8 +12828,11 @@ func _show_menu_bp() -> void:
 	_bp_season_sync()
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(620.0, _vw() * 0.95), 0)
+	vb.custom_minimum_size = Vector2(minf(620.0, _menu_content_w(0.95)), 0)
 	vb.add_child(_screen_title("ticket", "Battle Pass — сезон 1" if _mob() else "Battle Pass — сезон 1 «Первый сброс»", "bp"))
 	# ЗАГЛУШКА: сезон запустим, когда наберём игроков. Покупка пропуска закрыта до старта.
 	if not BP_SEASON_LIVE:
@@ -12017,7 +12948,7 @@ func _show_menu_bp() -> void:
 				rb.pressed.connect(func():
 					_bp_claim(lv2, pr2)
 					_sfx_play("levelup")
-					_show_menu_bp()
+					_refresh_menu_screen("bp")
 				)
 			cv.add_child(rb)
 	var note := Label.new()
@@ -12295,7 +13226,7 @@ func _set_pivot_next_frame(card: Control) -> void:
 # оверлей открытия сундука: карточка выпавшего предмета — появление с масштаба, рамка и свечение цветом редкости
 func _chest_open_overlay() -> void:
 	if not _ui.has("menu_layer") or not is_instance_valid(_ui.menu_layer):
-		_show_menu_chests()
+		_refresh_menu_screen("chests")
 		return
 	var rarity: int = clampi(_chest_last_rarity, 0, 5)
 	var rcol: Color = RARITY_COLORS[rarity]
@@ -12324,7 +13255,18 @@ func _chest_open_overlay() -> void:
 	card.add_child(cv)
 	var chiprow := HBoxContainer.new()
 	chiprow.alignment = BoxContainer.ALIGNMENT_CENTER
-	chiprow.add_child(_icon_chip("chest", 44))
+	var reward_art := TextureRect.new()
+	var reward_path := "res://assets/ui/chests/chest_supply_512.png"
+	if rarity >= 4:
+		reward_path = "res://assets/ui/chests/chest_mythic_512.png"
+	elif rarity >= 2:
+		reward_path = "res://assets/ui/chests/chest_epic_512.png"
+	reward_art.texture = load(reward_path)
+	reward_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	reward_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	reward_art.custom_minimum_size = Vector2(190, 150)
+	reward_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chiprow.add_child(reward_art)
 	cv.add_child(chiprow)
 	var tl := Label.new()
 	tl.text = "СУНДУК ОТКРЫТ"
@@ -12353,7 +13295,7 @@ func _chest_open_overlay() -> void:
 	take.custom_minimum_size = Vector2(180, 48)
 	take.pressed.connect(func():
 		ov.queue_free()
-		_show_menu_chests()
+		_refresh_menu_screen("chests")
 	)
 	var brow := HBoxContainer.new()
 	brow.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -12384,8 +13326,11 @@ func _show_menu_chests() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(880.0, _vw() * 0.96), 0)
+	vb.custom_minimum_size = Vector2(minf(880.0, _menu_content_w(0.96)), 0)
 	var trow := _screen_title("chest", "Сундуки удачи", "chests")
 	for tch in trow.get_children():
 		if tch is Label:
@@ -12398,43 +13343,78 @@ func _show_menu_chests() -> void:
 	bal.add_child(_currency_chip("shard", SHARD_COLOR, str(int(_profile.get("shards", 0)))))
 	bal.add_child(_currency_chip("chest", Color(0.88, 0.9, 0.93), "открыто: %d" % int(_profile.get("chests_total", 0))))
 	vb.add_child(bal)
-	# Блок 11: две колонки — слева «Сундуки удачи», справа «Рамки и цвета»
-	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 0)
+	# Десктоп: сундуки | рамки. Телефон: последовательные секции на всю ширину,
+	# открытие сундука остаётся первым, коллекция доступна обычным вертикальным скроллом.
+	var cols: BoxContainer = VBoxContainer.new() if _mob() else HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 14 if _mob() else 0)
 	cols.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(cols)
 	var colL := VBoxContainer.new()
 	colL.add_theme_constant_override("separation", 6)
 	colL.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(colL)
+	# Витрина награды: один товар, три визуальных состояния по редкости последнего дропа.
+	var chest_accent := Color("#55d9e8")
+	var chest_art_path := "res://assets/ui/chests/chest_supply_512.png"
+	if _chest_last != "" and _chest_last_rarity >= 4:
+		chest_accent = RARITY_COLORS[4]
+		chest_art_path = "res://assets/ui/chests/chest_mythic_512.png"
+	elif _chest_last != "" and _chest_last_rarity >= 2:
+		chest_accent = RARITY_COLORS[2]
+		chest_art_path = "res://assets/ui/chests/chest_epic_512.png"
+	var showcase := PanelContainer.new()
+	showcase.add_theme_stylebox_override("panel", _inv_card_style(chest_accent, Color(0.025, 0.045, 0.075, 0.96)))
+	showcase.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	colL.add_child(showcase)
+	var showbox := VBoxContainer.new()
+	showbox.add_theme_constant_override("separation", 2)
+	showcase.add_child(showbox)
+	var chest_art := TextureRect.new()
+	chest_art.texture = load(chest_art_path)
+	chest_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	chest_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	chest_art.custom_minimum_size = Vector2(0, 210 if _mob() else 240)
+	chest_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	showbox.add_child(chest_art)
+	var chest_caption := _mk_label("СУНДУК УДАЧИ", 16)
+	chest_caption.add_theme_color_override("font_color", chest_accent)
+	chest_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	showbox.add_child(chest_caption)
+	var chest_contents := _mk_label("Герои · рамки · цвета ника · монеты и осколки", 11)
+	chest_contents.add_theme_color_override("font_color", Color("#b7c9dc"))
+	chest_contents.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	showbox.add_child(chest_contents)
 	var div := ColorRect.new()
 	div.custom_minimum_size = Vector2(1, 0)
 	div.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	div.color = Color("#28d8ff22")
+	div.visible = not _mob()
 	cols.add_child(div)
 	var colR := VBoxContainer.new()
 	colR.add_theme_constant_override("separation", 6)
 	colR.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(colR)
+	if _mob():
+		cols.move_child(colL, 0)
 	colR.add_child(_inv_section("РАМКИ", Color(1.0, 0.82, 0.35)))
 	var fgrid := GridContainer.new()
 	fgrid.columns = 3 if _mob() else 5
 	fgrid.add_theme_constant_override("h_separation", 10)
 	fgrid.add_theme_constant_override("v_separation", 10)
 	colR.add_child(fgrid)
-	for fi in 12:
+	for fi in FRAME_NAMES.size():
 		var fcell := VBoxContainer.new()
 		fcell.add_theme_constant_override("separation", 2)
 		fgrid.add_child(fcell)
 		var fpv := PanelContainer.new()
-		fpv.custom_minimum_size = Vector2(56, 56)
+		fpv.custom_minimum_size = Vector2(64, 64) if _mob() else Vector2(72, 72)
 		fpv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var fps := StyleBoxFlat.new()
-		fps.bg_color = Color(0.07, 0.09, 0.13)
+		fps.bg_color = Color("#101a28")
 		var fpp: String = _frame_png(fi)
 		if fpp == "" or _png_icon(fpp) == null:
-			fps.border_color = FRAME_ACCENTS_POOL[fi]   # Рамки v2 fallback: полоска акцента
-			fps.set_border_width_all(3)
+			fps.border_color = FRAME_ACCENTS_POOL[fi % FRAME_ACCENTS_POOL.size()]
+			fps.set_border_width_all(2)
 		fps.set_corner_radius_all(8)
 		fpv.add_theme_stylebox_override("panel", fps)
 		fcell.add_child(fpv)
@@ -12452,6 +13432,8 @@ func _show_menu_chests() -> void:
 		fnl.text = FRAME_NAMES[fi]
 		fnl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		fnl.add_theme_font_size_override("font_size", 12)
+		fnl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		fnl.custom_minimum_size.x = 72.0 if _mob() else 82.0
 		var fnf := _font_head()
 		if fnf != null:
 			fnl.add_theme_font_override("font", fnf)
@@ -12465,7 +13447,7 @@ func _show_menu_chests() -> void:
 		if fsi >= 0:
 			if _shop_owned("frame", fi):
 				var ownl := Label.new()
-				ownl.text = "Куплено"
+				ownl.text = "Получено"
 				ownl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 				ownl.add_theme_font_size_override("font_size", 11)
 				ownl.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
@@ -12475,12 +13457,12 @@ func _show_menu_chests() -> void:
 				var fbuy := _menu_button("%d" % int(SHOP_ITEMS[fsi]["price"]), true)
 				fbuy.icon = _icon_tex("coin")
 				fbuy.add_theme_constant_override("icon_max_width", 14)
-				fbuy.custom_minimum_size = Vector2(0, 26)
+				fbuy.custom_minimum_size = Vector2(0, 40) if _mob() else Vector2(0, 26)
 				fbuy.add_theme_font_size_override("font_size", 12)
 				var fsi2: int = fsi
 				fbuy.pressed.connect(func():
 					_shop_buy(fsi2)
-					_show_menu_chests()
+					_refresh_menu_screen("chests")
 				)
 				fcell.add_child(fbuy)
 		elif fi == 0:
@@ -12490,15 +13472,16 @@ func _show_menu_chests() -> void:
 			basel.add_theme_font_size_override("font_size", 11)
 			basel.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 			fcell.add_child(basel)
+			_shop_equip_cell("frame", fi, fcell)
 		elif _shop_owned("frame", fi):
 			var ownl3 := Label.new()
-			ownl3.text = "Куплено"
+			ownl3.text = "Получено"
 			ownl3.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			ownl3.add_theme_font_size_override("font_size", 11)
 			ownl3.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
 			fcell.add_child(ownl3)
 			_shop_equip_cell("frame", fi, fcell)
-		elif fi <= 8:
+		elif fi < 9 or fi >= 12:
 			var chutl := Label.new()
 			chutl.text = "В сундуках"
 			chutl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -12522,17 +13505,17 @@ func _show_menu_chests() -> void:
 	cgrid.add_theme_constant_override("h_separation", 10)
 	cgrid.add_theme_constant_override("v_separation", 10)
 	colR.add_child(cgrid)
-	for ci in 9:
+	for ci in NICK_COLOR_NAMES.size():
 		var ccell := VBoxContainer.new()
 		ccell.add_theme_constant_override("separation", 2)
 		cgrid.add_child(ccell)
 		var cpv := PanelContainer.new()
-		cpv.custom_minimum_size = Vector2(56, 56)
+		cpv.custom_minimum_size = Vector2(64, 64) if _mob() else Vector2(72, 72)
 		cpv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var cps := StyleBoxFlat.new()
-		cps.bg_color = Color(0.07, 0.09, 0.13)
+		cps.bg_color = Color("#101a28")
 		cps.border_color = NICK_COLORS[ci]
-		cps.set_border_width_all(3)
+		cps.set_border_width_all(2)
 		cps.set_corner_radius_all(8)
 		cpv.add_theme_stylebox_override("panel", cps)
 		ccell.add_child(cpv)
@@ -12548,6 +13531,8 @@ func _show_menu_chests() -> void:
 		cnl.text = NICK_COLOR_NAMES[ci]
 		cnl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cnl.add_theme_font_size_override("font_size", 12)
+		cnl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cnl.custom_minimum_size.x = 72.0 if _mob() else 82.0
 		var cnf := _font_head()
 		if cnf != null:
 			cnl.add_theme_font_override("font", cnf)
@@ -12561,7 +13546,7 @@ func _show_menu_chests() -> void:
 		if csi >= 0:
 			if _shop_owned("nick_color", ci):
 				var ownl2 := Label.new()
-				ownl2.text = "Куплено"
+				ownl2.text = "Получено"
 				ownl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 				ownl2.add_theme_font_size_override("font_size", 11)
 				ownl2.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
@@ -12571,12 +13556,12 @@ func _show_menu_chests() -> void:
 				var cbuy := _menu_button("%d" % int(SHOP_ITEMS[csi]["price"]), true)
 				cbuy.icon = _icon_tex("coin")
 				cbuy.add_theme_constant_override("icon_max_width", 14)
-				cbuy.custom_minimum_size = Vector2(0, 26)
+				cbuy.custom_minimum_size = Vector2(0, 40) if _mob() else Vector2(0, 26)
 				cbuy.add_theme_font_size_override("font_size", 12)
 				var csi2: int = csi
 				cbuy.pressed.connect(func():
 					_shop_buy(csi2)
-					_show_menu_chests()
+					_refresh_menu_screen("chests")
 				)
 				ccell.add_child(cbuy)
 		elif ci == 0:
@@ -12586,9 +13571,10 @@ func _show_menu_chests() -> void:
 			basel2.add_theme_font_size_override("font_size", 11)
 			basel2.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 			ccell.add_child(basel2)
+			_shop_equip_cell("nick_color", ci, ccell)
 		elif _shop_owned("nick_color", ci):
 			var ownl4 := Label.new()
-			ownl4.text = "Куплено"
+			ownl4.text = "Получено"
 			ownl4.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			ownl4.add_theme_font_size_override("font_size", 11)
 			ownl4.add_theme_color_override("font_color", Color(0.45, 0.9, 0.55))
@@ -12612,6 +13598,9 @@ func _show_menu_chests() -> void:
 	var gbox := VBoxContainer.new()
 	gbox.add_theme_constant_override("separation", 5)
 	gwrap.add_child(gbox)
+	var guarantee_title := _mk_label("ГАРАНТ НАГРАДЫ · ОСТАЛОСЬ ОТКРЫТИЙ", 10)
+	guarantee_title.add_theme_color_override("font_color", Color("#a9bed3"))
+	gbox.add_child(guarantee_title)
 	var gn := ["Эпик", "Легенда", "Мифик", "Сиреневый"]
 	var gn_max := [10, 30, 80, 200]
 	var gn_vals := [int(pity[0]), int(pity[1]), int(pity[2]), pity_siren]
@@ -12620,8 +13609,10 @@ func _show_menu_chests() -> void:
 		var grow3 := HBoxContainer.new()
 		grow3.add_theme_constant_override("separation", 8)
 		gbox.add_child(grow3)
-		var gl2 := _mk_label("%s через %d" % [gn[gi], maxi(1, int(gn_max[gi]) - gn_vals[gi])], 12)
+		var remaining := maxi(1, int(gn_max[gi]) - gn_vals[gi])
+		var gl2 := _mk_label("%s · %d" % [gn[gi], remaining], 12)
 		gl2.custom_minimum_size = Vector2(130, 0)
+		gl2.tooltip_text = "Это счёт открытий, не время. %s или выше гарантирован не позднее чем через %d откр.; может выпасть раньше." % [gn[gi], remaining]
 		gl2.add_theme_color_override("font_color", gn_col[gi])
 		grow3.add_child(gl2)
 		var pb := ProgressBar.new()
@@ -12652,7 +13643,7 @@ func _show_menu_chests() -> void:
 		rl.add_theme_font_size_override("font_size", 15)
 		rl.add_theme_color_override("font_color", Color(0.9, 0.93, 0.97))
 		lv.add_child(rl)
-	var ob := _menu_button("Открыть сундук — %d" % CHEST_PRICE)
+	var ob := _menu_button(("Открыть — %d" if _mob() else "Открыть сундук — %d") % CHEST_PRICE)
 	ob.icon = _icon_tex("coin")
 	ob.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
 	ob.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
@@ -12678,6 +13669,8 @@ func _show_menu_chests() -> void:
 	leg.text = "Шансы: обычный 55% · редкий 25% · эпик 13% · лега 5% · мифик 1.9% · алмазный 0.1%"
 	leg.add_theme_font_size_override("font_size", 12)
 	leg.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	if _mob():
+		leg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	colL.add_child(leg)
 	# обмен осколков: недельная ротация — 2 позиции каждой редкости (кроме сиреневой)
 	var wleft := int(604800 - (int(Time.get_unix_time_from_system()) % 604800))
@@ -12686,6 +13679,8 @@ func _show_menu_chests() -> void:
 	rot.text = "Ротация каждый понедельник · новые позиции через %d дн. %d ч." % [wleft / 86400, (wleft % 86400) / 3600]
 	rot.add_theme_font_size_override("font_size", 12)
 	rot.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	if _mob():
+		rot.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	colL.add_child(rot)
 	for r in 5:
 		for e in _week_exchange(r):
@@ -12703,11 +13698,14 @@ func _show_menu_chests() -> void:
 			nl.text = _cosm_name(k2, i2)
 			nl.add_theme_font_size_override("font_size", 14)
 			nl.add_theme_color_override("font_color", rcol2)
-			nl.custom_minimum_size = Vector2(230, 0)
+			nl.custom_minimum_size = Vector2(0 if _mob() else 230, 0)
+			nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			if _mob():
+				nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			row.add_child(nl)
 			var eb := Button.new()
-			eb.custom_minimum_size = Vector2(140, 34)
+			eb.custom_minimum_size = Vector2(76 if _mob() else 140, 40 if _mob() else 34)
 			eb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			if _cosm_owned(k2, i2):
 				eb.text = "Есть"
@@ -12723,7 +13721,7 @@ func _show_menu_chests() -> void:
 				var p2: int = RARITY_EXCHANGE[r]
 				eb.pressed.connect(func():
 					_chest_exchange(k2, i2, p2)
-					_show_menu_chests()
+					_refresh_menu_screen("chests")
 				)
 			row.add_child(eb)
 
@@ -12732,8 +13730,11 @@ func _show_menu_heroes() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(760.0, _vw() * 0.94), 0)
+	vb.custom_minimum_size = Vector2(minf(760.0, _menu_content_w(0.94)), 0)
 	vb.add_child(_screen_title("swords", "Герои — наём и сборка", "heroes"))
 	_maybe_auto_tip("heroes")
 	var bal := HBoxContainer.new()
@@ -12761,7 +13762,7 @@ func _show_menu_heroes() -> void:
 		cs.bg_color = Color(0.09, 0.10, 0.13, 0.92)
 		cs.border_color = RARITY_COLORS[rarity]
 		cs.set_border_width_all(1)
-		cs.set_corner_radius_all(10)
+		cs.set_corner_radius_all(4)
 		cs.content_margin_left = 8
 		cs.content_margin_right = 8
 		cs.content_margin_top = 6
@@ -12937,6 +13938,9 @@ func _show_menu_shop() -> void:
 	_an_event("shop_view", {})
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("shop", "Магазин", "shop"))
@@ -12950,41 +13954,52 @@ func _show_menu_shop() -> void:
 	bal_note.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
 	bal2.add_child(bal_note)
 	vb.add_child(bal2)
+	vb.add_child(_section_title("КОСМЕТИКА И ПЕРСОНАЛИЗАЦИЯ"))
 	for si in SHOP_ITEMS.size():
 		var it: Dictionary = SHOP_ITEMS[si]
 		var kind := str(it["kind"])
 		var idx := int(it["idx"])
 		var price := int(it["price"])
-		# карточка товара: превью слева, название, цена и кнопка справа
+		# Крупное живое превью: покупатель видит арт и результат до оплаты.
 		var card := PanelContainer.new()
 		card.add_theme_stylebox_override("panel", _card_style())
 		vb.add_child(card)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
 		card.add_child(row)
-		# превью: цвет ника — квадрат цвета; рамка — панель с акцентной каймой
 		var FRAME_ACCENTS := [Color("#8a93a6"), Color(0.2, 0.9, 1.0), Color("#d4af37"), Color(0.35, 0.5, 0.25), Color(0.85, 0.7, 0.4), Color(0.2, 1.0, 0.5), Color(1.0, 0.45, 0.1), Color(0.9, 0.9, 0.95), Color(1.0, 0.5, 1.0)]
 		var pv := PanelContainer.new()
-		pv.custom_minimum_size = Vector2(34, 34) if _mob() else Vector2(40, 40)
+		pv.custom_minimum_size = Vector2(72, 72) if _mob() else Vector2(84, 84)
 		var pvs := StyleBoxFlat.new()
+		pvs.bg_color = Color("#101a28")
 		if kind == "nick_color" and idx < NICK_COLORS.size():
-			pvs.bg_color = NICK_COLORS[idx]
+			pvs.border_color = NICK_COLORS[idx]
+			pvs.set_border_width_all(2)
 		elif kind == "outfit" and idx < OUTFIT_SKINS.size() and OUTFIT_SKINS[idx].get("col") != null:
 			pvs.bg_color = OUTFIT_SKINS[idx]["col"]
 		else:
-			pvs.bg_color = Color(0.1, 0.12, 0.16)
 			var fpp: String = _frame_png(idx) if kind == "frame" else ""
 			if fpp == "" or _png_icon(fpp) == null:
 				pvs.border_color = FRAME_ACCENTS[idx] if idx < FRAME_ACCENTS.size() else Color.WHITE
 				pvs.set_border_width_all(3)
-		pvs.set_corner_radius_all(8)
+		pvs.set_corner_radius_all(4)
 		pv.add_theme_stylebox_override("panel", pvs)
 		pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(pv)
+		if kind in ["frame", "nick_color"]:
+			var sample := Label.new()
+			sample.text = str(_profile.names[0]).substr(0, 1)
+			sample.set_anchors_preset(Control.PRESET_FULL_RECT)
+			sample.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			sample.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			sample.add_theme_font_size_override("font_size", 28)
+			sample.add_theme_color_override("font_color", NICK_COLORS[idx] if kind == "nick_color" else Color("#edf4fb"))
+			sample.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pv.add_child(sample)
 		if kind == "frame":
 			var fpp2: String = _frame_png(idx)
 			if fpp2 != "" and _png_icon(fpp2) != null:
-				pv.add_child(_frame_overlay(idx))   # Рамки v3: арт-рамка в витрине
+				pv.add_child(_frame_overlay(idx))
 		var nl := Label.new()
 		nl.text = str(it["name"])
 		# на мобиле шрифт меньше, чтобы самое длинное имя влезало без переноса
@@ -13001,15 +14016,16 @@ func _show_menu_shop() -> void:
 		b.custom_minimum_size = Vector2(104, 40) if _mob() else Vector2(140, 40)
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if _shop_equipped(kind, idx):
-			b.text = "Выбрано"
+			b.text = "Надето"
 			b.disabled = true
 		elif _shop_owned(kind, idx):
-			b.text = "Выбрать"
+			b.text = "Получено"
+			b.tooltip_text = "Нажми, чтобы надеть"
 			var k1 := kind
 			var i1 := idx
 			b.pressed.connect(func():
 				_shop_equip(k1, i1)
-				_show_menu_shop()
+				_refresh_menu_screen("shop")
 			)
 		else:
 			# на мобиле длинное «Купить · N» не влезает — только цена с иконкой монеты
@@ -13023,21 +14039,18 @@ func _show_menu_shop() -> void:
 			b.add_theme_color_override("icon_normal_color", COIN_COLOR)
 			b.add_theme_color_override("icon_hover_color", COIN_COLOR)
 			b.add_theme_color_override("icon_pressed_color", COIN_COLOR)
-			b.add_theme_color_override("icon_disabled_color", Color(0.5, 0.45, 0.35))
+			b.add_theme_color_override("icon_disabled_color", Color(0.78, 0.69, 0.43))
 			b.add_theme_color_override("font_color", Color.WHITE)
+			# Оставляем кнопку доступной: нажатие объясняет, сколько монет не хватает.
 			if int(_profile.get("coins", 0)) < price:
-				b.disabled = true
+				b.tooltip_text = "Не хватает %d монет" % (price - int(_profile.get("coins", 0)))
 			var s1: int = si
 			b.pressed.connect(func():
 				_shop_buy(s1)
-				_show_menu_shop()
+				_refresh_menu_screen("shop")
 			)
 		row.add_child(b)
-	var packs_title := Label.new()
-	packs_title.text = "Паки монет"
-	packs_title.add_theme_font_size_override("font_size", 17)
-	packs_title.add_theme_color_override("font_color", Color(0.95, 0.9, 0.7))
-	vb.add_child(packs_title)
+	vb.add_child(_section_title("ПАКИ МОНЕТ"))
 	for pi in COIN_PACKS.size():
 		var pk: Dictionary = COIN_PACKS[pi]
 		var card2 := PanelContainer.new()
@@ -13073,7 +14086,7 @@ func _show_menu_shop() -> void:
 		pbs.bg_color = Color(0.16, 0.5, 0.24, 0.95)
 		pbs.border_color = Color(0.4, 0.9, 0.5, 0.9)
 		pbs.set_border_width_all(1)
-		pbs.set_corner_radius_all(12)
+		pbs.set_corner_radius_all(4)
 		pb.add_theme_stylebox_override("normal", pbs)
 		pb.add_theme_color_override("font_color", Color.WHITE)
 		var pi2: int = pi
@@ -13088,6 +14101,9 @@ func _show_menu_profile() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
+		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
+		# в конце кадра, но до этого они не должны влиять на позиции новых.
+		vb.remove_child(c)
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("profile", "Личные настройки"))
@@ -13110,11 +14126,24 @@ func _show_menu_profile() -> void:
 	if fpp0 != "" and _png_icon(fpp0) != null:
 		avw.add_child(_frame_overlay(int(_profile.frame)))   # Рамки v2: рамка профиля поверх аватара
 	arow.add_child(avw)
+	var identity := VBoxContainer.new()
+	identity.add_theme_constant_override("separation", 8)
+	identity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	arow.add_child(identity)
+	var profile_name := Label.new()
+	profile_name.text = str(_profile.names[0])
+	profile_name.add_theme_font_size_override("font_size", 20)
+	var profile_name_font := _font_head()
+	if profile_name_font != null:
+		profile_name.add_theme_font_override("font", profile_name_font)
+	_style_nick_label(profile_name)
+	identity.add_child(profile_name)
 	var ab := Button.new()
-	ab.text = "Загрузить фото (аватар)"
-	ab.custom_minimum_size = Vector2(230, 44)
+	ab.text = "Загрузить фото" if _mob() else "Загрузить фото (аватар)"
+	ab.custom_minimum_size = Vector2(0, 44)
 	ab.pressed.connect(_pick_avatar)
-	arow.add_child(ab)
+	identity.add_child(ab)
 	# в онлайне аватар подтянется из ЛК ВК / MAX автоматически
 	var an := Label.new()
 	an.text = "В онлайн-версии фото подтянется из профиля ВК / MAX"
@@ -13147,7 +14176,7 @@ func _show_menu_profile() -> void:
 			_profile.avatar_preset = pv2
 			_profile.avatar = ""   # пресет заменяет своё фото
 			_save_profile()
-			_show_menu_profile()
+			_refresh_menu_screen("profile")
 		)
 		agrid.add_child(pb)
 	# город
@@ -13187,7 +14216,7 @@ func _pick_avatar() -> void:
 			img.save_png(dst)
 			_profile.avatar = dst
 			_save_profile()
-			_show_menu_profile()
+			_refresh_menu_screen("profile")
 	)
 
 func _close_menu() -> void:
@@ -13203,14 +14232,13 @@ func _close_menu() -> void:
 # ---------------- КАРТОЧКА БОЙЦА (портрет + HP/AP) ----------------
 # ============================================================
 func _avatar_texture() -> Texture2D:
-	# аватар из user://avatar.png/jpg, если игрок загрузил его в личных настройках
+	# Пользовательское фото или выбранный пресет: один аватар в профиле и бою.
 	var path: String = _profile.get("avatar", "")
-	if path == "" or not FileAccess.file_exists(path):
-		return null
-	var img := Image.new()
-	if img.load(path) != OK:
-		return null
-	return ImageTexture.create_from_image(img)
+	if path != "" and FileAccess.file_exists(path):
+		var img := Image.new()
+		if img.load(path) == OK:
+			return ImageTexture.create_from_image(img)
+	return _preset_avatar(int(_profile.get("avatar_preset", 1)) - 1)
 
 func _refresh_card() -> void:
 	if _selected < 0 or not _ui.has("card"):
@@ -13218,6 +14246,16 @@ func _refresh_card() -> void:
 	var f = _fighters[_selected]
 	_ui.card.visible = true
 	_ui.card_name.text = f.name
+	# Платная персонализация принадлежит основному бойцу, а не всем союзникам и врагам.
+	var is_main := _selected == 0 and int(f.team) == 0
+	if is_main:
+		_style_nick_label(_ui.card_name)
+	elif int(f.team) == 0:
+		_ui.card_name.add_theme_color_override("font_color", Color.WHITE)
+	else:
+		_ui.card_name.add_theme_color_override("font_color", Color(1.0, 0.55, 0.62))
+	if _ui.has("card_frame"):
+		_ui.card_frame.visible = is_main and int(_profile.get("frame", 0)) > 0
 	_ui.card_hp.max_value = f.max_hp
 	_ui.card_hp.value = f.hp
 	var hr: float = float(f.hp) / maxf(1.0, float(f.max_hp))
@@ -13231,8 +14269,8 @@ func _refresh_card() -> void:
 	_ui.card_ap_l.text = "ОД %d/%d" % [f.ap, f.max_ap]
 	if int(f.get("guard", 0)) > 0:
 		_ui.card_ap_l.text += "  +%d брони" % int(f.guard)
-	# аватар игрока вместо 3D-портрета (только для своего отряда)
-	var ava_tex: Texture2D = _avatar_texture() if f.team == 0 else null
+	# Пользовательский аватар — только у основного бойца; остальные используют 3D-портрет.
+	var ava_tex: Texture2D = _avatar_texture() if is_main else null
 	if ava_tex != null:
 		_ui.card_avatar.texture = ava_tex
 		_ui.card_avatar.visible = true
@@ -13314,16 +14352,18 @@ func _inv_item_border(kind: String) -> Color:
 	return {"weapon": Color(1.0, 0.38, 0.38, 0.9), "armor": Color(0.38, 0.72, 1.0, 0.9), "consumable": Color(0.45, 0.95, 0.55, 0.9)}.get(kind, Color(0.6, 0.65, 0.7, 0.8))
 
 # карточка предмета/слота: тёмная, со скруглением и цветной обводкой по типу
-func _inv_card_style(col: Color, bg := Color(0.045, 0.075, 0.12, 0.96)) -> StyleBoxFlat:
+func _inv_card_style(col: Color, bg := Color(0.055, 0.09, 0.14, 0.97)) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg
 	sb.border_color = col
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(10)
-	sb.content_margin_left = 8.0
-	sb.content_margin_right = 8.0
-	sb.content_margin_top = 6.0
-	sb.content_margin_bottom = 6.0
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 12.0
+	sb.content_margin_right = 12.0
+	sb.content_margin_top = 10.0
+	sb.content_margin_bottom = 10.0
+	sb.shadow_color = Color(0, 0, 0, 0.20)
+	sb.shadow_size = 4
 	return sb
 
 # «призрак» пустого слота: тусклая пунктирная рамка
@@ -13332,7 +14372,7 @@ func _inv_ghost_style() -> StyleBoxFlat:
 	sb.bg_color = Color(0.03, 0.05, 0.08, 0.35)
 	sb.border_color = Color(0.45, 0.55, 0.65, 0.28)
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(10)
+	sb.set_corner_radius_all(4)
 	sb.content_margin_left = 8.0
 	sb.content_margin_right = 8.0
 	sb.content_margin_top = 6.0
