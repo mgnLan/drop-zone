@@ -198,6 +198,21 @@ func _load_mode() -> void:
 	_size_n = _grid_n * CELL
 	# PvP-дуэль: файл боя лежит рядом с mode.cfg (записан перед перезагрузкой сцены)
 	_pvp_fight = _pvp_load_fight()
+	# LIVE: файл не удаляем при загрузке — он нужен для reconnect после F5.
+	_live_fight = _live_load_fight()
+	if _livetest_param("livetest_token") != "" and bool(JavaScriptBridge.eval("window.dzLiveStage === undefined")):
+		# Только при полной загрузке страницы: при внутреннем reload сцены файл
+		# уже принадлежит этому бою. Два клиента могут делить origin — на F5
+		# сторона восстанавливается по token с сервера, а не из общего IndexedDB.
+		_live_fight = {}
+		_live_clear_fight()
+	if _live_active():
+		_live_side = int(_live_fight.get("side", 0))
+		_live_turn_side = int(_live_fight.get("turn_side", 0))
+		# После F5 мир построен с нулевого seed: проигрываем всю историю с seq=1,
+		# иначе действия до сохранённого seq безвозвратно пропадают при reconnect.
+		_live_seq = 0
+		_rng.seed = int(_live_fight.get("seed", 1)) % 2147483647
 
 func _save_mode(m: int) -> void:
 	var cfg := ConfigFile.new()
@@ -208,6 +223,7 @@ func _save_mode(m: int) -> void:
 # Сервер: api/pvp_push.php (валидация), pvp_match.php (пул/претенденты),
 # pvp_result.php (ELO K=32 + анти-накрутка), pvp_top.php (топ-100 + история).
 const API_PVP_BASE := "https://podvezu.online/dropzone/api/"
+const API_PVP_TEST_BASE := "https://podvezu.online/dropzone_test/api/"
 var _pvp_fight: Dictionary = {}      # активный PvP-бой (загружен из user://pvp_fight.json)
 var _pvp_calling := false            # анти-двойной клик: один сетевой цикл «пуш→матч»
 var _pvp_delta_lbl: Label = null     # метка дельты рейтинга на экране итогов боя
@@ -226,8 +242,54 @@ func _pvp_armor_grade(lvl: int) -> int:
 	return clampi(1 + int(lvl / 6), 1, _armor_grade_cap(lvl))
 
 # универсальный вызов PvP-эндпоинтов: свой HTTPRequest на запрос, не трогает очередь аккаунта
+func _pvp_base_url() -> String:
+	# Web на /dropzone_test/ не должен молча ходить в продовый API.
+	if OS.has_feature("web"):
+		var path = JavaScriptBridge.eval("window.location.pathname")
+		if path != null and str(path).contains("/dropzone_test/"):
+			return API_PVP_TEST_BASE
+	return API_PVP_BASE
+
+var _pvp_web_request_id := 0
+var _pvp_web_callbacks: Dictionary = {}
+
+func _pvp_web_call(ep: String, payload: String, cb: Callable, testing: bool) -> void:
+	# HTTPRequest в WebAssembly периодически теряет запросы при F5/фоновых вкладках.
+	# Браузерный fetch использует тот же JSON-протокол, но надёжнее переживает reconnect.
+	_pvp_web_request_id += 1
+	var rid := _pvp_web_request_id
+	var key := "__dz_pvp_done_" + str(rid)
+	var js_cb = JavaScriptBridge.create_callback(func(args: Array) -> void:
+		_pvp_web_callbacks.erase(rid)
+		if testing:
+			JavaScriptBridge.eval("window.dzLiveStage='queue-web-done'")
+		if args.is_empty():
+			cb.call({"ok": false, "error": "net empty callback"})
+			return
+		var js := JSON.new()
+		if js.parse(str(args[0])) != OK or not (js.data is Dictionary):
+			cb.call({"ok": false, "error": "bad json"})
+			return
+		cb.call(js.data))
+	_pvp_web_callbacks[rid] = js_cb
+	JavaScriptBridge.get_interface("window").set(key, js_cb)
+	var url_json := JSON.stringify(_pvp_base_url() + ep)
+	var body_json := JSON.stringify(payload)
+	var code := "(function(){const key='" + key + "';let timer=0;const finish=(d)=>{const f=window[key];if(!f)return;delete window[key];clearTimeout(timer);f(JSON.stringify(d));};const ctrl=new AbortController();timer=setTimeout(()=>ctrl.abort(),20000);fetch(" + url_json + ",{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:" + body_json + ",signal:ctrl.signal}).then(async r=>{const t=await r.text();let d;try{d=JSON.parse(t)}catch(e){finish({ok:false,error:'bad json'});return;}if(!r.ok){finish({ok:false,error:'net 0/'+r.status});return;}finish(d);}).catch(e=>finish({ok:false,error:'net fetch'}));})()"
+	if testing:
+		JavaScriptBridge.eval("window.dzLiveStage='queue-web-fetch'")
+	JavaScriptBridge.eval(code, true)
+
 func _pvp_call(ep: String, data: Dictionary, cb: Callable) -> void:
+	var testing := ep == "live_queue.php" and _livetest_param("livetest_token") != ""
+	if testing:
+		JavaScriptBridge.eval("window.dzLiveStage='queue-json'")
+	var payload := JSON.stringify(data)
+	if OS.has_feature("web"):
+		_pvp_web_call(ep, payload, cb, testing)
+		return
 	var req := HTTPRequest.new()
+	req.timeout = 12.0
 	add_child(req)
 	req.request_completed.connect(func(res: int, code: int, _h: PackedStringArray, body: PackedByteArray) -> void:
 		req.queue_free()
@@ -239,10 +301,104 @@ func _pvp_call(ep: String, data: Dictionary, cb: Callable) -> void:
 			cb.call({"ok": false, "error": "bad json"})
 			return
 		cb.call(js.data), CONNECT_ONE_SHOT)
-	var err := req.request(API_PVP_BASE + ep, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(data))
+	var err := req.request(_pvp_base_url() + ep, ["Content-Type: application/json"], HTTPClient.METHOD_POST, payload)
 	if err != OK:
 		req.queue_free()
 		cb.call({"ok": false, "error": "net error %d" % err})
+
+# ---------------- ОБЩИЙ ОНЛАЙН: presence, один чат, активные игроки ----------------
+var _social_poll_t := 0.0
+var _social_poll_busy := false
+var _social_send_busy := false
+var _social_request_id := 0
+var _social_applied_id := 0
+var _social_send_id := 0
+var _social_online := 0
+var _social_players: Array = []
+var _social_messages: Array = []
+var _social_notice := ""
+
+func _social_name() -> String:
+	if _vk_name.strip_edges() != "":
+		return _vk_name.strip_edges().left(32)
+	var names: Array = _profile.get("names", ["Боец"])
+	return str(names[0] if not names.is_empty() else "Боец").strip_edges().left(32)
+
+func _social_poll() -> void:
+	if _social_poll_busy or _auth_token == "":
+		return
+	_social_poll_busy = true
+	_social_request_id += 1
+	var rid := _social_request_id
+	_pvp_call("live_social.php", {"token": _auth_token, "name": _social_name(),
+		"playing": _live_active() or not _menu_open}, func(d: Dictionary) -> void:
+		_social_poll_busy = false
+		if bool(d.get("ok", false)):
+			_social_apply(d, rid))
+
+func _social_send(text: String, inp: LineEdit) -> void:
+	var t := text.strip_edges()
+	if t == "" or _social_send_busy:
+		return
+	if _auth_token == "":
+		_social_notice = "Войдите через ВК, чтобы писать в общий чат."
+		_render_menu_chat()
+		_render_chat()
+		return
+	if t.length() > 300:
+		_social_notice = "Сообщение слишком длинное: максимум 300 символов."
+		_render_menu_chat()
+		_render_chat()
+		return
+	_social_send_busy = true
+	_social_request_id += 1
+	_social_send_id += 1
+	var rid := _social_request_id
+	var sid := _social_send_id
+	_pvp_call("live_social.php", {"token": _auth_token, "name": _social_name(),
+		"playing": _live_active() or not _menu_open, "text": t}, func(d: Dictionary) -> void:
+		_social_send_busy = false
+		if not bool(d.get("ok", false)):
+			_social_notice = str(d.get("error", "Сообщение не отправлено"))
+			if sid == _social_send_id and is_instance_valid(inp) and inp.text.strip_edges() == "":
+				inp.text = t
+		else:
+			_social_notice = ""
+			if sid == _social_send_id and is_instance_valid(inp):
+				inp.clear()
+			_social_apply(d, rid)
+		_render_menu_chat()
+		_render_chat())
+
+func _social_apply(d: Dictionary, rid: int) -> void:
+	if rid < _social_applied_id:
+		return
+	_social_applied_id = rid
+	_social_online = int(d.get("online", 0))
+	_social_players = d.get("players", [])
+	_social_messages = d.get("messages", [])
+	if _ui.has("menu_online_lbl") and is_instance_valid(_ui.menu_online_lbl):
+		_ui.menu_online_lbl.text = "● %d онлайн" % _social_online
+		_ui.menu_online_lbl.add_theme_color_override("font_color", Color("#73e68c"))
+	if _ui.has("menu_online_chip") and is_instance_valid(_ui.menu_online_chip):
+		_ui.menu_online_chip.tooltip_text = _social_players_text(true)
+	_render_menu_chat()
+	if _chat_tab == 1:
+		_render_chat()
+
+func _social_players_text(detailed := false) -> String:
+	if _social_players.is_empty():
+		return "Активных игроков пока нет"
+	var parts: Array[String] = []
+	var limit := _social_players.size() if detailed else mini(6, _social_players.size())
+	for i in limit:
+		var p: Dictionary = _social_players[i]
+		var status := "в бою" if int(p.get("playing", 0)) == 1 else "в меню"
+		parts.append("%s%s · %d · %s" % ["● ", str(p.get("name", "Боец")), int(p.get("rating", 1000)), status] if detailed else str(p.get("name", "Боец")))
+	var text := ("\n".join(parts) if detailed else ", ".join(parts))
+	if not detailed and _social_players.size() > limit:
+		text += " и ещё %d" % (_social_players.size() - limit)
+	return text
 
 # снапшот отряда игрока для сервера: реальные статы/уровни/таланты/класс/оружие
 func _pvp_build_snapshot() -> Dictionary:
@@ -271,6 +427,384 @@ func _pvp_build_snapshot() -> Dictionary:
 			"stats": st, "talents": (tal as Dictionary).duplicate(),
 			"weapon": wpn, "armor_grade": _pvp_armor_grade(lvl)})
 	return {"name": str(_profile.names[0]).left(32), "squad_lvl": _max_squad_lvl(), "fighters": fighters}
+
+# ---------------- LIVE PvP 1×1: lockstep поверх общей пошаговой симуляции ----------------
+# Сервер упорядочивает действия; оба клиента применяют один и тот же поток по seq.
+var _live_fight: Dictionary = {}
+var _live_side := 0
+var _live_seq := 0
+var _live_turn_side := 0
+var _live_poll_t := 0.0
+var _live_poll_busy := false
+var _live_action_busy := false
+var _live_applying := false
+var _live_queue_waiting := false
+var _live_queue_busy := false
+var _live_queue_t := 0.0
+var _live_queue_status: Label = null
+var _live_queue_btn: Button = null
+var _live_cancel_btn: Button = null
+var _live_finish_sent := false
+var _live_leaving := false
+var _live_reward_granted := false
+var _live_server_offset := 0.0
+
+func _live_active() -> bool:
+	return not _live_fight.is_empty() and str(_live_fight.get("fight_id", "")) != ""
+
+func _live_my_turn() -> bool:
+	return _live_active() and str(_live_fight.get("status", "active")) == "active" and _live_turn_side == _live_side
+
+func _live_save_fight() -> void:
+	if not _live_active():
+		return
+	var f := FileAccess.open("user://live_fight.json", FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(_live_fight))
+
+func _live_load_fight() -> Dictionary:
+	if not FileAccess.file_exists("user://live_fight.json"):
+		return {}
+	var f := FileAccess.open("user://live_fight.json", FileAccess.READ)
+	if not f:
+		return {}
+	var txt := f.get_as_text()
+	f.close()
+	var js := JSON.new()
+	if js.parse(txt) != OK or not (js.data is Dictionary):
+		return {}
+	var d: Dictionary = js.data
+	if str(d.get("fight_id", "")) == "" or str(d.get("status", "active")) != "active":
+		return {}
+	return d
+
+func _live_clear_fight() -> void:
+	if FileAccess.file_exists("user://live_fight.json"):
+		DirAccess.remove_absolute("user://live_fight.json")
+
+func _live_build_snapshot() -> Dictionary:
+	# Живая дуэль строго 1×1; первый выбранный в «Отряде» боец идёт на арену.
+	var full := _pvp_build_snapshot()
+	var lineup := _battle_lineup(1)
+	if lineup.is_empty():
+		lineup = [0]
+	var pick: int = lineup[0]
+	var all: Array = full.get("fighters", [])
+	var one: Array = []
+	if pick < all.size():
+		one.append(all[pick])
+	full["fighters"] = one
+	full["live_slot"] = pick
+	return full
+
+func _live_go(btn: Button, status: Label, cancel: Button) -> void:
+	if _livetest_param("livetest_token") != "":
+		JavaScriptBridge.eval("window.dzLiveStage='live-go'")
+	if _live_queue_busy or _auth_token == "":
+		if _livetest_param("livetest_token") != "":
+			JavaScriptBridge.eval("window.dzLiveStage='live-go-early'")
+		return
+	_live_queue_busy = true
+	_live_queue_waiting = true
+	_live_queue_status = status
+	_live_queue_btn = btn
+	_live_cancel_btn = cancel
+	btn.disabled = true
+	cancel.disabled = false
+	cancel.visible = true
+	status.text = "Ищу живого соперника… Ботов в этой очереди нет."
+	_live_queue_t = 0.0
+	_live_queue_call()
+
+func _live_queue_call() -> void:
+	if not _live_queue_waiting or _auth_token == "":
+		return
+	var testing := _livetest_param("livetest_token") != ""
+	if testing:
+		JavaScriptBridge.eval("window.dzLiveStage='queue-snapshot'")
+	var snapshot := _live_build_snapshot()
+	if testing:
+		JavaScriptBridge.eval("window.dzLiveStage='queue-request'")
+	_pvp_call("live_queue.php", {"token": _auth_token, "snapshot": snapshot},
+		func(d: Dictionary) -> void:
+			_live_queue_busy = false
+			if testing:
+				JavaScriptBridge.eval("window.dzLiveResult=" + JSON.stringify(d))
+			if not _live_queue_waiting:
+				return
+			if not bool(d.get("ok", false)):
+				var queue_error := str(d.get("error", "Ошибка поиска"))
+				if queue_error.begins_with("net "):
+					# F5/слабая сеть: transient-сбой не должен выбрасывать из reconnect.
+					_live_queue_t = 2.0
+					if is_instance_valid(_live_queue_status):
+						_live_queue_status.text = "Связь прервана, повторяю подключение…"
+					return
+				_live_queue_waiting = false
+				if is_instance_valid(_live_queue_status):
+					_live_queue_status.text = queue_error
+				if is_instance_valid(_live_queue_btn):
+					_live_queue_btn.disabled = false
+				if is_instance_valid(_live_cancel_btn):
+					_live_cancel_btn.visible = false
+				return
+			if bool(d.get("matched", false)):
+				_live_queue_waiting = false
+				_live_fight = d.get("fight", {})
+				_live_side = int(_live_fight.get("side", 0))
+				_live_turn_side = int(_live_fight.get("turn_side", 0))
+				_live_seq = int(_live_fight.get("seq", 0))
+				_live_save_fight()
+				_save_mode(1)
+				var cfg := ConfigFile.new()
+				cfg.set_value("game", "autostart", 1)
+				cfg.save("user://autostart.cfg")
+				get_tree().reload_current_scene()
+			elif is_instance_valid(_live_queue_status):
+				_live_queue_status.text = "Ожидание игрока… рейтинг %d. Оставь эту страницу открытую." % int(d.get("rating", 1000))
+	)
+
+func _live_cancel_queue() -> void:
+	_live_queue_waiting = false
+	if is_instance_valid(_live_queue_btn):
+		_live_queue_btn.disabled = false
+	if is_instance_valid(_live_cancel_btn):
+		_live_cancel_btn.visible = false
+	if is_instance_valid(_live_queue_status):
+		_live_queue_status.text = "Поиск отменён."
+	if _auth_token != "":
+		_pvp_call("live_queue.php", {"token": _auth_token, "cancel": true}, func(_d: Dictionary) -> void: pass)
+
+func _live_poll() -> void:
+	if _live_poll_busy or _live_leaving or not _live_active() or _auth_token == "":
+		return
+	if str(_live_fight.get("status", "active")) != "active":
+		return
+	_live_poll_busy = true
+	_pvp_call("live_state.php", {"token": _auth_token, "fight_id": str(_live_fight.fight_id), "since": _live_seq},
+		func(d: Dictionary) -> void:
+			_live_poll_busy = false
+			if not bool(d.get("ok", false)):
+				return
+			_live_accept_state(d)
+	)
+
+func _live_accept_state(d: Dictionary) -> void:
+	var server_fight: Dictionary = d.get("fight", {})
+	var incoming_seq := int(server_fight.get("seq", _live_seq))
+	var actions: Array = d.get("actions", [])
+	actions.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("seq", 0)) < int(b.get("seq", 0)))
+	for a in actions:
+		_live_apply_action(a)
+	if incoming_seq >= _live_seq and not server_fight.is_empty():
+		_live_fight = server_fight
+		_live_side = int(server_fight.get("side", _live_side))
+		_live_turn_side = int(server_fight.get("turn_side", _live_turn_side))
+		_live_seq = maxi(_live_seq, incoming_seq)
+		_turn = int(server_fight.get("turn_no", _turn))
+		_live_server_offset = float(server_fight.get("server_now", 0)) - Time.get_unix_time_from_system()
+		if str(server_fight.get("status", "active")) == "active":
+			_live_save_fight()
+	if str(_live_fight.get("status", "active")) == "done" and not _game_over:
+		_live_complete(int(_live_fight.get("winner", -1)))
+	_refresh_turn_lbl()
+
+func _live_submit(kind: String, payload: Dictionary) -> void:
+	if _live_action_busy or not _live_active() or _live_leaving:
+		return
+	if kind not in ["finish", "forfeit"] and not _live_my_turn():
+		_log("Сейчас ход соперника")
+		return
+	_live_action_busy = true
+	_busy = true
+	var uid := "%d_%d_%d" % [Time.get_ticks_usec(), _live_seq, _live_side]
+	_pvp_call("live_action.php", {"token": _auth_token, "fight_id": str(_live_fight.fight_id),
+		"kind": kind, "payload": payload, "action_uid": uid},
+		func(d: Dictionary) -> void:
+			_live_action_busy = false
+			_busy = false
+			if not bool(d.get("ok", false)):
+				_log(str(d.get("error", "Действие не принято")))
+				var ef: Dictionary = d.get("fight", {})
+				if not ef.is_empty():
+					_live_fight = ef
+					_live_turn_side = int(ef.get("turn_side", _live_turn_side))
+				_refresh_turn_lbl()
+				return
+			var seq := int(d.get("seq", _live_seq))
+			if seq > _live_seq:
+				_live_apply_action({"seq": seq, "kind": kind, "payload": payload})
+			var sf: Dictionary = d.get("fight", {})
+			if not sf.is_empty() and int(sf.get("seq", 0)) >= _live_seq:
+				_live_fight = sf
+				_live_turn_side = int(sf.get("turn_side", _live_turn_side))
+				_turn = int(sf.get("turn_no", _turn))
+				if str(sf.get("status", "active")) == "active":
+					_live_save_fight()
+			if str(_live_fight.get("status", "active")) == "done" and not _game_over:
+				_live_complete(int(_live_fight.get("winner", -1)))
+			_after_action()
+	)
+
+func _live_apply_action(a: Dictionary) -> void:
+	var seq := int(a.get("seq", 0))
+	if seq <= _live_seq:
+		return
+	var kind := str(a.get("kind", ""))
+	var p: Dictionary = a.get("payload", {})
+	_live_applying = true
+	match kind:
+		"move":
+			var fi := int(p.get("fighter", -1))
+			if fi >= 0 and fi < _fighters.size():
+				var path: Array = []
+				for c in p.get("path", []):
+					if c is Array and c.size() >= 2:
+						path.append(Vector2i(int(c[0]), int(c[1])))
+				_fighters[fi].ap = maxi(0, int(_fighters[fi].ap) - int(p.get("cost", 0)))
+				_move_fighter(fi, Vector2i(int(p.get("x", 0)), int(p.get("y", 0))), path)
+		"shoot":
+			_shoot(int(p.get("att", -1)), int(p.get("def", -1)))
+		"reload", "swap":
+			var ri := int(p.get("fighter", -1))
+			if ri >= 0 and ri < _fighters.size():
+				var old_sel := _selected
+				_selected = ri
+				if kind == "reload":
+					_reload_selected()
+				else:
+					_swap_weapon()
+				_selected = old_sel
+		"end_turn", "timeout":
+			_live_switch_turn(int(p.get("side", _live_turn_side)))
+		"finish":
+			pass   # экран строится после финального fight с рейтингом и winner
+		"forfeit":
+			_log("Соперник покинул бой")
+		"disconnect":
+			_log("Связь с соперником потеряна — победа присуждена")
+	_live_applying = false
+	_live_seq = maxi(_live_seq, seq)
+
+func _live_switch_turn(from_side: int) -> void:
+	if _game_over:
+		return
+	for f in _fighters:
+		if f.alive and int(f.team) == from_side:
+			f.guard = mini(GUARD_PER_AP * int(f.ap), GUARD_MAX)
+	_tick_fire()
+	if not _game_over:
+		_tick_zone()
+	var next := 1 - from_side
+	_live_turn_side = next
+	_deselect()
+	for f in _fighters:
+		if f.alive and int(f.team) == next:
+			f.ap = f.max_ap
+			f.guard = 0
+			f.moved = false
+			f.adren_used = false
+			f.freerel_used = false
+			_tick_hot(f)
+			for key in ["stealth", "marked", "flash"]:
+				if int(f.get(key, 0)) > 0:
+					f[key] = int(f[key]) - 1
+	_log("Ход %d — %s" % [_turn + 1, "ваш" if next == _live_side else "соперника"])
+	_update_fog()
+	_refresh_turn_lbl()
+	if not _live_applying:
+		_select_initial_fighter()
+
+func _live_finish_local(winner_side: int) -> void:
+	if _live_finish_sent or not _live_active():
+		return
+	_live_finish_sent = true
+	# Отдельный канал от обычных действий: зона может убить бойца во время end_turn.
+	_pvp_call("live_action.php", {"token": _auth_token, "fight_id": str(_live_fight.fight_id),
+		"kind": "finish", "payload": {"winner_side": winner_side},
+		"action_uid": "finish_%d" % Time.get_ticks_usec()}, func(d: Dictionary) -> void:
+		if not bool(d.get("ok", false)):
+			_live_finish_sent = false
+			_log(str(d.get("error", "Не удалось завершить бой")))
+			return
+		_live_accept_state({"fight": d.get("fight", {}), "actions": [{"seq": int(d.get("seq", 0)),
+			"kind": "finish", "payload": {"winner_side": winner_side}}]})
+	)
+
+func _live_complete(winner_side: int) -> void:
+	if _game_over:
+		return
+	_game_over = true
+	_busy = false
+	_live_action_busy = false
+	_deselect()
+	_live_clear_fight()
+	var win := winner_side == _live_side
+	var delta := int(_live_fight.get("rating_delta", 0))
+	_profile.pvp_rating = int(_live_fight.get("my_rating", _profile.get("pvp_rating", 1000))) + delta
+	if not _live_reward_granted:
+		_live_reward_granted = true
+		_profile.coins = int(_profile.get("coins", 0)) + (30 if win else 10)
+		if win:
+			_profile.wins = int(_profile.get("wins", 0)) + 1
+		_profile.total_battles = int(_profile.get("total_battles", 0)) + 1
+	_save_profile()
+	_web_main_menu(false)
+	_menu_open = false
+	if _ui.has("menu_layer") and is_instance_valid(_ui.menu_layer):
+		_ui.menu_layer.visible = false
+	if not _ui.has("layer"):
+		return
+	var wrap := CenterContainer.new()
+	wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ui.layer.add_child(wrap)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(minf(480.0, _vw() * 0.94), 0)
+	panel.add_theme_stylebox_override("panel", _frame_box())
+	wrap.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	panel.add_child(vb)
+	var title := Label.new()
+	title.text = "ПОБЕДА В ЖИВОЙ ДУЭЛИ!" if win else "Дуэль завершена"
+	title.add_theme_font_size_override("font_size", 25)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(title)
+	var sub := Label.new()
+	sub.text = "%s\nРейтинг: %+d → %d · Награда: %d монет" % [
+		"Соперник повержен." if win else "В этот раз победил соперник.", delta,
+		int(_profile.pvp_rating), 30 if win else 10]
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.add_theme_font_size_override("font_size", 16)
+	vb.add_child(sub)
+	var lobby := _menu_button("В ЛОББИ", true)
+	lobby.custom_minimum_size = Vector2(0, 50)
+	lobby.pressed.connect(_go_lobby)
+	vb.add_child(lobby)
+
+func _live_spawn_teams() -> void:
+	var lo := 2
+	var hi := _grid_n - 3
+	var mid := _grid_n / 2
+	for side in 2:
+		var snap: Dictionary = _live_fight.get("red_fighters" if side == 0 else "blue_fighters", {})
+		var list: Array = snap.get("fighters", [])
+		if list.is_empty():
+			continue
+		var of: Dictionary = list[0]
+		var oc := _free_cell_sector(lo, mid - 4, mid + 4, hi) if side == 0 else _free_cell_sector(mid + 4, hi, lo, mid - 4)
+		var ocls := clampi(int(of.get("cls", 0)), 0, FIGHTER_CLASSES.size() - 1)
+		var omdl: String = FIGHTER_CLASSES[ocls]["model"]
+		_spawn_human(omdl, oc.x, oc.y, 0.0 if side == 0 else 180.0, str(of.get("weapon", "Pistol")),
+			TEAM_COLORS[side], side, str(of.get("name", "Боец")), of.get("stats", {}),
+			int(of.get("lvl", 1)), 0, of.get("talents", {}), 0, {}, ocls, -1)
+		var ob: Dictionary = _fighters.back()
+		var oag := clampi(int(of.get("armor_grade", 0)), 0, _armor_grade_cap(int(of.get("lvl", 1))))
+		if oag >= 1:
+			ob.armor["body"] = _armor_item_by_grade(int(of.get("lvl", 1)), "body", oag)
+			_recalc_derived(ob)
+	_log("ЖИВАЯ ДУЭЛЬ: %s против %s" % [str(_live_fight.get("red_fighters", {}).get("name", "Красный")), str(_live_fight.get("blue_fighters", {}).get("name", "Синий"))])
+	_log("Вы играете за %s. %s" % ["красных" if _live_side == 0 else "синих", "Ваш ход!" if _live_my_turn() else "Первым ходит соперник."])
 
 # полный боевой комплект брони нужного грейда (для спавна вражеского отряда из снапшота)
 func _armor_item_by_grade(lvl: int, cat: String, grade: int) -> Dictionary:
@@ -310,6 +844,151 @@ func _pvp_load_fight() -> Dictionary:
 	if js.parse(txt) != OK or not (js.data is Dictionary):
 		return {}
 	return js.data
+
+# Только Web-приёмка на dropzone_test: два настоящих клиента без ручного login UI.
+# На проде параметры игнорируются, потому что hostname/path проверяется здесь.
+func _livetest_param(key: String) -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var path = JavaScriptBridge.eval("window.location.pathname")
+	if path == null or not str(path).contains("/dropzone_test/"):
+		return ""
+	var value = JavaScriptBridge.eval("(new URLSearchParams(window.location.search)).get('" + key + "') || ''")
+	return "" if value == null else str(value)
+
+func _livetest_bootstrap() -> bool:
+	var token := _livetest_param("livetest_token")
+	if token == "":
+		return false
+	JavaScriptBridge.eval("window.dzLiveStage='bootstrap'")
+	_auth_token = token
+	_auth_cfg_save()
+	_vk_name = _livetest_param("livetest_name").left(32)
+	if _vk_name != "" and not _profile.names.is_empty():
+		_profile.names[0] = _vk_name
+	_build_menu()
+	if _livetest_param("livetest_queue") == "1":
+		call_deferred("_livetest_queue_start")
+	return true
+
+func _livetest_queue_start() -> void:
+	JavaScriptBridge.eval("window.dzLiveStage='queue'")
+	_web_main_menu(false)   # тест входит напрямую, без DOM-клика по режиму
+	var btn := Button.new()
+	var cancel := Button.new()
+	var status := Label.new()
+	add_child(btn)
+	add_child(cancel)
+	add_child(status)
+	_live_go(btn, status, cancel)
+	print("LIVE_WEB_TEST queue started")
+
+func _livetest_battle_start() -> void:
+	if _livetest_param("livetest_token") == "":
+		return
+	var script := _livetest_param("livetest_script")
+	JavaScriptBridge.eval("window.dzLiveStage='battle-wait'")
+	await get_tree().create_timer(2.0).timeout
+	if not _live_active() or _game_over:
+		JavaScriptBridge.eval("window.dzLiveStage='battle-missing'")
+		return
+	JavaScriptBridge.eval("window.dzLiveStage='battle-" + str(_live_side) + "'")
+	_chat_tab = 1
+	_render_chat()
+	_social_send("Сообщение от " + _social_name(), _ui.chat_input)
+	print("LIVE_WEB_TEST battle ready side=", _live_side, " script=", script)
+	if script == "idle":
+		return
+	# Красные ходят на нечётных ходах, синие — на чётных. Действия реальные,
+	# проходят через live_action.php и затем наблюдаются вторым Web-клиентом.
+	while _live_active() and not _game_over and _turn <= 6:
+		await get_tree().create_timer(1.5).timeout
+		if not _live_my_turn() or _live_action_busy:
+			continue
+		_select_initial_fighter()
+		if _selected < 0:
+			continue
+		if _turn <= 2:
+			var enemy := 1 - _selected
+			var best: Vector2i = _fighters[_selected].cell
+			var best_d := 1000000.0
+			for c in _reach.keys():
+				if c == best:
+					continue
+				var d := Vector2(c - _fighters[enemy].cell).length()
+				if d < best_d:
+					best_d = d
+					best = c
+			if best != _fighters[_selected].cell:
+				var path: Array = []
+				for c in _path_to(_fighters[_selected].cell, best):
+					path.append([c.x, c.y])
+				_live_submit("move", {"fighter": _selected, "x": best.x, "y": best.y,
+					"cost": int(_reach[best]), "path": path})
+				print("LIVE_WEB_TEST move side=", _live_side, " cell=", best)
+		elif _turn <= 4:
+			_live_submit("reload", {"fighter": _selected})
+			await get_tree().create_timer(0.8).timeout
+			_live_submit("swap", {"fighter": _selected})
+			print("LIVE_WEB_TEST reload+swap side=", _live_side)
+		else:
+			_live_submit("shoot", {"att": _selected, "def": 1 - _selected})
+			print("LIVE_WEB_TEST shoot side=", _live_side)
+		await get_tree().create_timer(1.0).timeout
+		if _live_my_turn() and not _live_action_busy:
+			_live_submit("end_turn", {})
+	print("LIVE_WEB_TEST script complete side=", _live_side)
+
+func _run_testlive() -> void:
+	# LIVE_TEST: две стороны применяют только упорядоченный поток; боты и дубли запрещены.
+	var fails := 0
+	if _fighters.size() != 2 or _alive_count(0) != 1 or _alive_count(1) != 1:
+		print("LIVE_TEST FAIL: spawn ", _fighters.size()); fails += 1
+	_select_initial_fighter()
+	if _selected != 0 or not _ui.card.visible:
+		print("LIVE_TEST FAIL: initial fighter card"); fails += 1
+	_focus_selected_fighter(false)
+	var focus_target: Vector3 = _fighters[0].node.position + Vector3(0, 0.6, 0)
+	if _cam_target.distance_to(focus_target) > 0.01:
+		print("LIVE_TEST FAIL: fighter card camera focus"); fails += 1
+	var red_cell: Vector2i = _fighters[0].cell
+	var blue_cell: Vector2i = _fighters[1].cell
+	var reach := _reachable(red_cell, int(_fighters[0].ap))
+	var target := red_cell
+	for c in reach.keys():
+		if c != red_cell:
+			target = c
+			break
+	if target == red_cell:
+		print("LIVE_TEST FAIL: no reachable cell"); fails += 1
+	else:
+		var cost := int(reach[target])
+		_live_apply_action({"seq": 1, "kind": "move", "payload": {"fighter": 0,
+			"x": target.x, "y": target.y, "cost": cost, "path": [[target.x, target.y]]}})
+		if _fighters[0].cell != target or int(_fighters[0].ap) != int(_fighters[0].max_ap) - cost:
+			print("LIVE_TEST FAIL: move"); fails += 1
+		var ap_after := int(_fighters[0].ap)
+		_live_apply_action({"seq": 1, "kind": "move", "payload": {"fighter": 0,
+			"x": red_cell.x, "y": red_cell.y, "cost": 1, "path": []}})
+		if _fighters[0].cell != target or int(_fighters[0].ap) != ap_after:
+			print("LIVE_TEST FAIL: duplicate seq"); fails += 1
+	_live_apply_action({"seq": 2, "kind": "end_turn", "payload": {"side": 0}})
+	if _live_turn_side != 1 or _fighters[1].cell != blue_cell:
+		print("LIVE_TEST FAIL: bot acted or turn did not switch"); fails += 1
+	_live_apply_action({"seq": 3, "kind": "end_turn", "payload": {"side": 1}})
+	if _live_turn_side != 0:
+		print("LIVE_TEST FAIL: red second turn"); fails += 1
+	_fighters[0].ammo = maxi(0, int(_fighters[0].ammo) - 1)
+	var ammo0 := int(_fighters[0].ammo)
+	_live_apply_action({"seq": 4, "kind": "reload", "payload": {"fighter": 0}})
+	if int(_fighters[0].ammo) <= ammo0:
+		print("LIVE_TEST FAIL: reload"); fails += 1
+	var weapon0: Dictionary = _fighters[0].weapon
+	_live_apply_action({"seq": 5, "kind": "swap", "payload": {"fighter": 0}})
+	if _fighters[0].weapon == weapon0:
+		print("LIVE_TEST FAIL: swap"); fails += 1
+	print("LIVE_TEST ", "OK" if fails == 0 else "FAILS: %d" % fails)
+	get_tree().quit(0 if fails == 0 else 1)
 
 func _run_testpvp() -> void:
 	# PVP_TEST: структура снапшота, потолки статов/брони, roundtrip файла боя
@@ -911,6 +1590,8 @@ func _on_rewarded_done(_args: Array) -> void:
 		_grant_sponsor_drop()
 
 func _grant_sponsor_drop() -> void:
+	if _live_active():
+		return   # рекламные боевые бонусы запрещены в живой дуэли
 	if _sponsor_used:
 		return
 	_sponsor_used = true
@@ -947,6 +1628,21 @@ func _ready() -> void:
 		_rng.randomize()
 	_biome = _rng.randi() % 2
 	_load_mode()
+	if args.has("--testlive"):
+		var st0 := _default_fighter_stats()
+		var sf0 := {"name": "Тестовый боец", "cls": 0, "lvl": 1, "stats": st0,
+			"talents": {}, "weapon": "Pistol", "armor_grade": 1}
+		_live_fight = {"fight_id": "local_live_test", "side": 0, "seed": 424242,
+			"status": "active", "turn_side": 0, "turn_no": 1, "seq": 0,
+			"red_fighters": {"name": "RED", "fighters": [sf0.duplicate(true)]},
+			"blue_fighters": {"name": "BLUE", "fighters": [sf0.duplicate(true)]}}
+		_live_side = 0
+		_live_turn_side = 0
+		_live_seq = 0
+		_rng.seed = 424242
+	if _live_active():
+		# Сид сервера устанавливается ДО биома и всей генерации карты.
+		_biome = _rng.randi() % 2
 	_load_items()
 	_load_profile()
 	var sk_i := args.find("--testskin")
@@ -961,7 +1657,8 @@ func _ready() -> void:
 	_scatter_decor()
 	_build_perimeter()
 	_spawn_teams()
-	_login_stash_to_backpacks()   # призы ежедневного входа — в рюкзаки отряда
+	if not _live_active():
+		_login_stash_to_backpacks()   # в live только равный стартовый комплект из снапшотов
 	_zone_min = Vector2i(0, 0)
 	_zone_max = Vector2i(_grid_n - 1, _grid_n - 1)
 	_update_zone_walls()
@@ -975,6 +1672,9 @@ func _ready() -> void:
 		get_viewport().get_texture().get_image().save_png("user://%s.png" % name)
 		print("SHOT_SAVED seed=", _rng.seed)
 		get_tree().quit()
+	elif args.has("--testlive"):
+		_build_ui()
+		_run_testlive()
 	elif args.has("--testplay"):
 		_build_ui()
 		_run_testplay()
@@ -1029,7 +1729,10 @@ func _ready() -> void:
 		_build_ui()
 		# автостарт после выбора режима в меню (сцена перезагружена)
 		var as_cfg := ConfigFile.new()
-		if as_cfg.load("user://autostart.cfg") == OK and as_cfg.get_value("game", "autostart", 0) == 1:
+		var auto: bool = as_cfg.load("user://autostart.cfg") == OK and int(as_cfg.get_value("game", "autostart", 0)) == 1
+		if _livetest_param("livetest_token") != "":
+			auto = false   # Web-приёмка всегда начинает с меню, не с прошлого PvE-автостарта
+		if _live_active() or auto:
 			as_cfg.set_value("game", "autostart", 0)
 			as_cfg.save("user://autostart.cfg")
 			_menu_open = false
@@ -1040,10 +1743,14 @@ func _ready() -> void:
 				# списание энергии отключено: тренировки с ботами бесплатны (онлайн — позже)
 			_apply_graphics(_settings.graphics)
 			_update_fog()
-			_log("Тренировка %d×%d — ваш ход! ЛКМ — бойцы, ПКМ-тянуть — обзор." % [_mode, _mode])
+			_select_initial_fighter()
+			if _live_active():
+				call_deferred("_livetest_battle_start")
+			if not _live_active():
+				_log("Тренировка %d×%d — ваш ход! ЛКМ — бойцы, ПКМ-тянуть — обзор." % [_mode, _mode])
+				_onboard_start()
 			_log("Биом: %s" % ("Индустриальная зона" if _biome == 1 else "Бетонная арена"))
-			_onboard_start()
-			if _tutorial_active():
+			if not _live_active() and _tutorial_active():
 				_tutorial_start_bubbles()
 		else:
 			_auth_cfg_load()
@@ -1051,7 +1758,9 @@ func _ready() -> void:
 			_an_session_t = Time.get_unix_time_from_system()
 			_an_event("session_start", {})
 			_an_timer()
-			if _auth_token != "":
+			if _livetest_bootstrap():
+				pass   # изолированная двухклиентная приёмка, только dropzone_test
+			elif _auth_token != "":
 				_build_auth(true)
 				_api_call("load", {"token": _auth_token})
 			elif _vk_env():
@@ -1104,8 +1813,8 @@ func _uitest_tour() -> void:
 	_profile.daily = {"daily_reset": today_u, "prog": {}, "done": {}}
 	_auth_close()
 	_build_menu()
-	# сообщение с эмодзи в чат — скрин-гейт цветных эмодзи (тикет #7)
-	_menu_chat_local[0].append("Вы: проверка 😀 🔥 💀 👍 ❤️")
+	# Изолированный скрин-гейт рендера общего чата и цветных эмодзи (без сети).
+	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка 😀 🔥 💀 👍 ❤️", "me": 1, "at": 0}]
 	_render_menu_chat()
 	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main"]
 	var from := 0
@@ -1143,13 +1852,13 @@ func _uitest_show(s: String) -> void:
 		"emoji":
 			_ui.menu_chat_input.text = "Проверка "
 			_ui.menu_chat_input.caret_column = _ui.menu_chat_input.text.length()
-			var sent_before: int = _menu_chat_local[_menu_chat_tab].size()
+			var sent_before: int = _social_messages.size()
 			_toggle_emoji_panel(_ui.menu_chat_input, _ui.menu_chat_panel)
 			var ekey := "emoji_panel_%d" % _ui.menu_chat_panel.get_instance_id()
 			var first_emoji: Button = _ui[ekey].get_child(0).get_child(0)
 			first_emoji.pressed.emit()
 			var insert_ok: bool = _ui.menu_chat_input.text == "Проверка 😀"
-			var not_sent: bool = _menu_chat_local[_menu_chat_tab].size() == sent_before
+			var not_sent: bool = _social_messages.size() == sent_before
 			print("EMOJI_INSERT_TEST в-поле=", insert_ok, " не-отправлено=", not_sent)
 		"result":
 			# Изолированный визуальный гейт CTA; профиль браузерного тура временный.
@@ -3285,6 +3994,10 @@ func _player_count() -> int:
 	return _mode
 
 func _spawn_teams() -> void:
+	if _live_active():
+		# LIVE: шоу-карты и локальный отряд не участвуют; оба клиента строят red/blue из комнаты.
+		_live_spawn_teams()
+		return
 	_show_reset()   # шоу-карты: рука из колоды профиля + «на след. бой»
 	# RED (0) — отряд игрока (модели из классов, ники и статы из профиля), BLUE (1) — боты
 	var blue_models := [["Character_Soldier", "AK", "Ворон"], ["Character_Hazmat", "SMG", "Клык"],
@@ -3614,6 +4327,8 @@ func _spawn_grave(f: Dictionary) -> void:
 	g.add_child(tag)
 
 func _taunt_selected() -> void:
+	if _live_active():
+		return   # LIVE v1: не тратим общий RNG на необязательный визуальный эффект
 	if _selected < 0 or _busy or _game_over:
 		return
 	var f = _fighters[_selected]
@@ -3666,6 +4381,8 @@ func _bot_pick_target(f: Dictionary, vis: int) -> int:
 	return _nearest_visible_enemy(f.cell, vis, 0)
 
 func _graffiti_selected() -> void:
+	if _live_active():
+		return
 	if _selected < 0 or _busy or _game_over:
 		return
 	var f = _fighters[_selected]
@@ -3940,13 +4657,33 @@ func _process(delta: float) -> void:
 		_pulse_t += delta
 		var s := 0.75 + 0.25 * sin(_pulse_t * 6.0)
 		_onboard_pulse.modulate = Color(s, s, 0.6 * s)
+	if _live_queue_waiting and not _live_queue_busy:
+		_live_queue_t -= delta
+		if _live_queue_t <= 0.0:
+			_live_queue_t = 1.5
+			_live_queue_call()
+	if _live_active() and not _game_over and _auth_token != "":
+		_live_poll_t -= delta
+		if _live_poll_t <= 0.0:
+			_live_poll_t = 1.25
+			_live_poll()
+	if _auth_token != "":
+		_social_poll_t -= delta
+		if _social_poll_t <= 0.0 and not _social_poll_busy:
+			_social_poll_t = 5.0
+			_social_poll()
 	# тряска камеры при взрывах (через смещения, не трогая орбиту)
 	if _cam == null:
 		return
 	if _shake > 0.0:
 		_shake = maxf(0.0, _shake - delta * 2.2)
-		_cam.h_offset = _rng.randf_range(-_shake, _shake)
-		_cam.v_offset = _rng.randf_range(-_shake, _shake)
+		if _live_active():
+			# Визуальный эффект не должен сдвигать общий gameplay RNG на разных FPS.
+			_cam.h_offset = sin(Time.get_ticks_msec() * 0.071) * _shake
+			_cam.v_offset = cos(Time.get_ticks_msec() * 0.083) * _shake
+		else:
+			_cam.h_offset = _rng.randf_range(-_shake, _shake)
+			_cam.v_offset = _rng.randf_range(-_shake, _shake)
 	elif _cam.h_offset != 0.0 or _cam.v_offset != 0.0:
 		_cam.h_offset = 0.0
 		_cam.v_offset = 0.0
@@ -4062,9 +4799,36 @@ func _select_from_squad(i: int) -> void:
 	if i < 0 or i >= _fighters.size():
 		return
 	var f = _fighters[i]
-	if f.team != 0 or not f.alive:
+	var own_side := _live_side if _live_active() else 0
+	if int(f.team) != own_side or not f.alive:
 		return
 	_select(i)
+
+func _select_initial_fighter() -> void:
+	# Сразу показываем, кем управляет игрок: карточка слева видна с первого кадра боя.
+	if _menu_open or _game_over or not _ui.has("card"):
+		return
+	var own_side := _live_side if _live_active() else 0
+	for i in _fighters.size():
+		if int(_fighters[i].team) == own_side and bool(_fighters[i].alive):
+			_select(i)
+			return
+
+func _focus_selected_fighter(animated := true) -> void:
+	if _selected < 0 or _selected >= _fighters.size() or not bool(_fighters[_selected].alive):
+		_select_initial_fighter()
+	if _selected < 0 or _selected >= _fighters.size() or _cam == null:
+		return
+	var target: Vector3 = _fighters[_selected].node.position + Vector3(0, 0.6, 0)
+	if not animated:
+		_cam_target = target
+		_update_camera()
+		return
+	var start := _cam_target
+	var tw := create_tween()
+	tw.tween_method(func(v: Vector3):
+		_cam_target = v
+		_update_camera(), start, target, 0.28).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 func _refresh_squad() -> void:
 	if not _ui.has("squad_rows"):
@@ -4895,6 +5659,8 @@ func _kill(i: int) -> void:
 	_check_end()
 
 func _triumph(host_line: String) -> void:
+	if _live_active():
+		return   # в live нет локальных карт/наград в руку
 	# ТРИУМФ ЗАЛА (пак 1.1): максимум 1 за бой; награда — случайная ЧАСТАЯ карта
 	# в руку на следующий бой + реплика ведущего
 	if _triumph_given:
@@ -5001,6 +5767,8 @@ func _xp_hit() -> int:
 	return 10
 
 func _gain_xp(i: int, amount: int) -> void:
+	if _live_active():
+		return   # LIVE v1: никаких локальных левел-апов и расхождения статов
 	var f = _fighters[i]
 	if not f.alive:
 		return
@@ -5231,6 +5999,10 @@ func _spend_consumable(att: int) -> void:
 func _reload_selected() -> void:
 	if _selected < 0:
 		return
+	if _live_active() and not _live_applying:
+		if _live_my_turn():
+			_live_submit("reload", {"fighter": _selected})
+		return
 	var f = _fighters[_selected]
 	if not f.weapon.has("ammo"):
 		_log("Нож не требует перезарядки")
@@ -5266,6 +6038,10 @@ func _reload_selected() -> void:
 
 func _swap_weapon() -> void:
 	if _selected < 0:
+		return
+	if _live_active() and not _live_applying:
+		if _live_my_turn():
+			_live_submit("swap", {"fighter": _selected})
 		return
 	var f = _fighters[_selected]
 	if f.weapon == f.melee:
@@ -5648,7 +6424,32 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_G:
 				_graffiti_selected()
 
+func _live_click_left() -> void:
+	if not _live_my_turn() or _live_action_busy:
+		_log("Сейчас ход соперника — смотрим его действия")
+		return
+	var fi := _fighter_near_mouse()
+	if fi >= 0:
+		if int(_fighters[fi].team) == _live_side:
+			_select(fi)
+		elif _selected >= 0:
+			_live_submit("shoot", {"att": _selected, "def": fi})
+		return
+	var cell := _cell_under_mouse()
+	if cell.x < 0 or _selected < 0 or not _reach.has(cell):
+		return
+	var f = _fighters[_selected]
+	var src := _path_to(f.cell, cell)
+	var path: Array = []
+	for c in src:
+		path.append([c.x, c.y])
+	_live_submit("move", {"fighter": _selected, "x": cell.x, "y": cell.y,
+		"cost": int(_reach[cell]), "path": path})
+
 func _click_left() -> void:
+	if _live_active():
+		_live_click_left()
+		return
 	# шоу-карта ждёт выбора цели/клетки
 	if _card_targeting != "" and not _busy and not _game_over:
 		var cid_t := _card_targeting
@@ -5703,7 +6504,8 @@ func _after_action() -> void:
 		var f = _fighters[_selected]
 		_reach = _reachable(f.cell, f.ap)
 		_show_reach()
-		_sel_ring.position = gw(f.cell.x, f.cell.y, 0.05)
+		if _sel_ring != null:
+			_sel_ring.position = gw(f.cell.x, f.cell.y, 0.05)
 	_update_fog()
 	_refresh_fighter_panel()
 	_refresh_turn_lbl()
@@ -6067,6 +6869,12 @@ func _tick_hot(f: Dictionary) -> void:
 func _end_turn() -> void:
 	if _busy or _game_over or _lvl_open:
 		return
+	if _live_active():
+		if not _live_my_turn():
+			_log("Сейчас ход соперника")
+			return
+		_live_submit("end_turn", {"side": _live_side})
+		return
 	if _onboard_step == 3:
 		_onboard_finish()
 	_busy = true
@@ -6270,6 +7078,10 @@ func _check_end() -> void:
 		return
 	var red := _alive_count(0)
 	var blue := _alive_count(1)
+	if _live_active():
+		if blue == 0 or red == 0:
+			_live_finish_local(0 if blue == 0 else 1)
+		return
 	if blue == 0 or red == 0:
 		_game_over = true
 		_deselect()
@@ -6790,7 +7602,27 @@ func _build_ui() -> void:
 	ap_bar.custom_minimum_size = Vector2(70, 12) if _mob() else Vector2(180, 12)
 	ap_bar.show_percentage = false
 	ap_row.add_child(ap_bar)
-	# иконка рюкзака убрана — дублировала кнопку в панели бойца справа ([I] работает)
+	# Вся карточка — кнопка «найти бойца»: клик плавно центрирует камеру.
+	var card_click := Button.new()
+	card_click.tooltip_text = "Показать бойца в центре экрана"
+	card_click.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	for st in ["normal", "hover", "pressed", "focus"]:
+		card_click.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+	card_click.pressed.connect(_focus_selected_fighter)
+	card.add_child(card_click)
+	var card_hint := Label.new()
+	card_hint.text = "←  К БОЙЦУ"
+	card_hint.position = Vector2(48, 77) if not _mob() else Vector2(40, 73)
+	card_hint.add_theme_font_size_override("font_size", 11)
+	card_hint.add_theme_color_override("font_color", Color("#70eaff"))
+	card_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
+	card_hint.add_theme_constant_override("shadow_offset_x", 1)
+	card_hint.add_theme_constant_override("shadow_offset_y", 1)
+	card_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_click.add_child(card_hint)
+	var hint_tw := card_hint.create_tween().set_loops()
+	hint_tw.tween_property(card_hint, "modulate:a", 0.42, 0.75).set_trans(Tween.TRANS_SINE)
+	hint_tw.tween_property(card_hint, "modulate:a", 1.0, 0.75).set_trans(Tween.TRANS_SINE)
 	card.visible = false
 	_ui.card = card
 	_ui.card_view = pv
@@ -6838,7 +7670,7 @@ func _build_ui() -> void:
 		)
 		roster.add_child(row)
 		_ui.squad_rows.append({"row": row, "portrait": rp, "hp": rh})
-	# --- диалоговое окно снизу слева: вкладки Логи битвы / Чат Арены / Чат комнаты ---
+	# --- диалоговое окно снизу слева: боевой лог и единый общий чат ---
 	var chat := PanelContainer.new()
 	chat.anchor_top = 1.0
 	chat.anchor_bottom = 1.0
@@ -6860,8 +7692,8 @@ func _build_ui() -> void:
 	tabs.add_theme_constant_override("separation", 4)
 	cvb.add_child(tabs)
 	_ui.chat_tab_btns = []
-	var tab_names := ["Логи битвы", "Чат Арены", "Чат комнаты"]
-	for ti in 3:
+	var tab_names := ["Логи битвы", "Общий чат"]
+	for ti in 2:
 		var tb := Button.new()
 		tb.text = tab_names[ti]
 		tb.custom_minimum_size = Vector2(0, 34)
@@ -6869,6 +7701,7 @@ func _build_ui() -> void:
 		var tn: int = ti
 		tb.pressed.connect(func():
 			_chat_tab = tn
+			_social_poll_t = 0.0
 			_render_chat()
 		)
 		tabs.add_child(tb)
@@ -6886,7 +7719,8 @@ func _build_ui() -> void:
 	inrow_b.add_theme_constant_override("separation", 4)
 	cvb.add_child(inrow_b)
 	var inp := LineEdit.new()
-	inp.placeholder_text = "Сообщение… (вкладки чатов, пока локально)"
+	inp.placeholder_text = "Сообщение в общий чат…"
+	inp.max_length = 300
 	inp.add_theme_font_override("font", _font_chat())
 	inp.add_theme_font_size_override("font_size", 12)
 	inp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -7088,50 +7922,55 @@ func _layout_menu() -> void:
 
 # ---------- диалоговое окно: вкладки чатов/логов ----------
 var _chat_tab := 0
-var _battle_chat_local := [[], []]  # локальное эхо: [0]=Арена, [1]=Комната
-const CHAT_STUB_ARENA := ["Система: Чат Арены — общение участников текущего боя.", "Система: появится в онлайн-режиме."]
-const CHAT_STUB_ROOM := ["Система: Чат комнаты — ваше лобби перед боем.", "Система: появится в онлайн-режиме."]
 
 func _battle_chat_send(inp: LineEdit) -> void:
 	if _chat_tab == 0:
 		return  # во вкладке логов отправка недоступна
-	var t := inp.text.strip_edges()
-	if t == "":
-		return
-	inp.clear()
-	_battle_chat_local[_chat_tab - 1].append("Вы: " + t)
-	if _battle_chat_local[_chat_tab - 1].size() > 30:
-		_battle_chat_local[_chat_tab - 1].pop_front()
-	_render_chat()
+	_social_send(inp.text, inp)
 
 func _render_chat() -> void:
 	if not _ui.has("chat_lines"):
 		return
 	for c in _ui.chat_lines.get_children():
 		c.queue_free()
-	var data: Array = _battle_log
-	var col := Color(0.85, 0.9, 0.95)
-	if _chat_tab == 1:
-		data = CHAT_STUB_ARENA.duplicate()
-		col = Color(0.7, 0.85, 0.7)
-	elif _chat_tab == 2:
-		data = CHAT_STUB_ROOM.duplicate()
-		col = Color(0.7, 0.85, 0.7)
-	if _chat_tab > 0:
-		for my_line in _battle_chat_local[_chat_tab - 1]:
-			data.append(my_line)
-	for line in data:
-		var l := Label.new()
-		l.text = line
-		l.add_theme_font_override("font", _font_chat())
-		l.add_theme_font_size_override("font_size", 12)
-		l.add_theme_color_override("font_color", col)
-		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		_ui.chat_lines.add_child(l)
+	if _chat_tab == 0:
+		for line in _battle_log:
+			var l := Label.new()
+			l.text = str(line)
+			l.add_theme_font_override("font", _font_chat())
+			l.add_theme_font_size_override("font_size", 12)
+			l.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95))
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_ui.chat_lines.add_child(l)
+	else:
+		if not _social_players.is_empty():
+			var online := Label.new()
+			online.text = "● %d онлайн: %s" % [_social_online, _social_players_text()]
+			online.tooltip_text = _social_players_text(true)
+			online.add_theme_font_override("font", _font_chat())
+			online.add_theme_font_size_override("font_size", 11)
+			online.add_theme_color_override("font_color", Color("#73e68c"))
+			online.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_ui.chat_lines.add_child(online)
+		if _social_messages.is_empty():
+			var empty := Label.new()
+			empty.text = _social_notice if _social_notice != "" else ("Войдите через ВК, чтобы использовать общий чат." if _auth_token == "" else "Общий чат подключён. Сообщений пока нет.")
+			empty.add_theme_font_override("font", _font_chat())
+			empty.add_theme_font_size_override("font_size", 12)
+			empty.add_theme_color_override("font_color", Color("#91aabd"))
+			empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_ui.chat_lines.add_child(empty)
+		for m in _social_messages:
+			var l2 := Label.new()
+			l2.text = "%s: %s" % [str(m.get("name", "Боец")), str(m.get("text", ""))]
+			l2.add_theme_font_override("font", _font_chat())
+			l2.add_theme_font_size_override("font_size", 12)
+			l2.add_theme_color_override("font_color", Color("#70eaff") if int(m.get("me", 0)) == 1 else Color("#e3f3fb"))
+			l2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_ui.chat_lines.add_child(l2)
 	for tb_i in _ui.chat_tab_btns.size():
 		_ui.chat_tab_btns[tb_i].modulate = Color(1, 1, 1) if tb_i == _chat_tab else Color(0.6, 0.6, 0.65)
-	await get_tree().process_frame
-	_ui.chat_scroll.scroll_vertical = 100000
+	_ui.chat_scroll.set_deferred("scroll_vertical", 100000)
 
 func _rematch() -> void:
 	# реванш: тот же режим, автостарт
@@ -7141,6 +7980,21 @@ func _rematch() -> void:
 	get_tree().reload_current_scene()
 
 func _go_lobby() -> void:
+	if _live_active() and str(_live_fight.get("status", "active")) == "active" and not _live_leaving:
+		# Активный бой нельзя молча бросить: соперник получает победу, рейтинг пересчитывается.
+		_live_leaving = true
+		_busy = true
+		_pvp_call("live_action.php", {"token": _auth_token, "fight_id": str(_live_fight.fight_id),
+			"kind": "forfeit", "payload": {"side": _live_side},
+			"action_uid": "leave_%d" % Time.get_ticks_usec()}, func(_d: Dictionary) -> void:
+			_live_clear_fight()
+			_live_fight = {}
+			var cfg0 := ConfigFile.new()
+			cfg0.set_value("game", "autostart", 0)
+			cfg0.save("user://autostart.cfg")
+			get_tree().reload_current_scene())
+		return
+	_live_clear_fight()
 	# выход в главное меню: перезагрузка сцены (автостарт выключен — откроется меню)
 	var cfg := ConfigFile.new()
 	cfg.set_value("game", "autostart", 0)
@@ -7149,7 +8003,9 @@ func _go_lobby() -> void:
 
 func _refresh_turn_lbl() -> void:
 	if _ui.has("turn"):
-		if _mob():
+		if _live_active():
+			_ui.turn.text = "LIVE · Ход %d · %s" % [_turn, "ВАШ ХОД" if _live_my_turn() else "ХОД СОПЕРНИКА"]
+		elif _mob():
 			_ui.turn.text = "Ход %d · %d:%d" % [_turn, _alive_count(0), _alive_count(1)]
 		else:
 			_ui.turn.text = "Ход %d   |   Красные: %d   Синие: %d" % [_turn, _alive_count(0), _alive_count(1)]
@@ -7233,7 +8089,7 @@ func _refresh_fighter_panel() -> void:
 		bd.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		bd.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		b.add_child(bd)
-	var own: bool = f.team == 0
+	var own: bool = int(f.team) == (_live_side if _live_active() else 0)
 	# рюкзак / смена оружия (сводка — по hover на иконку оружия, docs/EDITS_V1.md)
 	var inv: Button = mk_ic.call(load("res://assets/ui/icons/backpack.png") as Texture2D, "Рюкзак [I]")
 	inv.pressed.connect(_toggle_inventory)
@@ -7994,8 +8850,8 @@ func _run_testmenu(mobile := false, sfx := "") -> void:
 	if sfx == "":
 		sfx = "_mob" if mobile else ""
 	await get_tree().process_frame
-	# дым-тест чата: локальное эхо с эмодзи (панель эмодзи не открываем — на скринах должна быть честная картина меню)
-	_menu_chat_local[0].append("Вы: проверка чата 😀🔥💀")
+	# Изолированный дым-тест рендера общего чата (без сетевого эхо).
+	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка чата 😀🔥💀", "me": 1, "at": 0}]
 	_render_menu_chat()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -8693,6 +9549,11 @@ func _pulse_lvl_note() -> void:
 	nb.modulate = Color(1.0, 0.88 + 0.12 * g, 0.5 + 0.5 * g)
 
 func _tick_turn_timer(delta: float) -> void:
+	if _live_active():
+		if _ui.has("turn_timer") and not _game_over:
+			_turn_time_left = maxf(0.0, float(_live_fight.get("deadline", 0)) - (Time.get_unix_time_from_system() + _live_server_offset))
+			_ui.turn_timer.text = "0:%02d" % int(ceil(_turn_time_left))
+		return   # истечение назначает только сервер — два клиента не шлют дублирующий end_turn
 	# лимит 40 с на ход: истёк — ход уходит противнику. В тестах не тикает
 	if _test_run() or _game_over or _busy or _menu_open or _lvl_open:
 		return
@@ -9314,6 +10175,33 @@ func _show_menu_rating() -> void:
 	squad_lbl.add_theme_font_size_override("font_size", 13)
 	squad_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(squad_lbl)
+	# LIVE: отдельная очередь реальных игроков; async-блок ниже сохраняется без изменений.
+	vb.add_child(_inv_section("ЖИВАЯ ДУЭЛЬ 1×1"))
+	var live_hint := Label.new()
+	live_hint.text = "Два игрока онлайн, один выбранный боец, 40 секунд на ход. Без ботов и шоу-карт. Выбери бойца галочкой в «Отряде»."
+	live_hint.add_theme_font_size_override("font_size", 13)
+	live_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(live_hint)
+	var live_btn := _menu_button("НАЙТИ ЖИВОГО СОПЕРНИКА", true)
+	live_btn.custom_minimum_size = Vector2(0, 54)
+	vb.add_child(live_btn)
+	var live_status := Label.new()
+	live_status.add_theme_font_size_override("font_size", 13)
+	live_status.add_theme_color_override("font_color", Color(0.45, 0.95, 1.0))
+	live_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(live_status)
+	var live_cancel := _menu_button("ОТМЕНИТЬ ПОИСК")
+	live_cancel.visible = false
+	live_cancel.pressed.connect(_live_cancel_queue)
+	vb.add_child(live_cancel)
+	if _auth_token == "":
+		live_btn.disabled = true
+		live_status.text = "Нужен вход (ВК или почта)"
+	elif _tutorial_active():
+		live_btn.disabled = true
+		live_status.text = "Доступно после обучения"
+	live_btn.pressed.connect(func(): _live_go(live_btn, live_status, live_cancel))
+	vb.add_child(_inv_section("АСИНХРОННАЯ ДУЭЛЬ"))
 	var consent_btn := CheckButton.new()
 	consent_btn.text = "Мой отряд может сражаться без меня"
 	consent_btn.button_pressed = bool(_profile.get("pvp_allow_offline", false))
@@ -9730,17 +10618,6 @@ func _ctrl_button(icon: String, caption: String) -> Button:
 
 var _menu_chat_tab := 0
 var _menu_chat_collapsed := false
-const MENU_CHAT_STUBS := [
-	["Система: 👋 добро пожаловать в ТОЧКУ СБРОСА: Королевская битва!",
-	 "Система: общий чат всех игроков появится в онлайн-режиме.",
-	 "Система: пока доступны тренировки 1×1, 2×2 и 4×4 против ботов. 🎮👋"],
-	["Система: чат комнаты — для общения перед боем с командой.",
-	 "Система: появится в онлайн-режиме (комнаты/лобби матчей)."],
-	["Система: клановый чат. Создай клан или вступи в существующий —",
-	 "Система: кланы появятся в онлайн-режиме вместе с подпиской."],
-]
-
-var _menu_chat_local := [[], [], []]  # локальные сообщения игрока (эхо до онлайна)
 const MENU_EMOJIS := ["😀", "😂", "😉", "😛", "😎", "🤔", "😢", "😡", "👍", "👎", "❤️", "🔥", "💀", "🎉", "😱", "💯"]
 
 func _render_menu_chat() -> void:
@@ -9748,41 +10625,40 @@ func _render_menu_chat() -> void:
 		return
 	for c in _ui.menu_chat_lines.get_children():
 		c.queue_free()
-	for line in MENU_CHAT_STUBS[_menu_chat_tab]:
+	if _ui.has("menu_chat_players") and is_instance_valid(_ui.menu_chat_players):
+		_ui.menu_chat_players.text = "АКТИВНЫЕ: " + _social_players_text() if not _social_players.is_empty() else "АКТИВНЫЕ ИГРОКИ: обновление…"
+		_ui.menu_chat_players.tooltip_text = _social_players_text(true)
+	if _social_messages.is_empty():
+		var empty := Label.new()
+		empty.text = "Войдите через ВК, чтобы использовать общий чат." if _auth_token == "" else ("Сообщений пока нет — напишите первым." if _social_online > 0 else "Подключаю общий чат…")
+		empty.add_theme_font_override("font", _font_chat())
+		empty.add_theme_font_size_override("font_size", 12)
+		empty.add_theme_color_override("font_color", Color("#91aabd"))
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		empty.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_ui.menu_chat_lines.add_child(empty)
+	for m in _social_messages:
 		var l := Label.new()
-		l.text = line
+		l.text = "%s: %s" % [str(m.get("name", "Боец")), str(m.get("text", ""))]
 		l.add_theme_font_override("font", _font_chat())
 		l.add_theme_font_size_override("font_size", 12)
-		l.add_theme_color_override("font_color", Color("#91aabd"))
+		l.add_theme_color_override("font_color", Color("#70eaff") if int(m.get("me", 0)) == 1 else Color("#e3f3fb"))
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_ui.menu_chat_lines.add_child(l)
-	for line2 in _menu_chat_local[_menu_chat_tab]:
-		var l2 := Label.new()
-		l2.text = line2
-		l2.add_theme_font_override("font", _font_chat())
-		l2.add_theme_font_size_override("font_size", 12)
-		l2.add_theme_color_override("font_color", Color("#e3f3fb"))
-		l2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		l2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_ui.menu_chat_lines.add_child(l2)
+	if _social_notice != "":
+		var notice := Label.new()
+		notice.text = _social_notice
+		notice.add_theme_font_override("font", _font_chat())
+		notice.add_theme_font_size_override("font_size", 11)
+		notice.add_theme_color_override("font_color", Color("#ffbd66"))
+		notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_ui.menu_chat_lines.add_child(notice)
 	if _ui.has("menu_chat_scroll"):
-		# прилипаем к последним сообщениям; set_deferred — после пересчёта раскладки,
-		# иначе scroll_vertical не «дожимает» до низа (WebView ВК особенно заметно)
 		_ui.menu_chat_scroll.set_deferred("scroll_vertical", 100000)
-	for ti in _ui.menu_chat_btns.size():
-		_ui.menu_chat_btns[ti].modulate = Color(1, 1, 1) if ti == _menu_chat_tab else Color(0.55, 0.55, 0.6)
 
 func _menu_chat_send(inp: LineEdit) -> void:
-	# локальное эхо: сообщение видно только игроку до появления онлайн-чата
-	var t := inp.text.strip_edges()
-	if t == "":
-		return
-	inp.clear()
-	_menu_chat_local[_menu_chat_tab].append("Вы: " + t)
-	if _menu_chat_local[_menu_chat_tab].size() > 30:
-		_menu_chat_local[_menu_chat_tab].pop_front()
-	_render_menu_chat()
+	_social_send(inp.text, inp)
 
 func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	# Панель эмодзи — отдельный компактный поповер над полем ввода.
@@ -10048,25 +10924,15 @@ func _build_menu() -> void:
 	content.add_theme_constant_override("separation", 6)
 	chat_v.add_child(content)
 	_ui.menu_chat_content = content
-	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 5)
-	content.add_child(tabs)
 	_ui.menu_chat_btns = []
-	var tab_names := ["Общий", "Комната", "Клан"]
-	for ti in 3:
-		var tb := Button.new()
-		tb.text = tab_names[ti]
-		tb.custom_minimum_size = Vector2(0, 28)
-		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_style_menu_button(tb)
-		tb.add_theme_font_size_override("font_size", 12)
-		var tn: int = ti
-		tb.pressed.connect(func():
-			_menu_chat_tab = tn
-			_render_menu_chat()
-		)
-		tabs.add_child(tb)
-		_ui.menu_chat_btns.append(tb)
+	var players_lbl := Label.new()
+	players_lbl.text = "АКТИВНЫЕ ИГРОКИ: обновление…"
+	players_lbl.add_theme_font_size_override("font_size", 10)
+	players_lbl.add_theme_color_override("font_color", Color("#73e68c"))
+	players_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	players_lbl.mouse_filter = Control.MOUSE_FILTER_PASS
+	content.add_child(players_lbl)
+	_ui.menu_chat_players = players_lbl
 	var lines := VBoxContainer.new()
 	lines.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var lines_scroll := ScrollContainer.new()
@@ -10081,7 +10947,8 @@ func _build_menu() -> void:
 	inrow.add_theme_constant_override("separation", 6)
 	content.add_child(inrow)
 	var inp := LineEdit.new()
-	inp.placeholder_text = "Сообщение…"
+	inp.placeholder_text = "Сообщение в общий чат…"
+	inp.max_length = 300
 	inp.custom_minimum_size = Vector2(0, 38)
 	inp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inp.add_theme_font_override("font", _font_chat())
@@ -10139,27 +11006,20 @@ func _build_menu() -> void:
 	env.visible = false
 	chat_v.add_child(env)
 	_ui.menu_chat_env = env
-	var env_icons := ["globe", "swords", "shield"]
-	var env_tips := ["Общий чат", "Чат комнаты", "Чат с кланом"]
-	for ei in 3:
-		var eb := Button.new()
-		eb.custom_minimum_size = Vector2(44, 34)
-		eb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var etr := TextureRect.new()
-		etr.texture = _icon_tex(env_icons[ei])
-		etr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		etr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		etr.custom_minimum_size = Vector2(18, 18)
-		etr.set_anchors_preset(Control.PRESET_CENTER)
-		etr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		eb.add_child(etr)
-		eb.tooltip_text = env_tips[ei]
-		var en: int = ei
-		eb.pressed.connect(func():
-			_menu_chat_tab = en
-			_toggle_menu_chat()
-		)
-		env.add_child(eb)
+	var eb := Button.new()
+	eb.custom_minimum_size = Vector2(44, 34)
+	eb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var etr := TextureRect.new()
+	etr.texture = _icon_tex("globe")
+	etr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	etr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	etr.custom_minimum_size = Vector2(18, 18)
+	etr.set_anchors_preset(Control.PRESET_CENTER)
+	etr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	eb.add_child(etr)
+	eb.tooltip_text = "Открыть общий чат и список активных игроков"
+	eb.pressed.connect(_toggle_menu_chat)
+	env.add_child(eb)
 	_render_menu_chat()
 	# Демо-главная использует всю ширину: чат доступен, но стартует компактной рацией.
 	_toggle_menu_chat()
@@ -10679,6 +11539,12 @@ func _show_menu_main() -> void:
 		elif _auth_email != "":
 			acc_tip = "Твой аккаунт. Прогресс сохраняется на сервере"
 		ch.add_child(_chip("person", acc_name if acc_name != "" else str(_profile.names[0]), acc_tip, _auth_email == ""))
+		var online_chip := _chip("globe", "● %d онлайн" % _social_online, _social_players_text(true))
+		var online_lbl := online_chip.get_child(0).get_child(1) as Label
+		online_lbl.add_theme_color_override("font_color", Color("#73e68c"))
+		ch.add_child(online_chip)
+		_ui.menu_online_chip = online_chip
+		_ui.menu_online_lbl = online_lbl
 		_stamina_update()
 		ch.add_child(_chip("shop", "%d" % int(_profile.get("coins", 0)), "Монеты — валюта магазина: скины, рамки, цвета ника. Зарабатываются за бои и задания"))
 		ch.add_child(_chip("shard", "%d" % int(_profile.get("shards", 0)), "Осколки — редкая валюта из сундуков, для особых наград"))
@@ -14908,6 +15774,13 @@ func _los(a: Vector2i, b: Vector2i) -> bool:
 	return true
 
 func _update_fog() -> void:
+	if _live_active():
+		# LIVE v1: дуэль на открытой информации, без разных туманов у red/blue.
+		for lf in _fighters:
+			lf.node.visible = lf.alive
+			lf.pad.visible = lf.alive
+		_update_house_fade()
+		return
 	for ef in _fighters:
 		if ef.team != 1:
 			continue
