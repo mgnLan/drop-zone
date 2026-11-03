@@ -1816,7 +1816,7 @@ func _uitest_tour() -> void:
 	# Изолированный скрин-гейт рендера общего чата и цветных эмодзи (без сети).
 	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка 😀 🔥 💀 👍 ❤️", "me": 1, "at": 0}]
 	_render_menu_chat()
-	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main"]
+	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -1876,7 +1876,9 @@ func _uitest_show(s: String) -> void:
 		"heroes": _show_menu_heroes()
 		"rating": _show_menu_rating()
 		"shop": _show_menu_shop()
-		"profile": _show_menu_profile()
+		"profile":
+			_profile.frame = 2   # визуальный гейт выравнивания арт-рамки
+			_show_menu_profile()
 		"med": _show_menu_med()
 		"settings": _show_menu_settings()
 		"deck":
@@ -1894,12 +1896,19 @@ func _uitest_show(s: String) -> void:
 			# прячем слой лобби (как автостарт после перезагрузки), выбираем бойца отряда
 			_profile.onboarded = 1
 			_auth_close()
+			_web_main_menu(false)
 			if _ui.has("menu_layer") and is_instance_valid(_ui.menu_layer):
 				_ui.menu_layer.visible = false
 			_menu_open = false
 			_busy = false
 			_refresh_turn_lbl()
 			call_deferred("_uitest_pick_fighter")
+		"wounded":
+			# Изолированный гейт предупреждения: двое ранены, состав и HP видны списком.
+			_profile.unlocked_slots = 4
+			_profile.battle_slots = [1, 1, 1, 1]
+			_profile.hp = [12, 24, -1, -1]
+			_start_mode(4)
 		"lobby", "main": _show_menu_main()
 	# Маркер только для автоматического скриншот-тура: браузер ждёт реальную
 	# отрисовку запрошенного экрана, а не пытается угадать загрузку по таймеру.
@@ -3985,6 +3994,41 @@ func _battle_slots_row() -> HBoxContainer:
 		)
 		row.add_child(cb)
 	return row
+
+func _battle_slots_list() -> VBoxContainer:
+	# Компактный вертикальный состав для предупреждения о раненых:
+	# галочка, боец и точное текущее/максимальное HP в каждой строке.
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 5)
+	var flags: Array = _profile.get("battle_slots", [1, 1, 1, 1])
+	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
+	var n := clampi(int(_profile.get("unlocked_slots", 1)), 1, 4)
+	for i in n:
+		var mx := _fighter_hp_max(i)
+		var h := mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
+		var cb := CheckBox.new()
+		cb.text = "%s — %d/%d HP" % [str(_profile.names[i]), h, mx]
+		cb.add_theme_font_size_override("font_size", 13)
+		cb.button_pressed = i >= flags.size() or int(flags[i]) == 1
+		cb.tooltip_text = "Снять галочку — боец останется в резерве (не идёт в бой)"
+		var fi: int = i
+		cb.toggled.connect(func(on: bool):
+			var fl2: Array = _profile.get("battle_slots", [1, 1, 1, 1]).duplicate()
+			while fl2.size() < 4:
+				fl2.append(1)
+			fl2[fi] = 1 if on else 0
+			var any := false
+			for k in n:
+				if int(fl2[k]) == 1:
+					any = true
+			if not any:
+				fl2[fi] = 1
+				cb.set_pressed_no_signal(true)
+			_profile.battle_slots = fl2
+			_save_profile()
+		)
+		list.add_child(cb)
+	return list
 
 # ---------------- БОЙЦЫ 4v4 ----------------
 func _player_count() -> int:
@@ -8177,6 +8221,7 @@ func _populate_cards_popup() -> void:
 		hempty.text = "Шоу-карт нет — колода в лобби, дроп из ящиков арены"
 		hempty.add_theme_font_size_override("font_size", 11)
 		hempty.add_theme_color_override("font_color", Color(0.5, 0.56, 0.62))
+		hempty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		fcv.add_child(hempty)
 	for cid_h in _hand:
 		var cbtn := Button.new()
@@ -8187,9 +8232,11 @@ func _populate_cards_popup() -> void:
 		cbtn.icon = _png_icon(CARD_PNG_BY_ID.get(cid_h, ""))
 		if cbtn.icon == null:
 			cbtn.icon = _icon_tex(CARD_ICON_BY_RARITY.get(hrar, "bolt"))
-		cbtn.icon_max_width = 24
+		cbtn.expand_icon = false
+		cbtn.add_theme_constant_override("icon_max_width", 24)
 		cbtn.custom_minimum_size = Vector2(0, 30)
 		cbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cbtn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		cbtn.disabled = _card_played or _busy or _game_over
 		var cid_c: String = cid_h
 		cbtn.pressed.connect(func(): _play_card(cid_c))
@@ -8198,12 +8245,14 @@ func _populate_cards_popup() -> void:
 	var betb := Button.new()
 	betb.text = "Ставка ×1.5"
 	betb.icon = _png_icon("card_stavka")
-	betb.icon_max_width = 24
+	betb.expand_icon = false
+	betb.add_theme_constant_override("icon_max_width", 24)
 	betb.toggle_mode = true
 	betb.button_pressed = _book_bet
 	betb.tooltip_text = "Ставка букмекера: победа — монеты ×1.5, поражение — ×0.5"
 	betb.add_theme_font_size_override("font_size", 11)
 	betb.custom_minimum_size = Vector2(0, 26)
+	betb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	betb.pressed.connect(func():
 		_book_bet = not _book_bet
 		_log("Ставка букмекера: %s" % ("ВКЛ — победа ×1.5, поражение ×0.5" if _book_bet else "выкл"))
@@ -9786,12 +9835,13 @@ func _frame_png(fi: int) -> String:
 	return "res://assets/ui/frames256/%s.png" % FRAME_PNG_FILES[fi]
 
 func _frame_overlay(fi: int) -> TextureRect:
-	# Рамки v2: TextureRect рамки поверх ячейки аватара (inset 0, expand, якоря к краям)
+	# Рамка строго по краям аватара: anchors + offsets сбрасываем вместе,
+	# иначе TextureRect может сохранить стартовый сдвиг после добавления в Control.
 	var fr := TextureRect.new()
 	fr.texture = _png_icon(_frame_png(fi))
 	fr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	fr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	fr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	fr.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	fr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return fr
 
@@ -10716,23 +10766,36 @@ func _start_mode(m: int) -> void:
 		m = 1
 	# погибший приходит в себя в медцентре с 1 HP и регенерирует; раненых — предупреждаем
 	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
-	var low: Array[String] = []
+	var low: Array = []
 	for i in _battle_lineup(m):
 		var mx := _fighter_hp_max(i)
 		var h: int = mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
 		if h <= 0:
 			h = 1   # страховка: медцентр уже должен был поднять до 1 HP
 		if h * 100 < mx * 50:
-			low.append("«%s» ранен: %d/%d HP" % [str(_profile.names[i]), h, mx])
+			low.append(i)
 	if low.size() > 0:
 		var dc := ConfirmationDialog.new()
 		dc.title = "Раненые бойцы"
-		dc.dialog_text = "В бой идут раненые:\n" + "\n".join(low) + "\n\nТаких легко убить с одного-двух попаданий. Подлечись в Медцентре (Отряд), сними раненого с боя галочкой ниже или рискни."
+		dc.dialog_text = ""
 		dc.ok_button_text = "Всё равно в бой"
-		dc.get_label().get_parent().add_child(_battle_slots_row())
+		dc.cancel_button_text = "Вернуться в лобби"
+		var dialog_w := clampi(int(_vw()) - 24, 280, 480)
+		var content := VBoxContainer.new()
+		content.add_theme_constant_override("separation", 10)
+		content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var note := Label.new()
+		note.text = "Раненых легко убить с одного-двух попаданий. Сними галочку с бойца, которого хочешь оставить в резерве."
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		note.custom_minimum_size.x = dialog_w - 48.0
+		note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		content.add_child(note)
+		content.add_child(_battle_slots_list())
+		dc.get_label().visible = false
+		dc.get_label().get_parent().add_child(content)
 		_ui.menu_layer.add_child(dc)
 		_web_main_menu(false)
-		dc.popup_centered()
+		dc.popup_centered(Vector2i(dialog_w, 0))
 		dc.confirmed.connect(func(): _start_mode_go(m))
 		dc.canceled.connect(func(): _web_main_menu(true))
 		return
@@ -10806,7 +10869,7 @@ func _build_menu() -> void:
 	top.offset_top = 10.0
 	top.offset_bottom = 88.0
 	layer.add_child(top)
-	var logo := _card_label("DROP ZONE // 01", 12, Color("#57e7ff"), true)
+	var logo := _card_label("СЕЗОН // 01", 12, Color("#57e7ff"), true)
 	logo.custom_minimum_size = Vector2(124, 30) if mob_w else Vector2(190, 52)
 	logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top.add_child(logo)
@@ -13236,6 +13299,7 @@ func _show_menu_med() -> void:
 		var nm := Label.new()
 		nm.text = _profile.names[i]
 		nm.custom_minimum_size = Vector2(90, 0)
+		nm.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		_style_nick_label(nm, i)
 		row.add_child(nm)
 		# полоска HP — градиент; раненые (<60%) — оранжевый сигнал
@@ -13244,6 +13308,7 @@ func _show_menu_med() -> void:
 		hb.max_value = mx
 		hb.value = h
 		hb.show_percentage = false
+		hb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var hb_tr := StyleBoxFlat.new()
 		hb_tr.bg_color = Color("#1a2030")
 		hb_tr.set_corner_radius_all(9)
@@ -13259,6 +13324,7 @@ func _show_menu_med() -> void:
 		var st := Label.new()
 		st.add_theme_font_size_override("font_size", 12)
 		st.custom_minimum_size = Vector2(120, 0)
+		st.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if h >= mx:
 			st.text = "%d/%d · боевой" % [h, mx]
 			st.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))

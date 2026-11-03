@@ -1,0 +1,78 @@
+@font-face{font-family:DZManrope;src:url("Manrope.ttf") format("truetype");font-style:normal;font-weight:200 800;font-display:swap}
+@font-face{font-family:DZRusso;src:url("RussoOne.ttf") format("truetype");font-style:normal;font-weight:400;font-display:swap}
+#dz-main-menu{--cyan:#57e7ff;--pink:#ff3979;--gold:#ffd38a;--text:#f3f7ff;--muted:#91a3ba;position:fixed;inset:0;z-index:30;overflow-x:hidden;overflow-y:auto;background:#050913;color:var(--text);font-family:DZManrope,Manrope,Arial,sans-serif;overscroll-behavior:contain}
+#dz-main-menu[hidden],#dz-main-menu .more-panel[hidden]{display:none!important}
+#dz-main-menu *{box-sizing:border-box}
+#dz-main-menu button{font:inherit}
+#dz-main-menu .dz{position:relative;isolation:isolate;width:100%;max-width:1100px;min-height:100vh;min-height:100dvh;margin:0 auto;overflow:hidden;padding:16px;color:var(--text);background:#080e1a;border:1px solid #23354b;box-shadow:0 20px 70px #000a;display:flex;flex-direction:column}
+#dz-main-menu .dz:before{content:"";position:absolute;inset:0;z-index:-3;background:url("splash.jpg") center 24%/cover no-repeat;transform:scale(1.02)}
+#dz-main-menu .dz:after{content:"";position:absolute;inset:0;z-index:-2;background:linear-gradient(180deg,#02061038 0%,#050a14a8 30%,#060b15f5 66%,#060b15 100%)}
+#dz-main-menu .top{display:flex;align-items:center;gap:14px;height:44px;padding:0 16px;background:#060c17d9;border:1px solid #40526988;clip-path:polygon(0 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%)}
+#dz-main-menu .brand-mini{font-size:12px;letter-spacing:3px;font-weight:600;color:var(--cyan);white-space:nowrap}
+#dz-main-menu .online{display:flex;align-items:center;gap:8px;color:#a9bad0;font-size:11px;white-space:nowrap}
+#dz-main-menu .online:before{content:"";width:6px;height:6px;background:#72f5c3;border-radius:50%;box-shadow:0 0 12px #72f5c3}
+#dz-main-menu .spacer{flex:1}
+#dz-main-menu .profile-chip{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dce9f7;font-size:12px}
+#dz-main-menu .resources{display:flex;gap:14px;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+#dz-main-menu .res b{color:var(--gold);font-weight:600}
+#dz-main-menu .top-btn{border:0;border-left:1px solid #40526988;background:transparent;color:#b9c8da;padding:5px 0 5px 13px;cursor:pointer;white-space:nowrap;font-size:12px}
+#dz-main-menu .top-btn:hover,#dz-main-menu .top-btn:focus-visible{color:#fff;outline:none;text-shadow:0 0 10px #57e7ff}
+#dz-main-menu .fullscreen-btn{display:flex;align-items:center;justify-content:center;min-width:34px;min-height:32px;padding:5px 8px;color:var(--cyan)}
+#dz-main-menu .fullscreen-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:square}
+#dz-main-menu .fullscreen-btn.active{background:#57e7ff18;box-shadow:inset 0 0 14px #57e7ff22}
+#dz-main-menu .hero{position:relative;height:162px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#dz-main-menu .hero-kicker{font-size:10px;letter-spacing:6px;color:#c3d7e8;text-shadow:0 2px 10px #000;margin-bottom:4px}
+#dz-main-menu .logo{margin:0;font-family:DZRusso,DZManrope,sans-serif;font-size:clamp(36px,6.4vw,68px);line-height:1;font-weight:400;font-style:italic;letter-spacing:1px;transform:skew(-5deg);color:#e9faff;text-shadow:-3px 2px 0 #174a66,3px 0 0 #7a163d,0 0 24px #5be8ff66,0 6px 20px #000}
+#dz-main-menu .logo span{color:#ff6193;text-shadow:-2px 2px 0 #751538,0 0 24px #ff397966}
+#dz-main-menu .subtitle{margin-top:9px;font-size:12px;letter-spacing:8px;color:var(--cyan);text-shadow:0 0 16px #2dd9ff}
+#dz-main-menu .hero-line{width:min(480px,70%);height:1px;margin-top:12px;background:linear-gradient(90deg,transparent,var(--pink),var(--cyan),transparent);box-shadow:0 0 14px #57e7ff88}
+#dz-main-menu .layout{display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:12px;flex:1 0 auto}
+#dz-main-menu .section-head{display:flex;align-items:end;gap:12px;margin:0 2px 8px}
+#dz-main-menu .section-head h2{margin:0;font-size:17px;font-weight:600;letter-spacing:1px}
+#dz-main-menu .section-head small{font-size:10px;letter-spacing:2px;color:var(--cyan)}
+#dz-main-menu .section-head .spacer{font-size:11px;color:#9fb1c5}
+#dz-main-menu .rating-btn{border:0;background:transparent;color:#a9c4d9;font-size:10px;padding:4px 0;cursor:pointer;white-space:nowrap}
+#dz-main-menu .rating-btn:hover{color:var(--cyan)}
+#dz-main-menu .modes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#dz-main-menu .mode{position:relative;min-height:74px;padding:12px 14px;text-align:left;color:var(--text);cursor:pointer;overflow:hidden;border:1px solid #33485f;background:linear-gradient(115deg,#142236ed,#0a1220e8);clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));transition:transform .16s ease-out,border-color .16s ease-out,filter .16s ease-out}
+#dz-main-menu .mode:hover:not(:disabled),#dz-main-menu .mode:focus-visible{transform:translateY(-2px);border-color:var(--cyan);filter:brightness(1.12);outline:none}
+#dz-main-menu .mode.primary{grid-column:1/-1;min-height:88px;border-color:#57e7ffbb;background:linear-gradient(100deg,#14344bea,#102031e8 62%,#12192ae8);box-shadow:inset 3px 0 var(--cyan),inset 0 0 34px #38cfe817}
+#dz-main-menu .mode.primary:after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 50%,#57e7ff0c 50%,#57e7ff0c 70%,transparent 70%);pointer-events:none}
+#dz-main-menu .mode.locked,#dz-main-menu .mode:disabled{opacity:.52;cursor:not-allowed}
+#dz-main-menu .tag{display:block;font-size:9px;letter-spacing:2px;color:var(--cyan);margin-bottom:5px}
+#dz-main-menu .mode strong{font-size:18px;font-weight:600;letter-spacing:.5px}
+#dz-main-menu .mode.primary strong{font-size:23px}
+#dz-main-menu .mode p{margin:4px 0 0;font-size:11px;color:#9db0c6}
+#dz-main-menu .arrow{position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:26px;color:var(--cyan);font-style:normal}
+#dz-main-menu .mode.reaper{width:100%;min-height:54px;margin-top:8px;border-color:#6e3c56;background:linear-gradient(100deg,#281526ed,#111525ed)}
+#dz-main-menu .mode.reaper .tag{color:#ff86ae;margin-bottom:2px}
+#dz-main-menu .mode.reaper strong{font-size:16px}
+#dz-main-menu .side{display:flex;flex-direction:column;gap:8px}
+#dz-main-menu .panel{padding:12px;background:#0a1321ed;border:1px solid #33465a;clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)}
+#dz-main-menu .panel-title{font-size:10px;letter-spacing:2px;color:#c5d6e8;margin-bottom:12px}
+#dz-main-menu .mission{margin-top:10px}
+#dz-main-menu .mission-row{display:flex;justify-content:space-between;font-size:11px;gap:8px}
+#dz-main-menu .mission-row span:last-child{color:var(--cyan);white-space:nowrap}
+#dz-main-menu .track{height:3px;margin-top:6px;background:#243345}
+#dz-main-menu .track i{display:block;height:100%;background:var(--cyan);box-shadow:0 0 8px #57e7ff88}
+#dz-main-menu .mission small{display:block;color:#758ba5;font-size:9px;margin-top:4px}
+#dz-main-menu .mission.done .mission-row span:last-child{color:#72f5c3}
+#dz-main-menu .mission.done .track i{background:#72f5c3}
+#dz-main-menu .pass{position:relative;flex:1;min-height:77px;border-color:#9a744d;background:linear-gradient(110deg,#291a21ed,#151826ed);cursor:pointer;color:var(--text);text-align:left}
+#dz-main-menu .pass .panel-title{color:var(--gold)}
+#dz-main-menu .pass strong{font-size:14px;font-weight:600}
+#dz-main-menu .pass p{font-size:10px;color:#b5a58f;margin:4px 0 0}
+#dz-main-menu .pass b{position:absolute;right:12px;bottom:12px;color:var(--gold);font-weight:500}
+#dz-main-menu .nav{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:12px}
+#dz-main-menu .nav button{min-height:48px;padding:7px 4px;color:#a9b9cc;background:#0b1422;border:1px solid #2c3e52;cursor:pointer;font-size:11px;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,0 100%)}
+#dz-main-menu .nav button span{display:block;font-size:9px;color:#5f7b94;letter-spacing:1px;margin-bottom:4px}
+#dz-main-menu .nav button:hover,#dz-main-menu .nav button:focus-visible,#dz-main-menu .nav button.active{color:#effdff;border-color:var(--cyan);background:#132d3d;outline:none}
+#dz-main-menu .nav button.active span{color:var(--cyan)}
+#dz-main-menu .more-panel{position:absolute;right:16px;top:68px;z-index:8;width:320px;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:7px;background:#07101df5;border:1px solid #45627d;box-shadow:0 16px 40px #000c;clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)}
+#dz-main-menu .more-panel button{min-height:42px;border:1px solid #2e465d;background:#101e2e;color:#c4d4e5;cursor:pointer;font-size:11px;text-align:left;padding:8px 10px}
+#dz-main-menu .more-panel button:hover{border-color:var(--cyan);color:#fff;background:#153047}
+#dz-main-menu .menu-foot{display:flex;justify-content:space-between;margin-top:8px;color:#627b94;font-size:9px;letter-spacing:1px}
+@media(max-width:900px){#dz-main-menu .online{display:none}#dz-main-menu .profile-chip{max-width:110px}}
+@media(max-width:680px){#dz-main-menu .dz{padding:8px}#dz-main-menu .resources{gap:8px}#dz-main-menu .res:nth-child(2){display:none}#dz-main-menu .hero{height:140px}#dz-main-menu .logo{font-size:36px}#dz-main-menu .hero-kicker{font-size:8px;letter-spacing:3px}#dz-main-menu .subtitle{font-size:9px;letter-spacing:5px}#dz-main-menu .layout{grid-template-columns:1fr}#dz-main-menu .side{display:grid;grid-template-columns:1fr 1fr}#dz-main-menu .nav{grid-template-columns:repeat(3,1fr)}#dz-main-menu .brand-mini{letter-spacing:1px;font-size:10px}#dz-main-menu .top{padding:0 9px;gap:7px}#dz-main-menu .top-btn{padding-left:7px;font-size:11px}#dz-main-menu .profile-chip{display:none}#dz-main-menu .more-panel{right:8px;top:60px;width:min(320px,calc(100vw - 16px))}}
+@media(max-width:420px){#dz-main-menu .brand-mini{display:none}#dz-main-menu .modes{grid-template-columns:1fr}#dz-main-menu .mode.primary{grid-column:auto}#dz-main-menu .side{grid-template-columns:1fr}#dz-main-menu .section-head .rating-btn{font-size:9px}#dz-main-menu .hero{height:132px}}
+@media(prefers-reduced-motion:reduce){#dz-main-menu .mode{transition:none}}
