@@ -1895,6 +1895,9 @@ func _uitest_show(s: String) -> void:
 			# скрин-гейт боевой полосы иконок (docs/EDITS_V1.md п.3): арена уже под меню —
 			# прячем слой лобби (как автостарт после перезагрузки), выбираем бойца отряда
 			_profile.onboarded = 1
+			_profile.frame = 2   # гейт квадратного аватара и арт-рамки в боевой карточке
+			if _ui.has("card_frame"):
+				_ui.card_frame.texture = _png_icon(_frame_png(2))
 			_auth_close()
 			_web_main_menu(false)
 			if _ui.has("menu_layer") and is_instance_valid(_ui.menu_layer):
@@ -7605,7 +7608,7 @@ func _build_ui() -> void:
 	_ui.card_pvc = pvc
 	# аватар игрока из профиля (заменяет 3D-портрет, если загружен)
 	var ava := TextureRect.new()
-	ava.custom_minimum_size = Vector2(36, 48) if _mob() else Vector2(42, 56)
+	ava.custom_minimum_size = Vector2(48, 48) if _mob() else Vector2(56, 56)
 	ava.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ava.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	ava.visible = false
