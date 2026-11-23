@@ -1037,63 +1037,213 @@ func gw(gx: float, gz: float, y := 0.0) -> Vector3:
 var _onboard_step := -1          # -1 = обучение не идёт
 var _onboard_bar: PanelContainer = null
 var _onboard_lbl: Label = null
+var _onboard_progress: Label = null
 var _onboard_pulse: Control = null
+var _onboard_ring: Panel = null
+var _onboard_replay_requested := false  # повтор из FAQ без сброса прогресса аккаунта
 var _pulse_t := 0.0
 
 # ---------- лимит времени на ход ----------
 const TURN_TIME := 40.0            # секунд на ход игрока — дальше ход переходит противнику
 var _turn_time_left := TURN_TIME
 const ONBOARD_TXT := [
-	"Обучение 1/4: выбери бойца — кликни по нему на поле или по карточке слева",
-	"Обучение 2/4: кликни подсвеченную клетку — боец переместится",
-	"Обучение 3/4: кликни по врагу, чтобы открыть огонь. Открой ящик — там снаряжение",
-	"Обучение 4/4: нажми «Конец хода» — ход перейдёт противнику",
+	"Выбери бойца — кликни по нему на поле или по карточке слева.",
+	"Кликни подсвеченную клетку — боец переместится и потратит ОД.",
+	"Кликни по врагу, чтобы открыть огонь. У ящиков можно найти снаряжение.",
+	"Нажми «Конец хода» — непотраченные ОД станут временной бронёй.",
 ]
 
-func _onboard_start() -> void:
-	if _menu_open or int(_profile.get("onboarded", 0)) == 1 or _tutorial_active():
+func _onboard_place_opponent() -> void:
+	# Обучающая дуэль должна давать сделать движение и выстрел за один ход.
+	# Случайные сектора иногда ставили врага слишком далеко или за домом.
+	var player_i := -1
+	var enemy_i := -1
+	for i in _fighters.size():
+		if not _fighters[i].alive:
+			continue
+		if int(_fighters[i].team) == 0 and player_i < 0:
+			player_i = i
+		elif int(_fighters[i].team) == 1 and enemy_i < 0:
+			enemy_i = i
+	if player_i < 0 or enemy_i < 0:
 		return
+	var pc: Vector2i = _fighters[player_i].cell
+	var best := Vector2i(-1, -1)
+	var best_score := 1.0e9
+	for x in _grid_n:
+		for y in _grid_n:
+			var cell := Vector2i(x, y)
+			var distance := Vector2(pc.x - x, pc.y - y).length()
+			if distance < 3.0 or distance > 6.0:
+				continue
+			if _occupied.has(_key(cell)) or _unit_at.has(_key(cell)) or not _los(pc, cell):
+				continue
+			var score := distance + 0.01 * Vector2(_fighters[enemy_i].cell.x - x, _fighters[enemy_i].cell.y - y).length()
+			if score < best_score:
+				best_score = score
+				best = cell
+	if best.x < 0:
+		return
+	_unit_at.erase(_key(_fighters[enemy_i].cell))
+	_fighters[enemy_i].cell = best
+	_unit_at[_key(best)] = enemy_i
+	_fighters[enemy_i].node.position = gw(best.x, best.y)
+	_fighters[enemy_i].pad.position = gw(best.x, best.y, 0.02)
+	_update_fog()
+
+func _onboard_start(force := false) -> void:
+	# Раньше _tutorial_active() блокировало этот сценарий у всех новичков:
+	# вместо реальных действий показывались только текстовые бабблы.
+	if _menu_open or (not force and int(_profile.get("onboarded", 0)) == 1):
+		return
+	_onboard_place_opponent()
+	if _onboard_bar != null and is_instance_valid(_onboard_bar):
+		_onboard_bar.queue_free()
+	_tutorial_bubble_close()
 	_onboard_step = 0
+	# В дуэли ростер обычно скрыт, но на шаге выбора он нужен как явная цель.
+	_refresh_squad()
 	var hb := PanelContainer.new()
 	hb.anchor_left = 0.5
 	hb.anchor_right = 0.5
-	var ow: float = min(280.0, _vw() * 0.47)
+	var ow: float = min(390.0, _vw() * 0.47)
 	hb.offset_left = -ow
 	hb.offset_right = ow
 	hb.offset_top = 66.0 if _mob() else 10.0
-	hb.offset_bottom = 118.0 if _mob() else 62.0
+	hb.offset_bottom = 216.0 if _mob() else 160.0
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.08, 0.02, 0.88)
-	sb.border_color = Color(1.0, 0.85, 0.3, 0.95)
+	sb.bg_color = Color(0.025, 0.055, 0.10, 0.96)
+	sb.border_color = Color(0.33, 0.85, 1.0, 0.98)
 	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(8)
-	sb.set_content_margin_all(8)
+	sb.set_corner_radius_all(10)
+	sb.set_content_margin_all(12)
+	sb.shadow_color = Color(0, 0, 0, 0.45)
+	sb.shadow_size = 12
 	hb.add_theme_stylebox_override("panel", sb)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	hb.add_child(vb)
+	var progress := Label.new()
+	progress.add_theme_font_size_override("font_size", 12)
+	progress.add_theme_color_override("font_color", Color(0.45, 0.88, 1.0))
+	progress.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(progress)
 	var l := Label.new()
 	l.add_theme_font_size_override("font_size", 15)
-	l.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	l.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hb.add_child(l)
+	vb.add_child(l)
+	var skip := _menu_button("Пропустить")
+	skip.custom_minimum_size = Vector2(150, 30)
+	skip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	skip.pressed.connect(func(): _onboard_finish(true))
+	vb.add_child(skip)
 	_ui.layer.add_child(hb)
 	_onboard_bar = hb
 	_onboard_lbl = l
+	_onboard_progress = progress
 	_onboard_update()
+
+func _onboard_clear_pulse() -> void:
+	if _onboard_pulse != null and is_instance_valid(_onboard_pulse):
+		_onboard_pulse.modulate = Color(1, 1, 1)
+	_onboard_pulse = null
+	if _onboard_ring != null and is_instance_valid(_onboard_ring):
+		_onboard_ring.queue_free()
+	_onboard_ring = null
+
+func _onboard_highlight(target: Control) -> void:
+	_onboard_pulse = target
+	if target == null or not is_instance_valid(target):
+		return
+	var ring := Panel.new()
+	ring.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = -5.0
+	ring.offset_top = -5.0
+	ring.offset_right = 5.0
+	ring.offset_bottom = 5.0
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var rs := StyleBoxFlat.new()
+	rs.bg_color = Color(0, 0, 0, 0)
+	rs.border_color = Color(0.35, 0.9, 1.0, 0.95)
+	rs.set_border_width_all(3)
+	rs.set_corner_radius_all(8)
+	rs.shadow_color = Color(0.2, 0.8, 1.0, 0.55)
+	rs.shadow_size = 10
+	ring.add_theme_stylebox_override("panel", rs)
+	target.add_child(ring)
+	_onboard_ring = ring
 
 func _onboard_update() -> void:
 	if _onboard_step < 0 or _onboard_lbl == null:
 		return
 	_onboard_lbl.text = ONBOARD_TXT[_onboard_step]
-	# сброс прошлой подсветки
-	if _onboard_pulse != null and is_instance_valid(_onboard_pulse):
-		_onboard_pulse.modulate = Color(1, 1, 1)
-	_onboard_pulse = null
-	# цель подсветки по шагу
+	_onboard_progress.text = "Показано %d из %d · осталось %d" % [_onboard_step + 1, ONBOARD_TXT.size(), ONBOARD_TXT.size() - _onboard_step - 1]
+	_onboard_clear_pulse()
 	if _onboard_step == 0 and _ui.has("squad_rows") and _ui.squad_rows.size() > 0:
-		_onboard_pulse = _ui.squad_rows[0].row
+		_onboard_highlight(_ui.squad_rows[0].row)
+	elif _onboard_step == 2 and _mob() and _selected >= 0:
+		# В портрете противник часто за краем экрана: показываем цель,
+		# иначе шаг атаки невозможно выполнить без ручного поиска камерой.
+		var enemy_i := _nearest_enemy(_fighters[_selected].cell, 1)
+		if enemy_i >= 0 and _cam != null:
+			_cam_target = _fighters[enemy_i].node.position + Vector3(0, 0.6, 0)
+			_update_camera()
 	elif _onboard_step == 3 and _ui.has("end_btn"):
-		_onboard_pulse = _ui.end_btn
+		_onboard_highlight(_ui.end_btn)
+	call_deferred("_onboard_gate_report")
+
+# Координаты целей только для CDP-приёмки: реальные клики, без обхода игровой логики.
+func _onboard_gate_report() -> void:
+	if not OS.has_feature("web"):
+		return
+	var enabled = JavaScriptBridge.eval("window.__dzOnboardGate===1 || window.location.search.indexOf('uitest=22')>=0")
+	if enabled == null or not bool(enabled):
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var data := {"step": _onboard_step}
+	var target := Vector2(-100, -100)
+	var cam := get_viewport().get_camera_3d()
+	if _onboard_step == 0 and _ui.has("squad_rows") and _ui.squad_rows.size() > 0:
+		target = _ui.squad_rows[0].row.get_global_rect().get_center()
+	elif _onboard_step == 1 and _selected >= 0 and cam != null:
+		var enemy_i := _nearest_enemy(_fighters[_selected].cell, 1)
+		var best_d := 1.0e9
+		for cell in _reach:
+			if cell == _fighters[_selected].cell:
+				continue
+			var p: Vector2 = cam.unproject_position(gw(cell.x, cell.y, 0.0))
+			if p.x < 8.0 or p.y < 8.0 or p.x > _vw() - 8.0 or p.y > _vh() - 8.0:
+				continue
+			# Не наводим приёмочный клик на клетку под панелями портретного HUD.
+			if _mob() and (p.y < 224.0 or p.y > _vh() - 96.0 or (p.x < 100.0 and p.y < 458.0)):
+				continue
+			var distance: float = cell.distance_to(_fighters[enemy_i].cell) if enemy_i >= 0 else 0.0
+			if enemy_i >= 0:
+				var fighter = _fighters[_selected]
+				var shot_cost := _shot_cost(fighter, fighter.weapon)
+				if distance > float(fighter.weapon.get("range", 1)) or not _los(cell, _fighters[enemy_i].cell):
+					continue
+				if int(fighter.ap) - int(_reach[cell]) < shot_cost:
+					continue
+			if distance < best_d:
+				best_d = distance
+				target = p
+	elif _onboard_step == 2 and _selected >= 0 and cam != null:
+		var enemy_i := _nearest_enemy(_fighters[_selected].cell, 1)
+		if enemy_i >= 0:
+			target = cam.unproject_position(_fighters[enemy_i].node.position + Vector3(0, 0.9, 0))
+	elif _onboard_step == 3 and _ui.has("end_btn"):
+		target = _ui.end_btn.get_global_rect().get_center()
+	if target.x >= 0.0:
+		# CDP кликает в экранных CSS-координатах. Штатный screen_transform
+		# учитывает KEEP_ASPECT: масштаб и центрирование внутри canvas.
+		target = get_viewport().get_screen_transform() * target
+		data["target"] = [target.x, target.y]
+	print("ONBOARD_GATE=" + JSON.stringify(data))
 
 func _onboard_next() -> void:
 	if _onboard_step < 0:
@@ -1104,18 +1254,21 @@ func _onboard_next() -> void:
 	else:
 		_onboard_update()
 
-func _onboard_finish() -> void:
+func _onboard_finish(skipped := false) -> void:
 	_onboard_step = -1
-	if _onboard_pulse != null and is_instance_valid(_onboard_pulse):
-		_onboard_pulse.modulate = Color(1, 1, 1)
-	_onboard_pulse = null
+	_onboard_clear_pulse()
 	if _onboard_bar != null and is_instance_valid(_onboard_bar):
 		_onboard_bar.queue_free()
 	_onboard_bar = null
 	_onboard_lbl = null
+	_onboard_progress = null
 	_profile.onboarded = 1
+	if skipped:
+		_profile.tutorial_step = 3
 	_save_profile()
-	_log("Обучение завершено — в бой!")
+	_refresh_squad()
+	_log("Обучение пропущено — повторить можно в FAQ" if skipped else "Обучение завершено — в бой!")
+	call_deferred("_onboard_gate_report")
 
 # ---------- ОБУЧЕНИЕ (пак 1.1): первые 3 боя — сценарии с подсказками ----------
 const TUTORIAL_SCENARIOS := [
@@ -1323,6 +1476,7 @@ func _menu_w() -> float:
 var _sponsor_used := false      # один дроп за бой
 var _ad_reward_cb: Callable = Callable()   # награда за текущий просмотр (ставится перед show)
 var _web_menu_cb = null                    # держим JS callback живым всё время работы сцены
+var _lobby_guide_cb = null                 # завершение/пропуск HTML-тура лобби
 
 func _setup_rewarded_bridge() -> void:
 	if not OS.has_feature("web"):
@@ -1338,6 +1492,12 @@ func _setup_rewarded_bridge() -> void:
 	# HTML-витрина главного меню: действия приходят из DOM, логика остаётся здесь.
 	_web_menu_cb = JavaScriptBridge.create_callback(_on_web_menu_action)
 	JavaScriptBridge.get_interface("window").set("__dz_menu_action", _web_menu_cb)
+	_lobby_guide_cb = JavaScriptBridge.create_callback(_on_lobby_guide_done)
+	JavaScriptBridge.get_interface("window").set("__dz_lobby_guide_done", _lobby_guide_cb)
+
+func _on_lobby_guide_done(_args: Array) -> void:
+	_profile.lobby_guide_done = 1
+	_save_profile()
 	# оболочка могла ответить раньше, чем мы установили колбэк — проверяем готовность
 	var pre = JavaScriptBridge.eval("(function(){ return window.dzVK ? JSON.stringify(window.dzVK) : ''; })()", true)
 	if pre != null and str(pre) != "":
@@ -1367,12 +1527,17 @@ func _on_web_menu_action(args: Array) -> void:
 		"showbiz": _show_menu_showbiz()
 		"shop": _show_menu_shop()
 		"chests": _show_menu_chests()
-		"bp": _show_menu_bp()
+		"bp":
+			if BP_SEASON_LIVE:
+				_show_menu_bp()
+			else:
+				_show_menu_main()
 		"progress": _show_menu_progress()
 		"med": _show_menu_med()
 		"profile": _show_menu_profile()
 		"settings": _show_menu_settings()
 		"rating": _show_menu_rating()
+		"faq": _show_menu_faq()
 
 func _web_main_menu(show: bool) -> void:
 	if not OS.has_feature("web"):
@@ -1407,6 +1572,7 @@ func _web_main_menu(show: bool) -> void:
 		"rating": int(_profile.get("pvp_rating", 1000)),
 		"reaper_days": int(ceil(reaper_left / 86400.0)),
 		"missions": missions,
+		"lobby_guide_done": int(_profile.get("lobby_guide_done", 0)),
 	}
 	JavaScriptBridge.eval("if(window.dzMenuProfile){window.dzMenuProfile(" + JSON.stringify(payload) + ");}if(window.dzMainMenu){window.dzMainMenu(true);}", true)
 
@@ -1733,8 +1899,11 @@ func _ready() -> void:
 		if _livetest_param("livetest_token") != "":
 			auto = false   # Web-приёмка всегда начинает с меню, не с прошлого PvE-автостарта
 		if _live_active() or auto:
+			var replay_guide := int(as_cfg.get_value("game", "guide_replay", 0)) == 1
 			as_cfg.set_value("game", "autostart", 0)
+			as_cfg.set_value("game", "guide_replay", 0)
 			as_cfg.save("user://autostart.cfg")
+			_onboard_replay_requested = false
 			_menu_open = false
 			_busy = false
 			_auth_cfg_load()   # после перезагрузки сцены восстанавливаем сессию (save/buy)
@@ -1748,9 +1917,9 @@ func _ready() -> void:
 				call_deferred("_livetest_battle_start")
 			if not _live_active():
 				_log("Тренировка %d×%d — ваш ход! ЛКМ — бойцы, ПКМ-тянуть — обзор." % [_mode, _mode])
-				_onboard_start()
+				_onboard_start(replay_guide)
 			_log("Биом: %s" % ("Индустриальная зона" if _biome == 1 else "Бетонная арена"))
-			if not _live_active() and _tutorial_active():
+			if not _live_active() and _tutorial_active() and _onboard_step < 0:
 				_tutorial_start_bubbles()
 		else:
 			_auth_cfg_load()
@@ -1806,6 +1975,7 @@ func _uitest_tour() -> void:
 	_profile.welcome_n = 99    # счётчик заходов: приветствие только первые 3 (тикет владельца)
 	_profile.onboarded = 1      # и обучение первого боя тоже
 	_profile.tutorial_step = 3  # обучение (3 боя) в туре не нужно
+	_profile.lobby_guide_done = 1  # автотур запускаем только отдельным экраном guide
 	_profile.seen_tips = ["squad", "shop", "chests", "bp", "med", "heroes", "progress"]
 	_login_reward_txt = ""      # попап награды входа — не мешать скрин-туру
 	var today_u := Time.get_date_string_from_system()
@@ -1816,7 +1986,7 @@ func _uitest_tour() -> void:
 	# Изолированный скрин-гейт рендера общего чата и цветных эмодзи (без сети).
 	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка 😀 🔥 💀 👍 ❤️", "me": 1, "at": 0}]
 	_render_menu_chat()
-	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded"]
+	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded", "guide", "faq", "battle_guide"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -1891,7 +2061,7 @@ func _uitest_show(s: String) -> void:
 			_profile.show_deck = ["ukazka", "radar", "piro"]
 			print("CARD_ICONS_TEST все-12-загружаются=", icons_ok)
 			_refresh_menu_screen("deck")
-		"battle":
+		"battle", "battle_guide":
 			# скрин-гейт боевой полосы иконок (docs/EDITS_V1.md п.3): арена уже под меню —
 			# прячем слой лобби (как автостарт после перезагрузки), выбираем бойца отряда
 			_profile.onboarded = 1
@@ -1905,13 +2075,20 @@ func _uitest_show(s: String) -> void:
 			_menu_open = false
 			_busy = false
 			_refresh_turn_lbl()
-			call_deferred("_uitest_pick_fighter")
+			if s == "battle_guide":
+				_onboard_start(true)
+			else:
+				call_deferred("_uitest_pick_fighter")
 		"wounded":
 			# Изолированный гейт предупреждения: двое ранены, состав и HP видны списком.
 			_profile.unlocked_slots = 4
 			_profile.battle_slots = [1, 1, 1, 1]
 			_profile.hp = [12, 24, -1, -1]
 			_start_mode(4)
+		"guide":
+			_show_menu_main()
+			JavaScriptBridge.eval("if(window.dzLobbyGuideStart){window.dzLobbyGuideStart(true);}", true)
+		"faq": _show_menu_faq()
 		"lobby", "main": _show_menu_main()
 	# Маркер только для автоматического скриншот-тура: браузер ждёт реальную
 	# отрисовку запрошенного экрана, а не пытается угадать загрузку по таймеру.
@@ -2625,7 +2802,7 @@ func _mq_login_grant() -> void:
 	d["login"] = 1
 	_profile.bp_xp = int(_profile.get("bp_xp", 0)) + MQ_LOGIN_XP
 	_profile.coins = int(_profile.get("coins", 0)) + MQ_LOGIN_COINS
-	_log("Ежедневный вход: +%d XP Battle Pass, +%d монет" % [MQ_LOGIN_XP, MQ_LOGIN_COINS])
+	_log("Ежедневный вход: +%d сезонного XP, +%d монет" % [MQ_LOGIN_XP, MQ_LOGIN_COINS])
 	_save_profile()
 
 func _mq_day_list() -> Array:
@@ -2860,6 +3037,7 @@ func _load_profile() -> void:
 		"nick_color": 0,          # цвет ника: 0 белый, 1 красный, 2 золото (монетизация)
 		"unlocked_slots": 2,      # стартовый игрок: 2 бойца для смены; 3-й — заслуги, 4-й — ВИП
 		"onboarded": 0,           # 1 = обучение первого боя пройдено
+		"lobby_guide_done": 0,    # 1 = интерактивный тур лобби показан или пропущен
 		"coins": 0,               # копилка монет (монетизация)
 		"stamina": 100.0,         # выносливость шоу (бой −15)
 		"stamina_ts": 0.0,        # unixtime последнего пересчёта
@@ -2933,6 +3111,7 @@ func _load_profile() -> void:
 	_profile.unlocked_slots = int(cfg.get_value("player", "unlocked_slots", 2))
 	_profile.battle_slots = cfg.get_value("player", "battle_slots", [1, 1, 1, 1])
 	_profile.onboarded = int(cfg.get_value("player", "onboarded", 0))
+	_profile.lobby_guide_done = int(cfg.get_value("player", "lobby_guide_done", 0))
 	_profile.coins = int(cfg.get_value("player", "coins", 0))
 	_profile.stamina = float(cfg.get_value("player", "stamina", 100.0))
 	_profile.stamina_ts = float(cfg.get_value("player", "stamina_ts", 0.0))
@@ -2999,6 +3178,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "unlocked_slots", _profile.unlocked_slots)
 	cfg.set_value("player", "battle_slots", _profile.get("battle_slots", [1, 1, 1, 1]))
 	cfg.set_value("player", "onboarded", int(_profile.get("onboarded", 0)))
+	cfg.set_value("player", "lobby_guide_done", int(_profile.get("lobby_guide_done", 0)))
 	cfg.set_value("player", "coins", int(_profile.get("coins", 0)))
 	cfg.set_value("player", "stamina", float(_profile.get("stamina", 100.0)))
 	cfg.set_value("player", "stamina_ts", float(_profile.get("stamina_ts", 0.0)))
@@ -4880,19 +5060,20 @@ func _focus_selected_fighter(animated := true) -> void:
 func _refresh_squad() -> void:
 	if not _ui.has("squad_rows"):
 		return
-	# ростер нужен только для переключения между бойцами: один боец — прячем ряд целиком
+	# Один боец: ростер скрыт, кроме шага обучения с явной подсветкой выбора.
+	var own_side := _live_side if _live_active() else 0
 	var mine := 0
 	for f in _fighters:
-		if f.team == 0:
+		if int(f.team) == own_side:
 			mine += 1
-	if mine <= 1:
+	if mine <= 1 and _onboard_step < 0:
 		for r in _ui.squad_rows:
 			r.row.visible = false
 		_refresh_lvl_note()
 		return
 	for i in mini(5, _ui.squad_rows.size()):
 		var r: Dictionary = _ui.squad_rows[i]
-		if i >= _fighters.size():
+		if i >= _fighters.size() or int(_fighters[i].team) != own_side:
 			r.row.visible = false
 			continue
 		r.row.visible = true
@@ -6519,8 +6700,11 @@ func _click_left() -> void:
 		if _fighters[fi].team == 0:
 			_select(fi)
 		elif _selected >= 0:
+			var ap_before := int(_fighters[_selected].ap)
+			var ammo_before := int(_fighters[_selected].get("ammo", 0))
 			_shoot(_selected, fi)
-			if _onboard_step == 2:
+			# Не завершаем шаг при нехватке ОД/патронов, дальности или укрытии.
+			if _onboard_step == 2 and (int(_fighters[_selected].ap) < ap_before or int(_fighters[_selected].get("ammo", 0)) < ammo_before):
 				_onboard_next()
 			_after_action()
 		return
@@ -7697,24 +7881,37 @@ func _build_ui() -> void:
 		r_sb.set_content_margin_all(2)
 		row.add_theme_stylebox_override("panel", r_sb)
 		var rv := VBoxContainer.new()
+		rv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		rv.add_theme_constant_override("separation", 2)
 		row.add_child(rv)
 		var rp := TextureRect.new()
+		rp.mouse_filter = Control.MOUSE_FILTER_IGNORE  # клик по лицу доходит до карточки
 		rp.custom_minimum_size = Vector2(30, 38)   # прямоугольный портрет
 		rp.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		rp.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		rv.add_child(rp)
 		var rh := ProgressBar.new()
+		rh.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		rh.max_value = 100
 		rh.show_percentage = false
 		rh.custom_minimum_size = Vector2(30, 5)
 		rv.add_child(rh)
 		_style_bar(rh, Color(0.25, 0.9, 0.3))
 		var fi: int = i
-		row.gui_input.connect(func(ev: InputEvent):
-			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-				_select_from_squad(fi)
+		# Невидимая кнопка поверх портрета и HP: вся карточка кликабельна,
+		# а не только узкая рамка PanelContainer.
+		var hit := Button.new()
+		hit.focus_mode = Control.FOCUS_NONE
+		hit.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		hit.set_anchors_preset(Control.PRESET_FULL_RECT)
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			hit.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+		hit.pressed.connect(func():
+			if _onboard_step >= 0:
+				print("ONBOARD_CARD_CLICK=", fi, " busy=", _busy, " menu=", _menu_open, " game_over=", _game_over)
+			_select_from_squad(fi)
 		)
+		row.add_child(hit)
 		roster.add_child(row)
 		_ui.squad_rows.append({"row": row, "portrait": rp, "hp": rh})
 	# --- диалоговое окно снизу слева: боевой лог и единый общий чат ---
@@ -10822,6 +11019,7 @@ func _start_mode_go(m: int) -> void:
 	_an_event("battle_start", {"mode": m, "lvl": _max_squad_lvl()})
 	var cfg := ConfigFile.new()
 	cfg.set_value("game", "autostart", 1)
+	cfg.set_value("game", "guide_replay", 1 if _onboard_replay_requested else 0)
 	cfg.save("user://autostart.cfg")
 	get_tree().reload_current_scene()
 
@@ -11129,7 +11327,7 @@ const TIP_TEXTS := {
 	"chests": ["Сундуки", "Сундук удачи открывается за 150 монет.\nВнутри: осколки, косметика, аренда героев. Осколки — валюта редких наград."],
 	"bp": ["Battle Pass", "Миссии дня и недели дают сезонный опыт — он качнет уровни пропуска со дня старта сезона.\nБесплатная лента у всех. Premium открывает вторую ленту наград. Старт сезона — СКОРО."],
 	"med": ["Медцентр", "Погибшие бойцы восстанавливаются со временем.\nХочешь быстрее — заплати монетами или осколками."],
-	"heroes": ["Герои", "Герои — бойцы с особыми стартовыми пистолетами и модами статов.\nПолучаешь из сундуков, фрагментов, аренды и наград Battle Pass."],
+	"heroes": ["Герои", "Герои — бойцы с особыми стартовыми пистолетами и модами статов.\nПолучаешь из сундуков, фрагментов и аренды. Новые способы получения появятся с событиями."],
 	"progress": ["Прогрессия", "Опыт за бои поднимает уровень аккаунта.\nУровни открывают слоты бойцов и таланты."],
 }
 
@@ -11226,7 +11424,7 @@ func _welcome_overlay() -> void:
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(tl)
 	var bl := Label.new()
-	bl.text = "Шоу на выживание: бойцы, оружие и зона, которая сжимается.\n\n• Нажми «1×1 · Дуэль» — сразу в бой против бота\n• Монеты за бои трать в Магазине и на Сундуки\n• Миссии дня дают опыт Battle Pass"
+	bl.text = "Шоу на выживание: бойцы, оружие и зона, которая сжимается.\n\n• Нажми «1×1 · Дуэль» — сразу в бой против бота\n• Монеты за бои трать в Магазине и на Сундуки\n• Миссии дня дают монеты, осколки и опыт"
 	bl.add_theme_font_size_override("font_size", 18)
 	bl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	vb.add_child(bl)
@@ -11820,8 +12018,6 @@ func _show_menu_main() -> void:
 	shop.pressed.connect(_show_menu_shop)
 	var chests := _ctrl_button("chest", "Сундуки")
 	chests.pressed.connect(_show_menu_chests)
-	var bp := _ctrl_button("ticket", "Battle Pass")
-	bp.pressed.connect(_show_menu_bp)
 	var prog := _ctrl_button("trophy", "Прогрессия")
 	prog.pressed.connect(_show_menu_progress)
 	var med := _ctrl_button("shield", "Медцентр")
@@ -11830,7 +12026,9 @@ func _show_menu_main() -> void:
 	prof.pressed.connect(_show_menu_profile)
 	var sett := _ctrl_button("gear", "Настройки")
 	sett.pressed.connect(_show_menu_settings)
-	var ctrls: Array = [squad, heroes, cards, showbiz, shop, chests, bp, prog, med, prof, sett]
+	var faq := _ctrl_button("profile", "FAQ")
+	faq.pressed.connect(_show_menu_faq)
+	var ctrls: Array = [squad, heroes, cards, showbiz, shop, chests, prog, med, prof, sett, faq]
 	# ветки — по CSS-ширине окна (не _vw(): он делит на dpr — на телефоне
 	# давал треть дизайн-ширины и лобби сжималось в узкую колонку, v6.145)
 	var cw4: float = _css_win_w()
@@ -11883,33 +12081,34 @@ func _show_menu_main() -> void:
 		qv.add_child(quick)
 		for cb in ctrls:
 			quick.add_child(cb)
-		var season := Button.new()
-		season.custom_minimum_size = Vector2(0, 112)
-		season.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		var ssb := _card_style()
-		ssb.bg_color = Color("#211d16ed")
-		ssb.border_color = Color("#e7c98555")
-		var shb := _card_style(true)
-		shb.bg_color = Color("#2b2419f2")
-		shb.border_color = Color("#e7c985aa")
-		season.add_theme_stylebox_override("normal", ssb)
-		season.add_theme_stylebox_override("hover", shb)
-		season.add_theme_stylebox_override("focus", shb)
-		season.add_theme_stylebox_override("pressed", shb)
-		season.pressed.connect(_show_menu_bp)
-		side.add_child(season)
-		var sv := VBoxContainer.new()
-		sv.set_anchors_preset(Control.PRESET_FULL_RECT)
-		sv.offset_left = 16.0
-		sv.offset_right = -16.0
-		sv.offset_top = 14.0
-		sv.offset_bottom = -12.0
-		sv.add_theme_constant_override("separation", 6)
-		sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		season.add_child(sv)
-		sv.add_child(_card_label("Battle Pass · сезон 1", 14, Color("#e7c985"), true))
-		sv.add_child(_card_label("Новый тестовый цикл. Прогресс начинается с чистого листа.", 10, Color("#a3b2c5")))
-		sv.add_child(_card_label("Премиальные награды и эксклюзивная косметика →", 10, Color("#e7c985")))
+		if BP_SEASON_LIVE:
+			var season := Button.new()
+			season.custom_minimum_size = Vector2(0, 112)
+			season.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			var ssb := _card_style()
+			ssb.bg_color = Color("#211d16ed")
+			ssb.border_color = Color("#e7c98555")
+			var shb := _card_style(true)
+			shb.bg_color = Color("#2b2419f2")
+			shb.border_color = Color("#e7c985aa")
+			season.add_theme_stylebox_override("normal", ssb)
+			season.add_theme_stylebox_override("hover", shb)
+			season.add_theme_stylebox_override("focus", shb)
+			season.add_theme_stylebox_override("pressed", shb)
+			season.pressed.connect(_show_menu_bp)
+			side.add_child(season)
+			var sv := VBoxContainer.new()
+			sv.set_anchors_preset(Control.PRESET_FULL_RECT)
+			sv.offset_left = 16.0
+			sv.offset_right = -16.0
+			sv.offset_top = 14.0
+			sv.offset_bottom = -12.0
+			sv.add_theme_constant_override("separation", 6)
+			sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			season.add_child(sv)
+			sv.add_child(_card_label("Battle Pass · сезон 1", 14, Color("#e7c985"), true))
+			sv.add_child(_card_label("Новый тестовый цикл. Прогресс начинается с чистого листа.", 10, Color("#a3b2c5")))
+			sv.add_child(_card_label("Премиальные награды и эксклюзивная косметика →", 10, Color("#e7c985")))
 	else:
 		vb.add_child(_opp_switch())
 		vb.add_child(m1)
@@ -12006,6 +12205,35 @@ func _menu_back_show(on: bool) -> void:
 	# В Web главное лобби отрисовывает DOM поверх canvas; подэкраны — Godot.
 	_web_main_menu(not on)
 
+func _show_menu_faq() -> void:
+	_menu_back_show(true)
+	var vb: VBoxContainer = _ui.menu_box
+	for c in vb.get_children():
+		vb.remove_child(c)
+		c.queue_free()
+	vb.custom_minimum_size = Vector2(minf(620.0, _menu_content_w(0.95)), 0)
+	vb.add_child(_screen_title("profile", "FAQ · Как играть"))
+	vb.add_child(_framed_label("ЦЕЛЬ И УПРАВЛЕНИЕ\nПобеди противника, пока не погиб твой отряд. ЛКМ — выбрать бойца, клетку или цель. ПКМ-тянуть — обзор. Колесо — масштаб.", 14))
+	vb.add_child(_framed_label("ОЧКИ ДЕЙСТВИЯ (ОД)\nДвижение и атаки тратят ОД. Нажми «Конец хода», когда закончил: оставшиеся ОД превращаются во временную броню до следующего хода.", 14))
+	vb.add_child(_framed_label("СНАРЯЖЕНИЕ И ЗДОРОВЬЕ\nПодходи к ящикам и открывай их. Оружие, броню и медицину найдёшь в инвентаре [I]. Раненые бойцы восстанавливаются в Медцентре.", 14))
+	vb.add_child(_framed_label("ПОДСКАЗКИ\nТур лобби и обучение первого боя можно повторить здесь в любой момент. Прогресс аккаунта и награды при повторе не сбрасываются.", 14))
+	var lobby := _menu_button("Повторить тур лобби", true)
+	lobby.pressed.connect(_replay_lobby_guide)
+	vb.add_child(lobby)
+	var battle := _menu_button("Повторить обучение в бою")
+	battle.pressed.connect(func():
+		_onboard_replay_requested = true
+		_start_mode(1)
+	)
+	vb.add_child(battle)
+
+func _replay_lobby_guide() -> void:
+	_show_menu_main()
+	if not OS.has_feature("web"):
+		return
+	await get_tree().process_frame
+	JavaScriptBridge.eval("if(window.dzLobbyGuideStart){window.dzLobbyGuideStart(true);}", true)
+
 func _show_menu_settings() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
@@ -12016,6 +12244,9 @@ func _show_menu_settings() -> void:
 		c.queue_free()
 	vb.custom_minimum_size = Vector2(_menu_w(), 0)
 	vb.add_child(_screen_title("gear", "Настройки"))
+	var faq := _menu_button("FAQ · Как играть")
+	faq.pressed.connect(_show_menu_faq)
+	vb.add_child(faq)
 	var fsb := _menu_button("Полный экран")
 	fsb.pressed.connect(_request_fullscreen)
 	vb.add_child(fsb)
@@ -12062,7 +12293,7 @@ func _show_menu_settings() -> void:
 		tb2.selected = str(_profile.get("teleport", "beam")) == tid
 		tb2.disabled = locked
 		if locked:
-			tb2.tooltip_text = "Эксклюзив Battle Pass — 50 уровень 1 сезона"
+			tb2.tooltip_text = "Пока недоступно — появится в одном из будущих событий"
 		else:
 			tb2.pressed.connect(func():
 				_profile.teleport = tid
@@ -12717,13 +12948,15 @@ func _show_menu_squad() -> void:
 			var skb := Button.new()
 			skb.custom_minimum_size = Vector2(0, 26)   # OTRYAD_V1: 30->26
 			var owned_si: bool = _skin_owned(str(skd["id"]))
+			if not owned_si and not BP_SEASON_LIVE and str(skd.get("src", "free")) == "bp":
+				continue   # скрыты до запуска сезона; уже полученные облики остаются доступны
 			skb.text = str(skd["name"])
 			if not owned_si:
 				skb.icon = _icon_tex("lock")
 				skb.add_theme_constant_override("icon_max_width", 12)
 				skb.expand_icon = false
 			skb.modulate = Color(1, 1, 1) if owned_si else Color(0.4, 0.4, 0.45)
-			skb.tooltip_text = str(skd["name"]) if owned_si else (str(skd["name"]) + " — награда Battle Pass (скоро)")
+			skb.tooltip_text = str(skd["name"]) if owned_si else (str(skd["name"]) + " — пока недоступно")
 			skb.add_theme_font_size_override("font_size", 11)   # OTRYAD_V1: 12->11
 			var skss: StyleBoxFlat = StyleBoxFlat.new()
 			skss.bg_color = Color("#141824") if owned_si else Color(0.10, 0.11, 0.14, 0.9)
@@ -13458,7 +13691,7 @@ func _show_menu_med() -> void:
 	else:
 		var hire_note := Label.new()
 		if rent_active:
-			hire_note.text = "Аренда активна — следующий наём доступен после окончания срока. Второй слот резерва — только из наград Battle Pass."
+			hire_note.text = "Аренда активна — следующий наём доступен после окончания срока. Дополнительные места резерва появятся в будущих событиях."
 		else:
 			hire_note.text = "Резерв полон."
 		hire_note.add_theme_font_size_override("font_size", 12)
