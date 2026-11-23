@@ -1184,6 +1184,10 @@ func _onboard_update() -> void:
 	_onboard_clear_pulse()
 	if _onboard_step == 0 and _ui.has("squad_rows") and _ui.squad_rows.size() > 0:
 		_onboard_highlight(_ui.squad_rows[0].row)
+	elif _onboard_step == 1 and _mob() and _selected >= 0:
+		# После выбора карточки сразу центрируем бойца: иначе на узком экране
+		# подходящая клетка движения может остаться под HUD или за его пределами.
+		_focus_selected_fighter(false)
 	elif _onboard_step == 2 and _mob() and _selected >= 0:
 		# В портрете противник часто за краем экрана: показываем цель,
 		# иначе шаг атаки невозможно выполнить без ручного поиска камерой.
@@ -1211,7 +1215,7 @@ func _onboard_gate_report() -> void:
 		target = _ui.squad_rows[0].row.get_global_rect().get_center()
 	elif _onboard_step == 1 and _selected >= 0 and cam != null:
 		var enemy_i := _nearest_enemy(_fighters[_selected].cell, 1)
-		var best_d := 1.0e9
+		var best_score := 1.0e9
 		for cell in _reach:
 			if cell == _fighters[_selected].cell:
 				continue
@@ -1221,6 +1225,10 @@ func _onboard_gate_report() -> void:
 			# Не наводим приёмочный клик на клетку под панелями портретного HUD.
 			if _mob() and (p.y < 224.0 or p.y > _vh() - 96.0 or (p.x < 100.0 and p.y < 458.0)):
 				continue
+			# Не кликаем сквозь модель своего бойца: такой клик лишь повторно выберет её.
+			var self_p: Vector2 = cam.unproject_position(_fighters[_selected].node.position + Vector3(0, 0.9, 0))
+			if p.distance_to(self_p) < 52.0:
+				continue
 			var distance: float = cell.distance_to(_fighters[enemy_i].cell) if enemy_i >= 0 else 0.0
 			if enemy_i >= 0:
 				var fighter = _fighters[_selected]
@@ -1229,8 +1237,14 @@ func _onboard_gate_report() -> void:
 					continue
 				if int(fighter.ap) - int(_reach[cell]) < shot_cost:
 					continue
-			if distance < best_d:
-				best_d = distance
+				# Клетка под курсором не должна пересекаться с кликабельной моделью врага.
+				var enemy_p: Vector2 = cam.unproject_position(_fighters[enemy_i].node.position + Vector3(0, 0.9, 0))
+				if p.distance_to(enemy_p) < 52.0:
+					continue
+			# Дешёвый шаг надёжнее: сохраняет ОД и не прижимает бойца к модели врага.
+			var score: float = float(_reach[cell]) * 1000.0 + distance
+			if score < best_score:
+				best_score = score
 				target = p
 	elif _onboard_step == 2 and _selected >= 0 and cam != null:
 		var enemy_i := _nearest_enemy(_fighters[_selected].cell, 1)
@@ -5253,9 +5267,10 @@ func _fighter_near_mouse() -> int:
 
 # ---------- выбор бойца и подсветка ----------
 func _select(i: int) -> void:
+	# Сначала фиксируем выбор: обработчик шага обучения использует уже нового бойца.
+	_selected = i
 	if _onboard_step == 0 and _fighters[i].team == 0:
 		_onboard_next()
-	_selected = i
 	_reach = _reachable(_fighters[i].cell, _fighters[i].ap)
 	_show_reach()
 	if _sel_ring == null:
