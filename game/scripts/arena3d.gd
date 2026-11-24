@@ -1585,6 +1585,7 @@ func _web_main_menu(show: bool) -> void:
 		"vip": int(_profile.get("vip", 0)),
 		"rating": int(_profile.get("pvp_rating", 1000)),
 		"reaper_days": int(ceil(reaper_left / 86400.0)),
+		"tutorial_remaining": maxi(0, 3 - int(_profile.get("tutorial_step", 0))),
 		"missions": missions,
 		"lobby_guide_done": int(_profile.get("lobby_guide_done", 0)),
 	}
@@ -2000,7 +2001,7 @@ func _uitest_tour() -> void:
 	# Изолированный скрин-гейт рендера общего чата и цветных эмодзи (без сети).
 	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка 😀 🔥 💀 👍 ❤️", "me": 1, "at": 0}]
 	_render_menu_chat()
-	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded", "guide", "faq", "battle_guide"]
+	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded", "guide", "faq", "battle_guide", "reaper"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -2103,6 +2104,10 @@ func _uitest_show(s: String) -> void:
 			_show_menu_main()
 			JavaScriptBridge.eval("if(window.dzLobbyGuideStart){window.dzLobbyGuideStart(true);}", true)
 		"faq": _show_menu_faq()
+		"reaper":
+			_profile.lvl[0] = maxi(10, int(_profile.lvl[0]))
+			_profile.reaper_ts = 0.0
+			_show_menu_main()
 		"lobby", "main": _show_menu_main()
 	# Маркер только для автоматического скриншот-тура: браузер ждёт реальную
 	# отрисовку запрошенного экрана, а не пытается угадать загрузку по таймеру.
@@ -10976,9 +10981,27 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	_ui[key] = p
 
 func _start_mode(m: int) -> void:
-	# обучение (пак 1.1): первые 3 боя — только 1×1 против ослабленного бота
-	if _tutorial_active():
-		m = 1
+	# Первые 3 учебных боя — только 1×1, но выбранный режим нельзя молча подменять.
+	if _tutorial_active() and m != 1:
+		var training := AcceptDialog.new()
+		training.title = "Сначала обучение"
+		training.dialog_text = "Сейчас доступна только дуэль 1×1.\nОсталось учебных боёв: %d.\nОбучение можно пропустить в FAQ." % maxi(0, 3 - int(_profile.get("tutorial_step", 0)))
+		_ui.menu_layer.add_child(training)
+		_web_main_menu(false)
+		training.popup_centered()
+		training.confirmed.connect(func(): _web_main_menu(true))
+		training.canceled.connect(func(): _web_main_menu(true))
+		return
+	if m == 6 and _max_squad_lvl() < 10:
+		var level_gate := AcceptDialog.new()
+		level_gate.title = "Рейд закрыт"
+		level_gate.dialog_text = "Жнец открывается с 10 уровня любого бойца.\nСейчас максимальный уровень отряда: %d." % _max_squad_lvl()
+		_ui.menu_layer.add_child(level_gate)
+		_web_main_menu(false)
+		level_gate.popup_centered()
+		level_gate.confirmed.connect(func(): _web_main_menu(true))
+		level_gate.canceled.connect(func(): _web_main_menu(true))
+		return
 	# погибший приходит в себя в медцентре с 1 HP и регенерирует; раненых — предупреждаем
 	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
 	var low: Array = []
@@ -12008,14 +12031,17 @@ func _show_menu_main() -> void:
 		m5.tooltip_text = "Откроется на 25 ур. любого бойца (сейчас максимум: %d)" % _max_squad_lvl()
 	if not lock5:
 		m5.pressed.connect(func(): _start_mode(5))
-	# --- ЖНЕЦ: рейд-босс, после боя кулдаун 3 дня ---
+	# --- ЖНЕЦ: рейд с 10 ур.; после боя кулдаун 3 дня ---
 	var now5 := Time.get_unix_time_from_system()
 	var rts := float(_profile.get("reaper_ts", 0.0))
-	var lock6 := rts > now5
+	var level6 := _max_squad_lvl()
+	var lock6 := level6 < 10 or rts > now5
 	var rtxt := "Фазы, карты и особый трофей"
-	if lock6:
+	if level6 < 10:
+		rtxt = "Откроется на 10 ур. любого бойца (сейчас: %d)" % level6
+	elif rts > now5:
 		rtxt = "Жнец вернётся через %d дн." % int(ceil((rts - now5) / 86400.0))
-	var m6 := _demo_mode_card("Жнец", rtxt, "РЕЙД-БОСС", lock6)
+	var m6 := _demo_mode_card("Жнец", rtxt, "10 УРОВЕНЬ" if level6 < 10 else "РЕЙД-БОСС", lock6)
 	if lock6:
 		m6.tooltip_text = rtxt
 	if not lock6:
