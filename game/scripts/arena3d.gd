@@ -12843,7 +12843,12 @@ func _show_menu_squad() -> void:
 				b.add_theme_stylebox_override("hover", asb)
 				b.add_theme_color_override("font_color", Color(1, 1, 1))
 		else:
-			b.text = "🔒 %d" % (i + 1)
+			# Manrope не содержит emoji-замка: вместо «квадратов» — штатная иконка.
+			b.text = "%d" % (i + 1)
+			b.icon = _icon_tex("lock")
+			b.expand_icon = true
+			b.add_theme_constant_override("icon_max_width", 13)
+			b.add_theme_color_override("icon_normal_color", Color(0.55, 0.6, 0.68))
 			b.tooltip_text = ("Нужен %d уровень любого бойца" % SLOT3_LVL) if i == 2 else "Только по месячной подписке ВИП — появится в магазине"
 			b.add_theme_color_override("font_color", Color(0.55, 0.6, 0.68))
 		b.custom_minimum_size = Vector2(slot_w, 30)
