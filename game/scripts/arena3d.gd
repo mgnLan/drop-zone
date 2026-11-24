@@ -172,6 +172,7 @@ var _house_at := {}                # ключ клетки -> id дома
 var _covers := {}                  # центр -> {hp, cells, node, heavy}
 var _cover_at := {}                # ключ клетки -> центр укрытия
 var _fire := {}                    # Vector2i -> осталось раундов
+var _fire_src := {}                # Vector2i -> индекс бойца, поджегшего клетку
 var _graffiti := {}                # ключ клетки -> true (метка оставлена)
 var _fire_nodes := {}              # Vector2i -> Node3D
 var _zone_min := Vector2i(0, 0)
@@ -2350,6 +2351,7 @@ func _profile_normalize() -> void:
 		"sidearm": [0, 0, 0, 0],
 		"cls": [0, 0, 0, 0],
 		"hp": [-1, -1, -1, -1],
+		"slot_expires": [0.0, 0.0, 0.0, 0.0],
 	}
 	for k in defaults.keys():
 		var v = _profile.get(k, null)
@@ -2400,6 +2402,15 @@ func _profile_normalize() -> void:
 	while (sqh as Array).size() < 4:
 		(sqh as Array).append(-1)
 	_profile.squad_heroes = (sqh as Array).slice(0, 4)
+	# Особый герой — один на отряд: старые дубли слотов снимаем автоматически.
+	var seen_squad_heroes := {}
+	for si in 4:
+		var shid := int(_profile.squad_heroes[si])
+		if shid >= 0:
+			if seen_squad_heroes.has(shid):
+				_profile.squad_heroes[si] = -1
+			else:
+				seen_squad_heroes[shid] = true
 	if not (_profile.get("craft_dups", 0) is int or _profile.get("craft_dups", 0) is float):
 		_profile.craft_dups = 0
 	# Автоподсказки: после PHP пустой объект может прийти массивом, старые профили — без ключа.
@@ -3119,6 +3130,7 @@ func _load_profile() -> void:
 		"sidearm": [0, 0, 0, 0],      # стартовый пистолет бойца (индекс SIDEARMS)
 		"cls": [0, 0, 0, 0],          # класс бойца (индекс FIGHTER_CLASSES)
 		"hp": [-1, -1, -1, -1],       # здоровье между боями (-1 = полное)
+		"slot_expires": [0.0, 0.0, 0.0, 0.0], # срок аренды бойца, назначенного в слот
 		"hp_ts": 0.0,                 # unixtime последнего сохранения HP (реген)
 		"vip": 0,                     # 1 = подписка: слот 4, реген ×2, награды (скоро)
 		"reserve": [],                # запасные бойцы (словари; ротация вручную)
@@ -3190,6 +3202,7 @@ func _load_profile() -> void:
 	_profile.bp_claimed_free = cfg.get_value("player", "bp_claimed_free", [])
 	_profile.bp_claimed_prem = cfg.get_value("player", "bp_claimed_prem", [])
 	_profile.hp = cfg.get_value("player", "hp", [-1, -1, -1, -1])
+	_profile.slot_expires = cfg.get_value("player", "slot_expires", [0.0, 0.0, 0.0, 0.0])
 	_profile.hp_ts = float(cfg.get_value("player", "hp_ts", 0.0))
 	_profile.vip = int(cfg.get_value("player", "vip", 0))
 	_profile.reserve = cfg.get_value("player", "reserve", [])
@@ -3258,6 +3271,7 @@ func _save_profile() -> void:
 	cfg.set_value("player", "bp_claimed_free", _profile.get("bp_claimed_free", []))
 	cfg.set_value("player", "bp_claimed_prem", _profile.get("bp_claimed_prem", []))
 	cfg.set_value("player", "hp", _profile.get("hp", [-1, -1, -1, -1]))
+	cfg.set_value("player", "slot_expires", _profile.get("slot_expires", [0.0, 0.0, 0.0, 0.0]))
 	cfg.set_value("player", "hp_ts", float(_profile.get("hp_ts", 0.0)))
 	cfg.set_value("player", "vip", int(_profile.get("vip", 0)))
 	cfg.set_value("player", "reserve", _profile.get("reserve", []))
@@ -3845,7 +3859,7 @@ func _damage_cover_hit(ck: String, dmg: int, src: String, att_idx := -1) -> void
 			rec.hp = 1
 			_log("%s -> %s: пробита (%d урона), но не взорвалась — нужно ещё попадание!" % [src, cname, dmg])
 			return
-		_destroy_cover(ck, 1.25 if sapper else 1.0)
+		_destroy_cover(ck, 1.25 if sapper else 1.0, att_idx)
 	else:
 		_log("%s -> %s: %d урона (прочность %d)" % [src, cname, dmg, int(rec.hp)])
 
@@ -3885,9 +3899,9 @@ func _shoot_cover(att: int, cell: Vector2i) -> void:
 	if aoe2 > 0:
 		if a.team == 0:
 			_mq_acc["grenades"] = int(_mq_acc.get("grenades", 0)) + 1
-		_explode_at(cell, aoe2)
+		_explode_at(cell, aoe2, att)
 		if w.get("burn", false):
-			_ignite(cell, aoe2)
+			_ignite(cell, aoe2, att)
 		if w.get("consumable", false):
 			_spend_consumable(att)
 		return
@@ -3895,7 +3909,7 @@ func _shoot_cover(att: int, cell: Vector2i) -> void:
 	var dmg: int = w.get("damage", 10) * burst
 	_damage_cover_hit(ck, dmg, a.name, att)
 
-func _destroy_cover(ck: String, mul := 1.0) -> void:
+func _destroy_cover(ck: String, mul := 1.0, att_idx := -1) -> void:
 	var rec = _covers.get(ck)
 	if rec == null:
 		return
@@ -3910,7 +3924,7 @@ func _destroy_cover(ck: String, mul := 1.0) -> void:
 	_covers.erase(ck)
 	if rec.get("barrel", false):
 		_log("Бочка взорвалась!")
-		_explode_barrel(rec.cells[0], mul)
+		_explode_barrel(rec.cells[0], mul, att_idx)
 	else:
 		_log("%s разрушено!" % _cover_name(rec))
 
@@ -3935,7 +3949,7 @@ func _make_flame(c: Vector2i) -> Node3D:
 	add_child(root)
 	return root
 
-func _ignite(cell: Vector2i, radius: int) -> void:
+func _ignite(cell: Vector2i, radius: int, src_idx := -1) -> void:
 	for dx in range(-radius, radius + 1):
 		for dz in range(-radius, radius + 1):
 			var cf := Vector2i(cell.x + dx, cell.y + dz)
@@ -3944,6 +3958,9 @@ func _ignite(cell: Vector2i, radius: int) -> void:
 			if _house_at.has(_key(cf)):
 				continue
 			_fire[cf] = 3
+			# Перекрытие чужого огня не крадёт уже зачисленный источник урона.
+			if src_idx >= 0 or not _fire_src.has(cf):
+				_fire_src[cf] = src_idx
 			if not _fire_nodes.has(cf):
 				_fire_nodes[cf] = _make_flame(cf)
 	_log("Поджог! Огонь горит 3 раунда и жжёт стоящих (-8 HP)")
@@ -3956,8 +3973,9 @@ func _tick_fire() -> void:
 		var sk := _key(c)
 		if _unit_at.has(sk):
 			var vi: int = _unit_at[sk]
-			# огонь почти игнорирует броню (~90% проходит)
-			_apply_damage(vi, 8, "Огонь", -1, -1.0, 0.9)
+			# Добивание своим огнём засчитывается поджегшему бойцу.
+			var fire_att := int(_fire_src.get(c, -1))
+			_apply_damage(vi, 8, "Огонь", fire_att, -1.0, 0.9)
 			if _game_over:
 				return
 		_fire[c] = int(_fire[c]) - 1
@@ -3965,10 +3983,11 @@ func _tick_fire() -> void:
 			expired.append(c)
 	for c2 in expired:
 		_fire.erase(c2)
+		_fire_src.erase(c2)
 		if _fire_nodes.has(c2):
 			_fire_nodes[c2].queue_free()
 			_fire_nodes.erase(c2)
-func _damage_covers(cell: Vector2i, radius: int) -> void:
+func _damage_covers(cell: Vector2i, radius: int, att_idx := -1) -> void:
 	# взрыв бьёт по укрытиям в радиусе; у каждого укрытия есть прочность
 	var done := {}
 	for dx in range(-radius, radius + 1):
@@ -3978,7 +3997,7 @@ func _damage_covers(cell: Vector2i, radius: int) -> void:
 			if _cover_at.has(kk6) and not done.has(_cover_at[kk6]):
 				var ck2: String = _cover_at[kk6]
 				done[ck2] = true
-				_damage_cover_hit(ck2, 25, "Взрыв")
+				_damage_cover_hit(ck2, 25, "Взрыв", att_idx)
 
 var _plaster_tex: Texture2D = null
 var _outfit_mats := {}        # кэш тинтованных материалов камуфляжей: "mat_id|idx" -> Material
@@ -4090,16 +4109,16 @@ func _make_pipe(pos: Vector3) -> Node3D:
 	add_child(g)
 	return g
 
-func _explode_barrel(c: Vector2i, mul := 1.0) -> void:
+func _explode_barrel(c: Vector2i, mul := 1.0, att_idx := -1) -> void:
 	# бочка взрывается: урон 20 (x mul у сапёра) по своей и соседним клеткам, цепная реакция
-	_explode_at(c, 1)
+	_explode_at(c, 1, att_idx)
 	for vi in _fighters.size():
 		var v = _fighters[vi]
 		if not v.alive:
 			continue
 		if maxi(absi(v.cell.x - c.x), absi(v.cell.y - c.y)) <= 1:
 			var bd := Vector2(v.cell.x - c.x, v.cell.y - c.y).length()
-			_apply_damage(vi, int(20 * mul), "Бочка", -1, bd)
+			_apply_damage(vi, int(20 * mul), "Бочка", att_idx, bd)
 			if _game_over:
 				return
 
@@ -5013,8 +5032,8 @@ func _spawn_burst(pos: Vector3, color: Color) -> void:
 	parts.emitting = true
 	get_tree().create_timer(1.3).timeout.connect(parts.queue_free)
 
-func _explode_at(cell: Vector2i, radius := 1) -> void:
-	_damage_covers(cell, radius)
+func _explode_at(cell: Vector2i, radius := 1, att_idx := -1) -> void:
+	_damage_covers(cell, radius, att_idx)
 	var pos := gw(cell.x, cell.y, 0.7)
 	_sfx_play("explosion")
 	_shake = 0.55
@@ -5511,6 +5530,23 @@ func _fighter_hp_max(i: int) -> int:
 # офлайн-реген: HP восстанавливается от времени с последнего боя
 func _med_tick() -> void:
 	var now := Time.get_unix_time_from_system()
+	# Если арендованный стоит в боевом слоте, по окончании срока назад возвращается
+	# постоянный боец из резерва; арендованный затем удаляется общей очисткой ниже.
+	var active_exps: Array = _profile.get("slot_expires", [0.0, 0.0, 0.0, 0.0])
+	for si in mini(int(_profile.get("unlocked_slots", 1)), active_exps.size()):
+		var active_exp := float(active_exps[si])
+		if active_exp <= 0.0 or now < active_exp:
+			continue
+		var return_idx := -1
+		var current_reserve: Array = _profile.get("reserve", [])
+		for ri in current_reserve.size():
+			if float(current_reserve[ri].get("expires", 0.0)) <= 0.0:
+				return_idx = ri
+				break
+		if return_idx >= 0:
+			var rented_name := str(_profile.names[si])
+			_reserve_swap(return_idx, si)
+			_log("Срок найма %s истёк — %s вернулся в слот %d" % [rented_name, _profile.names[si], si + 1])
 	# аренда запасных: просроченные уходят
 	var rsv: Array = _profile.get("reserve", [])
 	var kept: Array = []
@@ -5748,6 +5784,9 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 		_fighters[src_idx].dmg = int(_fighters[src_idx].get("dmg", 0)) + applied
 		if _fighters[src_idx].team == 0:
 			_mq_acc["damage"] = int(_mq_acc.get("damage", 0)) + applied
+		if applied > 0 and int(_fighters[src_idx].team) != int(d.team):
+			# Если цель позже добьёт зона или уже горящая клетка, убийство не потеряется.
+			d["last_hit_by"] = src_idx
 	_sfx_play("hit")
 	var arm_txt := ""
 	if dmg > real:
@@ -5755,13 +5794,19 @@ func _apply_damage(victim: int, dmg: int, src_name: String, src_idx := -1, dist 
 	_log("%s -> %s: %d урона%s (HP %d)" % [src_name, d.name, applied, arm_txt, d.hp])
 	if d.hp <= 0:
 		_kill(victim)
-		if int(d.team) == 1 and src_idx >= 0 and src_idx < _fighters.size():
+		var killer_idx := src_idx
+		if killer_idx < 0 or killer_idx >= _fighters.size() or int(_fighters[killer_idx].team) == int(d.team):
+			killer_idx = int(d.get("last_hit_by", -1))
+		var valid_killer := killer_idx >= 0 and killer_idx < _fighters.size() and int(_fighters[killer_idx].team) != int(d.team)
+		if int(d.team) == 1 and valid_killer and int(_fighters[killer_idx].team) == 0:
 			# учёт вайпа: кто убил вражеского бойца в этом ходу
-			_turn_killers[src_idx] = int(_turn_killers.get(src_idx, 0)) + 1
-		if src_idx >= 0 and src_idx < _fighters.size():
-			var k = _fighters[src_idx]
+			_turn_killers[killer_idx] = int(_turn_killers.get(killer_idx, 0)) + 1
+		if valid_killer:
+			var k = _fighters[killer_idx]
 			k.kills = int(k.kills) + 1
-			_gain_xp(src_idx, _xp_kill())
+			if killer_idx != src_idx:
+				_log("Убийство засчитано: %s (его урон/огонь)" % k.name)
+			_gain_xp(killer_idx, _xp_kill())
 			# отдельный «динь» подтверждения, когда убивает боец игрока
 			if int(k.team) == 0:
 				_sfx_play("kill")
@@ -5827,7 +5872,7 @@ func _shoot(att: int, def: int) -> void:
 		if _rng.randf() < 0.25:
 			boom = d.cell + Vector2i(_rng.randi_range(-1, 1), _rng.randi_range(-1, 1))
 			_log("%s: граната отклонилась от цели!" % a.name)
-		_explode_at(boom, aoe)
+		_explode_at(boom, aoe, att)
 		_log("%s: %s — взрыв на площади!" % [a.name, w.get("name", "?")])
 		var did := false
 		var real_sum := 0
@@ -5850,7 +5895,7 @@ func _shoot(att: int, def: int) -> void:
 			if cls2 != "":
 				a.prof[cls2] = int(a.prof.get(cls2, 0)) + real_sum
 		if w.get("burn", false):
-			_ignite(boom, aoe)
+			_ignite(boom, aoe, att)
 		if w.get("consumable", false):
 			_spend_consumable(att)
 		return
@@ -9104,6 +9149,49 @@ func _run_testplay() -> void:
 	_save_profile()
 	print("SHOP_GUARD_TEST закрыто-не-надевается=", equip_guard, " база-доступна=", base_equip, " покупка-200=", purchase_ok, " дубль-без-списания=", duplicate_free, " нехватка-защищена=", insufficient_ok, " сохранение=", persist_ok, " (все true)")
 	print("CHEST_OWNED_TEST новый-дроп=", drop_new, " экипировка=", drop_equip, " повтор-это-дубль=", drop_duplicate, " осколки-один-раз=", chest_duplicate_ok, " (все true)")
+	# --- SQUAD_RESERVE_TEST: арендованный выбирается в слот, старый боец сохраняется ---
+	var squad_profile: Dictionary = _profile.duplicate(true)
+	var rental_until := Time.get_unix_time_from_system() + 3600.0
+	_profile.reserve = [{"name": "Сокол-тест", "lvl": 9, "xp": 0, "sidearm": 2, "cls": 3,
+		"hp": -1, "stats": _default_fighter_stats(), "talents": {}, "tpts": 0, "prof": {}, "expires": rental_until}]
+	var old_slot_name := str(_profile.names[1])
+	_reserve_swap(0, 1)
+	var reserve_in_ok := str(_profile.names[1]) == "Сокол-тест" and str(_profile.reserve[0].get("name", "")) == old_slot_name
+	reserve_in_ok = reserve_in_ok and float(_profile.slot_expires[1]) == rental_until and float(_profile.reserve[0].get("expires", -1.0)) == 0.0
+	_reserve_swap(0, 1)
+	var reserve_back_ok := str(_profile.names[1]) == old_slot_name and str(_profile.reserve[0].get("name", "")) == "Сокол-тест"
+	_reserve_swap(0, 1)
+	_profile.slot_expires[1] = Time.get_unix_time_from_system() - 1.0
+	_med_tick()
+	var rental_expiry_ok: bool = str(_profile.names[1]) == old_slot_name and _profile.reserve.is_empty() and float(_profile.slot_expires[1]) == 0.0
+	_profile = squad_profile
+	print("SQUAD_RESERVE_TEST выбор-в-слот=", reserve_in_ok, " возврат-без-потерь=", reserve_back_ok, " конец-аренды=", rental_expiry_ok, " (все true)")
+	# --- KILL_CREDIT_TEST: два прямых убийства + добивание зоной после нашего урона ---
+	_game_over = false
+	for ki in range(4, _fighters.size()):
+		_fighters[ki].alive = true
+		_fighters[ki].hp = 50
+		_fighters[ki].armor = {"helmets": null, "body": null, "pants": null}
+		_fighters[ki].guard = 0
+	var kill_start := int(f0.get("kills", 0))
+	_fighters[4].hp = 1
+	_apply_damage(4, 100, "KILL_CREDIT_TEST", 0, 2.0)
+	_fighters[5].hp = 1
+	_apply_damage(5, 100, "KILL_CREDIT_TEST", 0, 2.0)
+	var two_kills_ok := int(f0.get("kills", 0)) == kill_start + 2
+	_fighters[6].hp = 1
+	var fire_cell: Vector2i = _fighters[6].cell
+	_fire[fire_cell] = 1
+	_fire_src[fire_cell] = 0
+	_tick_fire()
+	var fire_credit_ok := int(f0.get("kills", 0)) == kill_start + 3
+	_fighters[6].alive = true
+	_fighters[6].hp = 50
+	_fighters[7].hp = 5
+	_apply_damage(7, 1, "KILL_CREDIT_TEST", 0, 2.0)
+	_apply_damage(7, 100, "Зона", -1)
+	var zone_credit_ok := int(f0.get("kills", 0)) == kill_start + 4
+	print("KILL_CREDIT_TEST два-подряд=", two_kills_ok, " свой-огонь=", fire_credit_ok, " зона-после-нашего-урона=", zone_credit_ok, " итого=", int(f0.get("kills", 0)) - kill_start, " (все true/4)")
 	# --- COMBAT_MATH_TEST: overkill не раздувает статистику, миссии и возврат урона ---
 	var math_victim = _fighters[4]
 	math_victim.alive = true
@@ -9160,6 +9248,11 @@ func _run_testmenu(mobile := false, sfx := "") -> void:
 	if sfx == "":
 		sfx = "_mob" if mobile else ""
 	await get_tree().process_frame
+	# Визуальный гейт состава: два боевых слота и один арендованный резерв.
+	_profile.unlocked_slots = 2
+	_profile.reserve = [{"name": "Сокол", "lvl": 9, "xp": 568, "sidearm": 2, "cls": 3,
+		"hp": -1, "stats": {"str": 5, "agi": 4, "end": 6, "per": 6, "int": 7, "lck": 9},
+		"talents": {}, "tpts": 0, "prof": {}, "expires": Time.get_unix_time_from_system() + 6.0 * 86400.0}]
 	# Изолированный дым-тест рендера общего чата (без сетевого эхо).
 	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка чата 😀🔥💀", "me": 1, "at": 0}]
 	_render_menu_chat()
@@ -12814,6 +12907,119 @@ func _teleport_selector() -> Control:
 		cv.add_child(choose)
 	return wrap
 
+func _reserve_hp_max(rb: Dictionary) -> int:
+	var st: Dictionary = rb.get("stats", _default_fighter_stats())
+	return _stat_hp(st) + 3 * (int(rb.get("lvl", 1)) - 1)
+
+func _roster_stats_text(st: Dictionary) -> String:
+	var short := {"str": "СИЛ", "agi": "ЛОВ", "end": "ВЫН", "per": "ВОС", "int": "ИНТ", "lck": "УДА"}
+	var parts := PackedStringArray()
+	for sk in STAT_KEYS:
+		parts.append("%s %d" % [short[sk], int(st.get(sk, 0))])
+	return " · ".join(parts)
+
+func _reserve_rent_text(rb: Dictionary) -> String:
+	var expires := float(rb.get("expires", 0.0))
+	if expires <= 0.0:
+		return ""
+	var left := maxi(0, int(expires - Time.get_unix_time_from_system()))
+	return " · аренда %d дн." % maxi(1, int(ceil(left / 86400.0))) if left >= 86400 else " · аренда %d ч" % maxi(1, int(ceil(left / 3600.0)))
+
+func _squad_roster() -> VBoxContainer:
+	# Единая витрина состава: в каждом боевом слоте можно выбрать себя или резервного.
+	# Аренда — замена, а не дополнительный слот; HP и основные статы видны до боя.
+	var roster := VBoxContainer.new()
+	roster.add_theme_constant_override("separation", 6)
+	var title := _mk_label("СОСТАВ · ВЫБОР БОЙЦА В КАЖДОМ СЛОТЕ", 13)
+	title.add_theme_color_override("font_color", Color("#72dff2"))
+	roster.add_child(title)
+	var flags: Array = _profile.get("battle_slots", [1, 1, 1, 1])
+	var hp_arr: Array = _profile.get("hp", [-1, -1, -1, -1])
+	var rsv: Array = _profile.get("reserve", [])
+	var n := clampi(int(_profile.get("unlocked_slots", 1)), 1, 4)
+	for i in n:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _compact_card_style(false, i == _squad_edit))
+		roster.add_child(card)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 3)
+		card.add_child(cv)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 7)
+		cv.add_child(row)
+		var cb := CheckBox.new()
+		cb.text = "%d · В бой" % (i + 1)
+		cb.add_theme_font_size_override("font_size", 12)
+		cb.button_pressed = i >= flags.size() or int(flags[i]) == 1
+		cb.tooltip_text = "Галочка определяет, кто выйдет на арену. Хотя бы один боец обязателен."
+		var fi := i
+		cb.toggled.connect(func(on: bool):
+			var fl2: Array = _profile.get("battle_slots", [1, 1, 1, 1]).duplicate()
+			while fl2.size() < 4:
+				fl2.append(1)
+			fl2[fi] = 1 if on else 0
+			var any := false
+			for k in n:
+				if int(fl2[k]) == 1:
+					any = true
+			if not any:
+				fl2[fi] = 1
+				cb.set_pressed_no_signal(true)
+			_profile.battle_slots = fl2
+			_save_profile()
+		)
+		row.add_child(cb)
+		var pick := OptionButton.new()
+		pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pick.custom_minimum_size = Vector2(0, 32)
+		pick.add_theme_font_size_override("font_size", 12)
+		_style_menu_button(pick)
+		var mx := _fighter_hp_max(i)
+		var hp := mx if i >= hp_arr.size() or int(hp_arr[i]) < 0 else int(hp_arr[i])
+		var active_rent := _reserve_rent_text({"expires": _profile.get("slot_expires", [0.0, 0.0, 0.0, 0.0])[i]})
+		pick.add_item("%s · %d ур. · %d/%d HP%s" % [str(_profile.names[i]), int(_profile.lvl[i]), hp, mx, active_rent])
+		for ri in rsv.size():
+			var rb: Dictionary = rsv[ri]
+			var rmx := _reserve_hp_max(rb)
+			var rhp := rmx if int(rb.get("hp", -1)) < 0 else clampi(int(rb.get("hp", 0)), 0, rmx)
+			pick.add_item("%s · %d ур. · %d/%d HP%s" % [str(rb.get("name", "Боец")), int(rb.get("lvl", 1)), rhp, rmx, _reserve_rent_text(rb)])
+		pick.selected = 0
+		pick.tooltip_text = "Выберите бойца слота. При выборе резервного текущий боец уйдёт в резерв — прогресс не теряется."
+		pick.item_selected.connect(func(idx: int):
+			if idx <= 0 or idx > _profile.get("reserve", []).size():
+				return
+			_reserve_swap(idx - 1, fi)
+			var fl3: Array = _profile.get("battle_slots", [1, 1, 1, 1]).duplicate()
+			fl3[fi] = 1
+			_profile.battle_slots = fl3
+			_squad_edit = fi
+			_save_profile()
+			_refresh_menu_screen("squad")
+		)
+		row.add_child(pick)
+		var role := Label.new()
+		var cls_i := clampi(int(_profile.cls[i]), 0, FIGHTER_CLASSES.size() - 1)
+		role.text = "%s · %s" % [FIGHTER_CLASSES[cls_i]["name"], _roster_stats_text(_profile.stats[i])]
+		role.add_theme_font_size_override("font_size", 10)
+		role.add_theme_color_override("font_color", Color("#9db0c3"))
+		role.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cv.add_child(role)
+	if not rsv.is_empty():
+		var reserve_title := _mk_label("РЕЗЕРВ · ДОСТУПЕН ДЛЯ ЗАМЕНЫ В ЛЮБОМ СЛОТЕ", 11)
+		reserve_title.add_theme_color_override("font_color", Color("#f2c46d"))
+		roster.add_child(reserve_title)
+		for rb2 in rsv:
+			var rcls := clampi(int(rb2.get("cls", 0)), 0, FIGHTER_CLASSES.size() - 1)
+			var rmx2 := _reserve_hp_max(rb2)
+			var rhp2 := rmx2 if int(rb2.get("hp", -1)) < 0 else clampi(int(rb2.get("hp", 0)), 0, rmx2)
+			var rl := Label.new()
+			rl.text = "%s · %d ур. · %s · %d/%d HP%s\n%s" % [str(rb2.get("name", "Боец")), int(rb2.get("lvl", 1)), FIGHTER_CLASSES[rcls]["name"], rhp2, rmx2, _reserve_rent_text(rb2), _roster_stats_text(rb2.get("stats", {}))]
+			rl.add_theme_font_size_override("font_size", 10)
+			rl.add_theme_color_override("font_color", Color("#9db0c3"))
+			rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			roster.add_child(rl)
+	return roster
+
 func _show_menu_squad() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
@@ -12829,7 +13035,7 @@ func _show_menu_squad() -> void:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 4)
 	vb.add_child(tabs)
-	vb.add_child(_battle_slots_row())
+	vb.add_child(_squad_roster())
 	var slot_w := floorf((_menu_w() - 12.0) / 4.0) if _mob() else 96.0
 	for i in 4:
 		var b := Button.new()
@@ -13026,6 +13232,10 @@ func _show_menu_squad() -> void:
 		var cur := opts.find(hid0)
 		var nxt: int = -1 if cur < 0 else int(opts[(cur + 1) % opts.size()])
 		var sh2: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+		if nxt >= 0:
+			for other_slot in mini(4, sh2.size()):
+				if other_slot != _squad_edit and int(sh2[other_slot]) == nxt:
+					sh2[other_slot] = -1
 		sh2[_squad_edit] = nxt
 		_profile.squad_heroes = sh2
 		_save_profile()
@@ -13975,6 +14185,14 @@ func _reserve_swap(ridx: int, sidx: int) -> void:
 	var tmp_t: int = int(_profile.tpts[sidx])
 	_profile.tpts[sidx] = int(rb.get("tpts", 0))
 	rb["tpts"] = tmp_t
+	# Срок аренды следует за бойцом, а не остаётся у старого резервного.
+	var exps: Array = _profile.get("slot_expires", [0.0, 0.0, 0.0, 0.0]).duplicate()
+	while exps.size() < 4:
+		exps.append(0.0)
+	var tmp_e := float(exps[sidx])
+	exps[sidx] = float(rb.get("expires", 0.0))
+	rb["expires"] = tmp_e
+	_profile.slot_expires = exps
 	rsv[ridx] = rb
 	_profile.reserve = rsv
 	_save_profile()
@@ -15380,6 +15598,9 @@ func _show_menu_heroes() -> void:
 				var sh5: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
 				while sh5.size() < 4:
 					sh5.append(-1)
+				for other_slot in 4:
+					if other_slot != _squad_edit and int(sh5[other_slot]) == hero_to_slot:
+						sh5[other_slot] = -1
 				sh5[_squad_edit] = hero_to_slot
 				_profile.squad_heroes = sh5
 				_save_profile()
