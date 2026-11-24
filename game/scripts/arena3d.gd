@@ -7857,6 +7857,9 @@ func _build_ui() -> void:
 	ch.add_child(ava)
 	_ui.card_avatar = ava
 	var card_frame := _frame_overlay(int(_profile.get("frame", 0)))
+	# В боевой карточке аватар заполняет всю высоту HBox: растягиваем рамку
+	# по этой же высоте, а не центрируем квадрат внутри вертикального портрета.
+	card_frame.stretch_mode = TextureRect.STRETCH_SCALE
 	ava.add_child(card_frame)
 	_ui.card_frame = card_frame
 	var cvb2 := VBoxContainer.new()
