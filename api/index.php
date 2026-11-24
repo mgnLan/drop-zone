@@ -29,6 +29,8 @@ try {
     out(['ok' => false, 'error' => 'db error']);
 }
 
+require_once __DIR__ . '/payment_common.php';
+
 $in = json_decode(file_get_contents('php://input'), true);
 if (!is_array($in)) out(['ok' => false, 'error' => 'bad request']);
 $action = $in['action'] ?? '';
@@ -85,7 +87,8 @@ if ($action === 'register') {
     $token = bin2hex(random_bytes(24));
     $db->prepare("INSERT INTO users (email, pass_hash, token, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))")
        ->execute([$email, password_hash($pass, PASSWORD_DEFAULT), $token]);
-    out(['ok' => true, 'token' => $token, 'profile' => new stdClass()]);
+    $profile = dz_profile_with_payment_flag($db, (int)$db->lastInsertId(), []);
+    out(['ok' => true, 'token' => $token, 'profile' => $profile]);
 }
 
 if ($action === 'login') {
@@ -98,8 +101,8 @@ if ($action === 'login') {
     if (!$u || !password_verify($pass, $u['pass_hash'])) out(['ok' => false, 'error' => 'Неверная почта или пароль']);
     $token = bin2hex(random_bytes(24));
     $db->prepare("UPDATE users SET token = ?, updated_at = datetime('now') WHERE id = ?")->execute([$token, $u['id']]);
-    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : new stdClass();
-    if ($profile === null) $profile = new stdClass();
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
+    $profile = dz_profile_with_payment_flag($db, (int)$u['id'], $profile);
     out(['ok' => true, 'token' => $token, 'profile' => $profile]);
 }
 
@@ -141,12 +144,13 @@ if ($action === 'vklogin') {
         $token = bin2hex(random_bytes(24));
         $db->prepare("INSERT INTO users (email, pass_hash, token, vk_id, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))")
            ->execute([$email, password_hash($token, PASSWORD_DEFAULT), $token, $vkId]);
-        out(['ok' => true, 'token' => $token, 'profile' => new stdClass(), 'new' => 1, 'name' => $name]);
+        $profile = dz_profile_with_payment_flag($db, (int)$db->lastInsertId(), []);
+        out(['ok' => true, 'token' => $token, 'profile' => $profile, 'new' => 1, 'name' => $name]);
     }
     $token = bin2hex(random_bytes(24));
     $db->prepare("UPDATE users SET token = ?, updated_at = datetime('now') WHERE id = ?")->execute([$token, $u['id']]);
-    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : new stdClass();
-    if ($profile === null) $profile = new stdClass();
+    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
+    $profile = dz_profile_with_payment_flag($db, (int)$u['id'], $profile);
     out(['ok' => true, 'token' => $token, 'profile' => $profile, 'name' => $name]);
 }
 
@@ -185,6 +189,7 @@ if ($action === 'save') {
     if (!$uu) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
     // серверные начисления (кошелёк) применяем ПОВЕРХ клиентского профиля
     dz_wallet_apply($db, (int)$uu['id'], $profile);
+    $profile = dz_profile_with_payment_flag($db, (int)$uu['id'], $profile);
     $st = $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE token = ?");
     $st->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $token]);
     if ($st->rowCount() === 0) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
@@ -213,100 +218,144 @@ if ($action === 'load') {
     }
     // серверные начисления применяем сразу и сохраняем — клиент получит актуальный баланс
     dz_wallet_apply($db, (int)$u['id'], $profile);
+    $profile = dz_profile_with_payment_flag($db, (int)$u['id'], $profile);
     $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
        ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
     out(['ok' => true, 'profile' => $profile]);
 }
 
 if ($action === 'buy') {
-    // покупка пака монет: сервер верифицирует order_id у ВК и начисляет монеты сам.
-    // Клиент НИКОГДА не начисляет покупки — только сервер (экономика не на клиенте).
+    // Клиент выбирает пак, но сервер принимает только заказ VK с совпадающими
+    // номером, оплатой, владельцем, точным товаром и суммой.
     $token   = (string)($in['token'] ?? '');
     $pack_id = (int)($in['pack'] ?? -1);
     $orderId = trim((string)($in['order_id'] ?? ''));
-    if ($token === '' || $orderId === '') out(['ok' => false, 'error' => 'bad request']);
-    // серверная таблица цен — клиентскую не доверяем
-    $PACKS = [0 => 150, 1 => 750, 2 => 1800, 3 => 3750]; // касса v6.143: итоговые объёмы за 29/99/199/399 ₽
+    if ($token === '' || $orderId === '' || !ctype_digit($orderId)) out(['ok' => false, 'error' => 'bad request']);
+    $PACKS = dz_payment_packs();
     if (!isset($PACKS[$pack_id])) out(['ok' => false, 'error' => 'unknown pack']);
-    $st = $db->prepare("SELECT id, profile FROM users WHERE token = ?");
+    $st = $db->prepare("SELECT id, profile, vk_id FROM users WHERE token = ?");
     $st->execute([$token]);
     $u = $st->fetch(PDO::FETCH_ASSOC);
     if (!$u) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
-    // idempotency: один order_id — одно начисление
-    $db->exec("CREATE TABLE IF NOT EXISTS orders (
-        order_id TEXT PRIMARY KEY,
-        user_id INTEGER,
-        pack INTEGER,
-        coins INTEGER,
-        created_at TEXT
-    )");
-    $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
+    dz_orders_init($db);
+    $st = $db->prepare("SELECT user_id, pack FROM orders WHERE order_id = ?");
     $st->execute([$orderId]);
-    if ($st->fetch()) out(['ok' => true, 'duplicate' => true]); // уже начислено
-    // верификация заказа у ВК. Токен приложения — в config.php (не в репо)
-    $VK_APP_TOKEN = (string)($DZ_CFG['vk_app_token'] ?? '');
-    if ($VK_APP_TOKEN !== '') {
-        $vk = @file_get_contents('https://api.vk.com/method/orders.getById?'
-            . http_build_query(['order_id' => $orderId, 'access_token' => $VK_APP_TOKEN, 'v' => '5.199']));
-        $vkr = $vk ? json_decode($vk, true) : null;
-        $status = $vkr['response']['status'] ?? null;
-        if ($status === null || (int)$status !== 1) { // 1 = оплачен
-            out(['ok' => false, 'error' => 'Заказ не подтверждён ВК']);
+    $old = $st->fetch(PDO::FETCH_ASSOC);
+    if ($old) {
+        if ((int)$old['user_id'] === (int)$u['id'] && (int)$old['pack'] === $pack_id) {
+            // В тесте VK заказ уже создан callback'ом, а монеты ждут в wallet.
+            // Применяем их атомарно с удалением wallet и возвращаем актуальный баланс.
+            $profile = ($u['profile'] !== '') ? json_decode($u['profile'], true) : [];
+            if (!is_array($profile)) $profile = [];
+            dz_wallet_apply($db, (int)$u['id'], $profile);
+            $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+               ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+            out(['ok' => true, 'duplicate' => true, 'coins' => (int)($profile['coins'] ?? 0), 'credited' => 0]);
         }
-    } else {
-        // токен не настроен — платежи выключены: не начисляем
-        out(['ok' => false, 'error' => 'payments disabled']);
+        out(['ok' => false, 'error' => 'Заказ уже использован']);
     }
-    // начисление: профиль хранится целиком — поправим coins на сервере
-    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
-    if (!is_array($profile)) $profile = [];
-    $profile['coins'] = (int)($profile['coins'] ?? 0) + $PACKS[$pack_id];
-    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
-       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
-    $db->prepare("INSERT INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
-       ->execute([$orderId, $u['id'], $pack_id, $PACKS[$pack_id]]);
-    out(['ok' => true, 'coins' => $profile['coins'], 'credited' => $PACKS[$pack_id]]);
+    $VK_APP_TOKEN = (string)($DZ_CFG['vk_app_token'] ?? '');
+    if ($VK_APP_TOKEN === '') out(['ok' => false, 'error' => 'payments disabled']);
+    $vkr = dz_vk_order_fetch($orderId, $VK_APP_TOKEN);
+    $expectedBefore = dz_payment_pack_for_user($PACKS[$pack_id], dz_first_purchase_available($db, (int)$u['id']));
+    $verified = dz_vk_order_verify($vkr, $orderId, $expectedBefore, (string)($u['vk_id'] ?? ''));
+    if (!$verified[0]) out(['ok' => false, 'error' => $verified[1]]);
+
+    // BEGIN IMMEDIATE блокирует параллельное второе начисление до первого commit.
+    // Профиль перечитывается внутри транзакции, заказ резервируется до UPDATE.
+    try {
+        $db->exec('BEGIN IMMEDIATE');
+        $st = $db->prepare("SELECT profile FROM users WHERE id = ?");
+        $st->execute([$u['id']]);
+        $fresh = $st->fetch(PDO::FETCH_ASSOC);
+        $st = $db->prepare("SELECT user_id, pack FROM orders WHERE order_id = ?");
+        $st->execute([$orderId]);
+        $old = $st->fetch(PDO::FETCH_ASSOC);
+        if ($old) {
+            $db->exec('COMMIT');
+            if ((int)$old['user_id'] === (int)$u['id'] && (int)$old['pack'] === $pack_id) {
+                out(['ok' => true, 'duplicate' => true]);
+            }
+            out(['ok' => false, 'error' => 'Заказ уже использован']);
+        }
+        // Критично для параллельных заказов: скидка пересчитывается ПОД WRITE-LOCK.
+        // Если другой заказ уже занял первую покупку, старый discounted-ответ VK
+        // больше не совпадает с обычной ценой и начисление отклоняется.
+        $expectedNow = dz_payment_pack_for_user($PACKS[$pack_id], dz_first_purchase_available($db, (int)$u['id']));
+        $verifiedNow = dz_vk_order_verify($vkr, $orderId, $expectedNow, (string)($u['vk_id'] ?? ''));
+        if (!$verifiedNow[0]) {
+            $db->exec('ROLLBACK');
+            out(['ok' => false, 'error' => $verifiedNow[1]]);
+        }
+        $profile = ($fresh && $fresh['profile'] !== '') ? json_decode($fresh['profile'], true) : [];
+        if (!is_array($profile)) $profile = [];
+        $profile['first_purchase_discount'] = 0;
+        $coins = (int)$PACKS[$pack_id]['coins'];
+        $profile['coins'] = (int)($profile['coins'] ?? 0) + $coins;
+        $db->prepare("INSERT INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
+           ->execute([$orderId, $u['id'], $pack_id, $coins]);
+        $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+           ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+        $db->exec('COMMIT');
+    } catch (Throwable $e) {
+        @$db->exec('ROLLBACK');
+        out(['ok' => false, 'error' => 'Не удалось завершить покупку — повторите запрос']);
+    }
+    out(['ok' => true, 'coins' => $profile['coins'], 'credited' => $coins, 'first_purchase_discount' => 0]);
 }
 
 if ($action === 'buybp') {
-    // покупка Premium-пропуска Battle Pass: верификация order_id у ВК, bp_owned ставит сервер
     $token   = (string)($in['token'] ?? '');
     $orderId = trim((string)($in['order_id'] ?? ''));
-    if ($token === '' || $orderId === '') out(['ok' => false, 'error' => 'bad request']);
-    $st = $db->prepare("SELECT id, profile FROM users WHERE token = ?");
+    if ($token === '' || $orderId === '' || !ctype_digit($orderId)) out(['ok' => false, 'error' => 'bad request']);
+    $BP = dz_payment_bp();
+    $st = $db->prepare("SELECT id, profile, vk_id FROM users WHERE token = ?");
     $st->execute([$token]);
     $u = $st->fetch(PDO::FETCH_ASSOC);
     if (!$u) out(['ok' => false, 'error' => 'Сессия устарела — войди снова']);
-    // idempotency: один order_id — одна активация (pack=-1 — маркер пропуска)
-    $db->exec("CREATE TABLE IF NOT EXISTS orders (
-        order_id TEXT PRIMARY KEY,
-        user_id INTEGER,
-        pack INTEGER,
-        coins INTEGER,
-        created_at TEXT
-    )");
-    $st = $db->prepare("SELECT order_id FROM orders WHERE order_id = ?");
+    dz_orders_init($db);
+    $st = $db->prepare("SELECT user_id, pack FROM orders WHERE order_id = ?");
     $st->execute([$orderId]);
-    if ($st->fetch()) out(['ok' => true, 'duplicate' => true]);
-    $VK_APP_TOKEN = (string)($DZ_CFG['vk_app_token'] ?? '');
-    if ($VK_APP_TOKEN !== '') {
-        $vk = @file_get_contents('https://api.vk.com/method/orders.getById?'
-            . http_build_query(['order_id' => $orderId, 'access_token' => $VK_APP_TOKEN, 'v' => '5.199']));
-        $vkr = $vk ? json_decode($vk, true) : null;
-        $status = $vkr['response']['status'] ?? null;
-        if ($status === null || (int)$status !== 1) { // 1 = оплачен
-            out(['ok' => false, 'error' => 'Заказ не подтверждён ВК']);
+    $old = $st->fetch(PDO::FETCH_ASSOC);
+    if ($old) {
+        if ((int)$old['user_id'] === (int)$u['id'] && (int)$old['pack'] === -1) {
+            out(['ok' => true, 'duplicate' => true]);
         }
-    } else {
-        out(['ok' => false, 'error' => 'payments disabled']);
+        out(['ok' => false, 'error' => 'Заказ уже использован']);
     }
-    $profile = $u['profile'] !== '' ? json_decode($u['profile'], true) : [];
-    if (!is_array($profile)) $profile = [];
-    $profile['bp_owned'] = 1;
-    $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
-       ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
-    $db->prepare("INSERT INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
-       ->execute([$orderId, $u['id'], -1, 0]);
+    $VK_APP_TOKEN = (string)($DZ_CFG['vk_app_token'] ?? '');
+    if ($VK_APP_TOKEN === '') out(['ok' => false, 'error' => 'payments disabled']);
+    $vkr = dz_vk_order_fetch($orderId, $VK_APP_TOKEN);
+    $verified = dz_vk_order_verify($vkr, $orderId, $BP, (string)($u['vk_id'] ?? ''));
+    if (!$verified[0]) out(['ok' => false, 'error' => $verified[1]]);
+
+    try {
+        $db->exec('BEGIN IMMEDIATE');
+        $st = $db->prepare("SELECT profile FROM users WHERE id = ?");
+        $st->execute([$u['id']]);
+        $fresh = $st->fetch(PDO::FETCH_ASSOC);
+        $st = $db->prepare("SELECT user_id, pack FROM orders WHERE order_id = ?");
+        $st->execute([$orderId]);
+        $old = $st->fetch(PDO::FETCH_ASSOC);
+        if ($old) {
+            $db->exec('COMMIT');
+            if ((int)$old['user_id'] === (int)$u['id'] && (int)$old['pack'] === -1) {
+                out(['ok' => true, 'duplicate' => true]);
+            }
+            out(['ok' => false, 'error' => 'Заказ уже использован']);
+        }
+        $profile = ($fresh && $fresh['profile'] !== '') ? json_decode($fresh['profile'], true) : [];
+        if (!is_array($profile)) $profile = [];
+        $profile['bp_owned'] = 1;
+        $db->prepare("INSERT INTO orders (order_id, user_id, pack, coins, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
+           ->execute([$orderId, $u['id'], -1, 0]);
+        $db->prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE id = ?")
+           ->execute([json_encode($profile, JSON_UNESCAPED_UNICODE), $u['id']]);
+        $db->exec('COMMIT');
+    } catch (Throwable $e) {
+        @$db->exec('ROLLBACK');
+        out(['ok' => false, 'error' => 'Не удалось активировать пропуск — повторите запрос']);
+    }
     out(['ok' => true]);
 }
 

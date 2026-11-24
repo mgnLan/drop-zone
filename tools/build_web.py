@@ -25,6 +25,12 @@ def main() -> int:
     html_path = os.path.join(BUILD, "index.html")
     src = open(html_path, encoding="utf-8").read()
 
+    # Сломанный пресет не должен уезжать на сервер: служебные ключи Godot
+    # в HTML означают, что скрипты аналитики ошибочно записаны в PWA-icon.
+    if "html/canvas_resize_policy=" in src or 'progressive_web_app/icon_512x512="' in src:
+        print("ОТКАЗ: в HTML попал служебный хвост export_presets.cfg — исправь пресет")
+        return 1
+
     m = re.search(r'"executable"\s*:\s*"([^"]+)"', src)
     if not m:
         print("Не найден executable в index.html — это Godot-экспорт?")
@@ -113,6 +119,30 @@ def main() -> int:
     else:
         print("ПРЕДУПРЕЖДЕНИЕ: шаблон missingMsg не найден — Godot обновил шаблон?")
 
+    # HTML-витрина главного меню: отдельные DOM/CSS/JS поверх Godot canvas.
+    # Запрос ?v=<tag> не даёт WebView ВК оставить вчерашний menu.js в суточном кэше.
+    menu_src = os.path.join(ROOT, "web_assets", "main_menu")
+    menu_dst = os.path.join(BUILD, "menu")
+    os.makedirs(menu_dst, exist_ok=True)
+    for name in ("menu.js", "splash.jpg", "Manrope.ttf", "RussoOne.ttf"):
+        src_file = os.path.join(menu_src, name)
+        if not os.path.isfile(src_file):
+            print(f"НЕТ ФАЙЛА HTML-МЕНЮ: {src_file}")
+            return 1
+        shutil.copyfile(src_file, os.path.join(menu_dst, name))
+    with open(os.path.join(menu_src, "menu.css"), encoding="utf-8") as fh:
+        menu_css = fh.read()
+    for asset in ("splash.jpg", "Manrope.ttf", "RussoOne.ttf"):
+        menu_css = menu_css.replace(asset, f"{asset}?v={tag}")
+    with open(os.path.join(menu_dst, "menu.css"), "w", encoding="utf-8") as fh:
+        fh.write(menu_css)
+    out = out.replace("</head>", f'<link rel="stylesheet" href="menu/menu.css?v={tag}">\n</head>', 1)
+    out = out.replace("</body>", f'<script src="menu/menu.js?v={tag}"></script>\n</body>', 1)
+    if "menu/menu.js" not in out or "menu/menu.css" not in out:
+        print("ОТКАЗ: HTML-меню не подключено к index.html")
+        return 1
+    print("main menu: DOM/CSS/JS + арт и шрифты -> web_build/menu")
+
     open(html_path, "w", encoding="utf-8").write(out)
 
     # удаляем локальные версионные файлы прошлых сборок — иначе ftp_upload
@@ -122,6 +152,15 @@ def main() -> int:
             os.remove(os.path.join(BUILD, name))
 
     meta = {"tag": tag, "stamp": stamp, "sizes": sizes}
+
+    # Локальный VK Bridge обязателен: без него чистый билд теряет вход и платежи.
+    bridge_src = os.path.join(ROOT, "web_assets", "vk-bridge.min.js")
+    bridge_dst = os.path.join(BUILD, "vk-bridge.min.js")
+    if not os.path.isfile(bridge_src):
+        print(f"НЕТ ФАЙЛА: {bridge_src}")
+        return 1
+    shutil.copyfile(bridge_src, bridge_dst)
+    print("vk-bridge: локальная копия -> web_build")
 
     # wav-звуки для JS-моста (dzPlay) — копируем в web_build/sfx,
     # движок их не пакует в pck, мост тянет по HTTP
@@ -138,15 +177,19 @@ def main() -> int:
     meta["sfx"] = n_sfx
     print(f"sfx: {n_sfx} wav -> web_build/sfx")
 
-    # docs: шаблоны privacy/offer — отдаются статикой рядом с игрой
+    # Только публичные документы: служебные HTML-бэкапы не должны попадать в релиз.
     docs_src = os.path.join(ROOT, "docs")
     docs_dst = os.path.join(BUILD, "docs")
+    public_docs = ("privacy.html", "offer.html")
     if os.path.isdir(docs_src):
         os.makedirs(docs_dst, exist_ok=True)
-        for name in os.listdir(docs_src):
-            if name.endswith(".html"):
-                with open(os.path.join(docs_src, name), "rb") as fh_in,                      open(os.path.join(docs_dst, name), "wb") as fh_out:
-                    fh_out.write(fh_in.read())
+        for name in os.listdir(docs_dst):
+            if name.endswith(".html") and name not in public_docs:
+                os.remove(os.path.join(docs_dst, name))
+        for name in public_docs:
+            with open(os.path.join(docs_src, name), "rb") as fh_in, \
+                    open(os.path.join(docs_dst, name), "wb") as fh_out:
+                fh_out.write(fh_in.read())
         print("docs: privacy/offer -> web_build/docs")
 
     json.dump(meta, open(os.path.join(BUILD, "build.json"), "w", encoding="utf-8"))

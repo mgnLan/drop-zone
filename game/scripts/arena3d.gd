@@ -378,7 +378,7 @@ func _social_apply(d: Dictionary, rid: int) -> void:
 	_social_players = d.get("players", [])
 	_social_messages = d.get("messages", [])
 	if _ui.has("menu_online_lbl") and is_instance_valid(_ui.menu_online_lbl):
-		_ui.menu_online_lbl.text = "● %d онлайн" % _social_online
+		_ui.menu_online_lbl.text = "%d онлайн" % _social_online
 		_ui.menu_online_lbl.add_theme_color_override("font_color", Color("#73e68c"))
 	if _ui.has("menu_online_chip") and is_instance_valid(_ui.menu_online_chip):
 		_ui.menu_online_chip.tooltip_text = _social_players_text(true)
@@ -1115,7 +1115,7 @@ func _onboard_start(force := false) -> void:
 	sb.bg_color = Color(0.025, 0.055, 0.10, 0.96)
 	sb.border_color = Color(0.33, 0.85, 1.0, 0.98)
 	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(10)
+	sb.set_corner_radius_all(0)
 	sb.set_content_margin_all(12)
 	sb.shadow_color = Color(0, 0, 0, 0.45)
 	sb.shadow_size = 12
@@ -1169,7 +1169,7 @@ func _onboard_highlight(target: Control) -> void:
 	rs.bg_color = Color(0, 0, 0, 0)
 	rs.border_color = Color(0.35, 0.9, 1.0, 0.95)
 	rs.set_border_width_all(3)
-	rs.set_corner_radius_all(8)
+	rs.set_corner_radius_all(0)
 	rs.shadow_color = Color(0.2, 0.8, 1.0, 0.55)
 	rs.shadow_size = 10
 	ring.add_theme_stylebox_override("panel", rs)
@@ -1346,7 +1346,7 @@ func _tutorial_start_bubbles() -> void:
 	sb.bg_color = Color(0.02, 0.05, 0.10, 0.90)
 	sb.border_color = Color(0.3, 0.85, 1.0, 0.9)
 	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(8)
+	sb.set_corner_radius_all(0)
 	sb.set_content_margin_all(8)
 	hb.add_theme_stylebox_override("panel", sb)
 	var vb2 := VBoxContainer.new()
@@ -1698,6 +1698,7 @@ func _on_buy_result(d: Dictionary) -> void:
 		_log("Покупка не прошла: %s" % str(d.get("error", "ошибка сервера")))
 		return
 	# сервер начислил и вернул актуальный баланс
+	_profile.first_purchase_discount = 0
 	if d.has("coins"):
 		_profile.coins = int(d["coins"])
 		_sync_push = false
@@ -1709,7 +1710,7 @@ func _on_buy_result(d: Dictionary) -> void:
 	else:
 		_log("Пак монет начислен сервером: +%d монет" % int(d.get("credited", 0)))
 	if _menu_open:
-		_refresh_menu_screen("shop")
+		_refresh_menu_screen("showbiz")
 
 func _server_credit_bp(order_id: String) -> void:
 	# покупка Premium-пропуска: активирует bp_owned только сервер (верификация order_id у ВК)
@@ -2001,7 +2002,7 @@ func _uitest_tour() -> void:
 	# Изолированный скрин-гейт рендера общего чата и цветных эмодзи (без сети).
 	_social_messages = [{"id": 1, "name": "Вы", "text": "проверка 😀 🔥 💀 👍 ❤️", "me": 1, "at": 0}]
 	_render_menu_chat()
-	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded", "guide", "faq", "battle_guide", "reaper"]
+	var scr := ["lobby", "daily", "emoji", "result", "squad", "progress", "bp", "chests", "heroes", "rating", "shop", "profile", "med", "settings", "deck", "battle", "battle", "battle", "main", "wounded", "guide", "faq", "battle_guide", "reaper", "showbiz"]
 	var from := 0
 	var fq = JavaScriptBridge.eval("(function(){var m=window.location.search.match(/uitest=(\\d+)/);return m?m[1]:'0'})()")
 	if fq != null and int(str(fq)) > 0:
@@ -2061,6 +2062,7 @@ func _uitest_show(s: String) -> void:
 		"heroes": _show_menu_heroes()
 		"rating": _show_menu_rating()
 		"shop": _show_menu_shop()
+		"showbiz": _show_menu_showbiz()
 		"profile":
 			_profile.frame = 2   # визуальный гейт выравнивания арт-рамки
 			_show_menu_profile()
@@ -2400,6 +2402,22 @@ func _profile_normalize() -> void:
 	_profile.squad_heroes = (sqh as Array).slice(0, 4)
 	if not (_profile.get("craft_dups", 0) is int or _profile.get("craft_dups", 0) is float):
 		_profile.craft_dups = 0
+	# Автоподсказки: после PHP пустой объект может прийти массивом, старые профили — без ключа.
+	var seen_raw = _profile.get("seen_tips", [])
+	if not (seen_raw is Array):
+		seen_raw = []
+	var seen_clean: Array = []
+	for seen_id in seen_raw:
+		if str(seen_id) != "" and str(seen_id) not in seen_clean:
+			seen_clean.append(str(seen_id))
+	_profile.seen_tips = seen_clean
+	# Шесть базовых однотонных цветов доступны всем; старые покупки не удаляем.
+	var base_colors: Array = _profile.get("owned_colors", []).duplicate()
+	while base_colors.size() < 6:
+		base_colors.append(0)
+	for free_ci in mini(6, base_colors.size()):
+		base_colors[free_ci] = 1
+	_profile.owned_colors = base_colors
 
 func _auth_fail(msg: String, act: String, net := false) -> void:
 	if act == "load":
@@ -2504,7 +2522,7 @@ func _build_auth(auto: bool) -> void:
 		vks.bg_color = Color(0.0, 0.47, 1.0, 0.95)   # фирменный синий ВК
 		vks.border_color = Color(0.35, 0.65, 1.0, 0.9)
 		vks.set_border_width_all(2)
-		vks.set_corner_radius_all(4)
+		vks.set_corner_radius_all(0)
 		vkb.add_theme_stylebox_override("normal", vks)
 		vkb.pressed.connect(func():
 			_vk_login_tried = false
@@ -2540,7 +2558,7 @@ func _build_auth(auto: bool) -> void:
 			es.bg_color = Color("#0a121e")
 			es.border_color = Color("#55d9e8") if state == "focus" else Color("#2b3e52")
 			es.set_border_width_all(1)
-			es.set_corner_radius_all(8)
+			es.set_corner_radius_all(0)
 			es.content_margin_left = 14
 			es.content_margin_right = 14
 			inp.add_theme_stylebox_override(state, es)
@@ -2706,10 +2724,18 @@ const COIN_PACKS := [
 	{"coins": 3750, "bonus": 0, "price": 2299},
 ]
 const PAYMENTS_ENABLED := true   # VK: ShowOrderBox -> серверная верификация order_id; вне ВК — dev-начисление
-const SHOP_ITEMS := [	{"kind": "frame", "idx": 1, "name": "Рамка «Неоновая»", "price": 200},
-	{"kind": "frame", "idx": 2, "name": "Рамка «Золото»", "price": 500},
-	{"kind": "nick_color", "idx": 1, "name": "Цвет ника «Красный»", "price": 150},
-	{"kind": "nick_color", "idx": 2, "name": "Цвет ника «Золотой»", "price": 400},
+
+func _coin_pack_price(pi: int) -> int:
+	if pi < 0 or pi >= COIN_PACKS.size():
+		return 0
+	var base := int(COIN_PACKS[pi]["price"])
+	return int(round(base * 0.75)) if int(_profile.get("first_purchase_discount", 0)) == 1 else base
+const SHOP_ITEMS := [
+	{"kind": "frame", "idx": 1, "name": "Рамка «Неоновая»", "price": 200},
+	{"kind": "frame", "idx": 2, "name": "Рамка «Золотая»", "price": 500},
+	{"kind": "nick_color", "idx": 6, "name": "Цвет ника «Закат»", "price": 150},
+	{"kind": "nick_color", "idx": 7, "name": "Цвет ника «Кровавый»", "price": 250},
+	{"kind": "nick_color", "idx": 8, "name": "Цвет ника «Сиреневый»", "price": 400},
 	{"kind": "outfit", "idx": 1, "name": "Камуфляж «Пустыня»", "price": 200},
 	{"kind": "outfit", "idx": 2, "name": "Камуфляж «Север»", "price": 350},
 	{"kind": "outfit", "idx": 4, "name": "Камуфляж «Кровь»", "price": 400},
@@ -2762,14 +2788,15 @@ func _buy_coin_pack(pi: int) -> void:
 		return
 	var pk: Dictionary = COIN_PACKS[pi]
 	if OS.has_feature("web"):
-		var r = JavaScriptBridge.eval("(function(){ if (typeof window.dzOrder === 'function') { window.dzOrder(%d); return true; } return false; })()" % pi, true)
+		var r = JavaScriptBridge.eval("(function(){ if (typeof window.dzOrder === 'function') { window.dzOrder(%d, %d); return true; } return false; })()" % [pi, _coin_pack_price(pi)], true)
 		if r == null or not bool(r):
 			_log("Платежи доступны в версии для ВК")
 	else:
 		_profile.coins = int(_profile.get("coins", 0)) + int(pk["coins"]) + int(pk.get("bonus", 0))
+		_profile.first_purchase_discount = 0
 		_sfx_play("cash")
 		_save_profile()
-		_refresh_menu_screen("shop")
+		_refresh_menu_screen("showbiz")
 
 func _shop_buy(si: int) -> void:
 	if si < 0 or si >= SHOP_ITEMS.size():
@@ -2784,7 +2811,9 @@ func _shop_buy(si: int) -> void:
 		return
 	if int(_profile.get("coins", 0)) < price:
 		var missing := price - int(_profile.get("coins", 0))
-		_toast("coin", "Недостаточно монет: не хватает %d" % missing)
+		_toast("coin", "Не хватает %d монет — открываю Кассу шоу" % missing)
+		if _ui.has("menu_box") and is_instance_valid(_ui.menu_box):
+			_show_menu_showbiz()
 		return
 	_profile.coins = int(_profile.get("coins", 0)) - price
 	var key := "owned_frames" if kind == "frame" else ("owned_colors" if kind == "nick_color" else "owned_outfits")
@@ -3056,6 +3085,9 @@ func _load_profile() -> void:
 		"nick_color": 0,          # цвет ника: 0 белый, 1 красный, 2 золото (монетизация)
 		"unlocked_slots": 2,      # стартовый игрок: 2 бойца для смены; 3-й — заслуги, 4-й — ВИП
 		"onboarded": 0,           # 1 = обучение первого боя пройдено
+		"tutorial_step": 0,       # 0..3 — три учебных боя; сохраняется локально и на сервере
+		"seen_tips": [],          # автоподсказки разделов показываются один раз
+		"first_purchase_discount": 1, # только отображение; цену подтверждает сервер
 		"lobby_guide_done": 0,    # 1 = интерактивный тур лобби показан или пропущен
 		"coins": 0,               # копилка монет (монетизация)
 		"stamina": 100.0,         # выносливость шоу (бой −15)
@@ -3130,6 +3162,9 @@ func _load_profile() -> void:
 	_profile.unlocked_slots = int(cfg.get_value("player", "unlocked_slots", 2))
 	_profile.battle_slots = cfg.get_value("player", "battle_slots", [1, 1, 1, 1])
 	_profile.onboarded = int(cfg.get_value("player", "onboarded", 0))
+	_profile.tutorial_step = int(cfg.get_value("player", "tutorial_step", 0))
+	_profile.seen_tips = cfg.get_value("player", "seen_tips", [])
+	_profile.first_purchase_discount = int(cfg.get_value("player", "first_purchase_discount", 1))
 	_profile.lobby_guide_done = int(cfg.get_value("player", "lobby_guide_done", 0))
 	_profile.coins = int(cfg.get_value("player", "coins", 0))
 	_profile.stamina = float(cfg.get_value("player", "stamina", 100.0))
@@ -3197,6 +3232,9 @@ func _save_profile() -> void:
 	cfg.set_value("player", "unlocked_slots", _profile.unlocked_slots)
 	cfg.set_value("player", "battle_slots", _profile.get("battle_slots", [1, 1, 1, 1]))
 	cfg.set_value("player", "onboarded", int(_profile.get("onboarded", 0)))
+	cfg.set_value("player", "tutorial_step", int(_profile.get("tutorial_step", 0)))
+	cfg.set_value("player", "seen_tips", _profile.get("seen_tips", []))
+	cfg.set_value("player", "first_purchase_discount", int(_profile.get("first_purchase_discount", 0)))
 	cfg.set_value("player", "lobby_guide_done", int(_profile.get("lobby_guide_done", 0)))
 	cfg.set_value("player", "coins", int(_profile.get("coins", 0)))
 	cfg.set_value("player", "stamina", float(_profile.get("stamina", 100.0)))
@@ -7678,7 +7716,7 @@ func _build_ui() -> void:
 	lns.bg_color = Color(0.30, 0.21, 0.04, 0.92)
 	lns.border_color = Color(1.0, 0.85, 0.35, 0.95)
 	lns.set_border_width_all(2)
-	lns.set_corner_radius_all(4)
+	lns.set_corner_radius_all(0)
 	lns.shadow_color = Color(1.0, 0.75, 0.2, 0.55)
 	lns.shadow_size = 9
 	lvl_note.add_theme_stylebox_override("normal", lns)
@@ -7715,7 +7753,7 @@ func _build_ui() -> void:
 	eb_n.bg_color = Color(0.14, 0.18, 0.28, 0.95)
 	eb_n.border_color = Color(0.16, 0.85, 1.0, 0.55)
 	eb_n.set_border_width_all(2)
-	eb_n.set_corner_radius_all(8)
+	eb_n.set_corner_radius_all(0)
 	eb_n.shadow_color = Color(0.16, 0.85, 1.0, 0.18)
 	eb_n.shadow_size = 6
 	var eb_h: StyleBoxFlat = eb_n.duplicate()
@@ -7897,7 +7935,7 @@ func _build_ui() -> void:
 		r_sb.bg_color = Color(0.03, 0.06, 0.11, 0.80)
 		r_sb.border_color = Color(0.20, 0.35, 0.48, 0.7)
 		r_sb.set_border_width_all(1)
-		r_sb.set_corner_radius_all(7)
+		r_sb.set_corner_radius_all(0)
 		r_sb.set_content_margin_all(2)
 		row.add_theme_stylebox_override("panel", r_sb)
 		var rv := VBoxContainer.new()
@@ -7946,7 +7984,7 @@ func _build_ui() -> void:
 	chat_sb.bg_color = Color(0.14, 0.20, 0.15, 0.78)
 	chat_sb.border_color = Color(0.38, 0.55, 0.40, 0.85)
 	chat_sb.set_border_width_all(1)
-	chat_sb.set_corner_radius_all(4)
+	chat_sb.set_corner_radius_all(0)
 	chat_sb.set_content_margin_all(8)
 	chat.add_theme_stylebox_override("panel", chat_sb)
 	layer.add_child(chat)
@@ -7993,7 +8031,7 @@ func _build_ui() -> void:
 	inp_sb2.bg_color = Color(0.02, 0.03, 0.06, 0.55)
 	inp_sb2.border_color = Color("#28d8ff55")
 	inp_sb2.set_border_width_all(1)
-	inp_sb2.set_corner_radius_all(6)
+	inp_sb2.set_corner_radius_all(0)
 	inp_sb2.content_margin_right = 30.0
 	inp.add_theme_stylebox_override("normal", inp_sb2)
 	inp.add_theme_stylebox_override("focus", inp_sb2)
@@ -8032,7 +8070,7 @@ func _build_ui() -> void:
 	ssb2.bg_color = Color("#28d8ff33")
 	ssb2.border_color = Color("#28d8ff88")
 	ssb2.set_border_width_all(1)
-	ssb2.set_corner_radius_all(6)
+	ssb2.set_corner_radius_all(0)
 	sendb2.add_theme_stylebox_override("normal", ssb2)
 	sendb2.add_theme_stylebox_override("hover", ssb2)
 	sendb2.add_theme_stylebox_override("pressed", ssb2)
@@ -8136,7 +8174,7 @@ func _build_ui() -> void:
 	iws.bg_color = Color(0.025, 0.045, 0.085, 0.97)
 	iws.border_color = Color(0.30, 0.75, 1.0, 0.55)
 	iws.set_border_width_all(2)
-	iws.set_corner_radius_all(14)
+	iws.set_corner_radius_all(0)
 	iws.shadow_color = Color(0.1, 0.4, 0.8, 0.35)
 	iws.shadow_size = 14
 	iws.content_margin_left = 14.0
@@ -8304,10 +8342,10 @@ func _refresh_fighter_panel() -> void:
 	# --- фабрика иконок: 40×40, тёмная плашка + циановая кайма, лёгкий hover-фон ---
 	var hov := StyleBoxFlat.new()
 	hov.bg_color = Color(1, 1, 1, 0.08)
-	hov.set_corner_radius_all(8)
+	hov.set_corner_radius_all(0)
 	var prs := StyleBoxFlat.new()
 	prs.bg_color = Color(1, 1, 1, 0.15)
-	prs.set_corner_radius_all(8)
+	prs.set_corner_radius_all(0)
 	var mk_ic := func(ic: Texture2D, tip: String) -> Button:
 		var b := Button.new()
 		if ic != null:
@@ -8321,13 +8359,13 @@ func _refresh_fighter_panel() -> void:
 		nrm.bg_color = Color(0.03, 0.06, 0.11, 0.78)
 		nrm.border_color = Color(0.30, 0.80, 1.0, 0.50)
 		nrm.set_border_width_all(1)
-		nrm.set_corner_radius_all(8)
+		nrm.set_corner_radius_all(0)
 		b.add_theme_stylebox_override("normal", nrm)
 		var dsb := StyleBoxFlat.new()
 		dsb.bg_color = Color(0.03, 0.06, 0.11, 0.45)
 		dsb.border_color = Color(0.30, 0.80, 1.0, 0.20)
 		dsb.set_border_width_all(1)
-		dsb.set_corner_radius_all(8)
+		dsb.set_corner_radius_all(0)
 		b.add_theme_stylebox_override("disabled", dsb)
 		b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 		b.add_theme_stylebox_override("hover", hov)
@@ -9528,7 +9566,7 @@ class DzPereliv:
 		sbs.bg_color = Color("#28d8ff", 0.16)
 		sbs.border_color = Color("#28d8ff", 0.9)
 		sbs.set_border_width_all(2)
-		sbs.set_corner_radius_all(int(r))
+		sbs.set_corner_radius_all(0)
 		sbs.draw(get_canvas_item(), Rect2(1.5, 1.5, w - 3.0, h - 3.0))
 
 func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow: Color) -> StyleBoxTexture:
@@ -9546,7 +9584,7 @@ func _grad_button_sb(key: String, top: Color, bottom: Color, border: Color, glow
 
 func _menu_button_state(accent: bool, state: String) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.set_corner_radius_all(4)
+	sb.set_corner_radius_all(0)
 	sb.set_border_width_all(1)
 	sb.content_margin_left = 18.0
 	sb.content_margin_right = 18.0
@@ -9755,12 +9793,12 @@ func _style_bar(bar: ProgressBar, fill_col: Color) -> void:
 	# цветной бар с подсветкой вместо серого системного
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.03, 0.05, 0.07, 0.90)
-	bg.set_corner_radius_all(4)
+	bg.set_corner_radius_all(0)
 	bg.set_border_width_all(1)
 	bg.border_color = Color(0.5, 0.6, 0.65, 0.4)
 	var fg := StyleBoxFlat.new()
 	fg.bg_color = fill_col
-	fg.set_corner_radius_all(4)
+	fg.set_corner_radius_all(0)
 	fg.shadow_color = Color(fill_col.r, fill_col.g, fill_col.b, 0.5)
 	fg.shadow_size = 4
 	bar.add_theme_stylebox_override("background", bg)
@@ -9948,7 +9986,7 @@ func _frame_box() -> StyleBoxFlat:
 	sb.shadow_color = Color(0, 0, 0, 0.32)
 	sb.shadow_size = 5
 	sb.shadow_offset = Vector2(0, 2)
-	sb.set_corner_radius_all(4)
+	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 12.0
 	sb.content_margin_right = 12.0
 	sb.content_margin_top = 7.0
@@ -9978,7 +10016,7 @@ func _toast(png_name: String, text: String, big := false) -> void:
 	sb.bg_color = Color(0.03, 0.05, 0.09, 0.95)
 	sb.border_color = Color(1.0, 0.78, 0.2, 0.9)
 	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(8)
+	sb.set_corner_radius_all(0)
 	sb.shadow_color = Color(0, 0, 0, 0.45)
 	sb.shadow_size = 8
 	sb.content_margin_left = 12.0
@@ -10073,7 +10111,7 @@ func _icon_chip(n: String, size := 40, tex: Texture2D = null) -> PanelContainer:
 	sb.bg_color = Color("#55d9e80c")
 	sb.border_color = Color("#7b93a82e")
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(8)
+	sb.set_corner_radius_all(0)
 	pc.add_theme_stylebox_override("panel", sb)
 	pc.custom_minimum_size = Vector2(size + 16, size + 16)
 	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -10126,15 +10164,16 @@ func _reward_card(parent: Container, icon: String, col: Color, val: String, capt
 func _apply_menu_theme(root: Control) -> void:
 	# Единая базовая тема лобби: локальные вариации не возвращают системные серые элементы.
 	var theme := Theme.new()
+	theme.default_font = load("res://assets/fonts/Manrope.ttf") if ResourceLoader.exists("res://assets/fonts/Manrope.ttf") else ThemeDB.fallback_font
 	theme.default_font_size = 15
 	var scroll_bg := StyleBoxFlat.new()
 	scroll_bg.bg_color = Color("#09111b88")
-	scroll_bg.set_corner_radius_all(3)
+	scroll_bg.set_corner_radius_all(0)
 	scroll_bg.content_margin_left = 2
 	scroll_bg.content_margin_right = 2
 	var grab := StyleBoxFlat.new()
 	grab.bg_color = Color("#405a70")
-	grab.set_corner_radius_all(3)
+	grab.set_corner_radius_all(0)
 	grab.content_margin_left = 3
 	grab.content_margin_right = 3
 	var grab_hi := grab.duplicate() as StyleBoxFlat
@@ -10146,12 +10185,12 @@ func _apply_menu_theme(root: Control) -> void:
 	theme.set_stylebox("grabber_pressed", "VScrollBar", grab_hi)
 	var bar_bg := StyleBoxFlat.new()
 	bar_bg.bg_color = Color("#080f19")
-	bar_bg.set_corner_radius_all(2)
+	bar_bg.set_corner_radius_all(0)
 	bar_bg.content_margin_top = 2
 	bar_bg.content_margin_bottom = 2
 	var bar_fill := StyleBoxFlat.new()
 	bar_fill.bg_color = Color("#45b9cb")
-	bar_fill.set_corner_radius_all(2)
+	bar_fill.set_corner_radius_all(0)
 	bar_fill.content_margin_top = 2
 	bar_fill.content_margin_bottom = 2
 	theme.set_stylebox("background", "ProgressBar", bar_bg)
@@ -10172,7 +10211,7 @@ func _card_style(hover := false, glow := false) -> StyleBoxFlat:
 	sb.bg_color = Color("#101a28ed")
 	sb.border_color = Color("#66809c45")
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(4)
+	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0
 	sb.content_margin_top = 12.0
@@ -10239,7 +10278,7 @@ func _compact_frame_box() -> StyleBoxFlat:
 	sb.content_margin_right = SUB_PAD
 	sb.content_margin_top = 4.0
 	sb.content_margin_bottom = 4.0
-	sb.set_corner_radius_all(SUB_RADIUS)
+	sb.set_corner_radius_all(0)
 	return sb
 
 func _compact_card_style(hover := false, glow := false) -> StyleBoxFlat:
@@ -10248,7 +10287,7 @@ func _compact_card_style(hover := false, glow := false) -> StyleBoxFlat:
 	sb.content_margin_right = SUB_PAD
 	sb.content_margin_top = 6.0
 	sb.content_margin_bottom = 6.0
-	sb.set_corner_radius_all(SUB_RADIUS)
+	sb.set_corner_radius_all(0)
 	return sb
 
 func _compact_inv_card_style(col: Color, bg := Color(0.055, 0.09, 0.14, 0.97)) -> StyleBoxFlat:
@@ -10257,7 +10296,7 @@ func _compact_inv_card_style(col: Color, bg := Color(0.055, 0.09, 0.14, 0.97)) -
 	sb.content_margin_right = SUB_PAD
 	sb.content_margin_top = 6.0
 	sb.content_margin_bottom = 6.0
-	sb.set_corner_radius_all(SUB_RADIUS)
+	sb.set_corner_radius_all(0)
 	return sb
 
 func _compact_button(b: Button, height := SUB_BUTTON_H, font_size := SUB_LABEL_FONT) -> Button:
@@ -10397,40 +10436,26 @@ var _font_cache := {}
 func _font_head() -> Font:
 	if _font_cache.has("head"):
 		return _font_cache["head"]
-	var f: Font = null
-	if ResourceLoader.exists("res://assets/fonts/RussoOne.ttf"):
-		f = load("res://assets/fonts/RussoOne.ttf")
-	_font_cache["head"] = f
-	return f
-
+	var fv := FontVariation.new()
+	fv.base_font = load("res://assets/fonts/Manrope.ttf") if ResourceLoader.exists("res://assets/fonts/Manrope.ttf") else ThemeDB.fallback_font
+	fv.variation_opentype = {"wght": 750}
+	_font_cache["head"] = fv
+	return fv
 func _font_chat() -> Font:
 	if _font_cache.has("chat"):
 		return _font_cache["chat"]
 	var fv := FontVariation.new()
-	if ResourceLoader.exists("res://assets/fonts/Comfortaa.ttf"):
-		fv.base_font = load("res://assets/fonts/Comfortaa.ttf")
-		fv.variation_opentype = {"wght": 500}
-	else:
-		fv.base_font = ThemeDB.fallback_font
+	fv.base_font = load("res://assets/fonts/Manrope.ttf") if ResourceLoader.exists("res://assets/fonts/Manrope.ttf") else ThemeDB.fallback_font
+	fv.variation_opentype = {"wght": 500}
 	if ResourceLoader.exists("res://assets/fonts/NotoEmojiColor.ttf"):
 		fv.fallbacks.append(load("res://assets/fonts/NotoEmojiColor.ttf"))
 	if ResourceLoader.exists("res://assets/fonts/NotoEmojiStatic.ttf"):
 		fv.fallbacks.append(load("res://assets/fonts/NotoEmojiStatic.ttf"))
 	_font_cache["chat"] = fv
 	return fv
-
 func _font_mono() -> Font:
-	if _font_cache.has("mono"):
-		return _font_cache["mono"]
-	var f: Font = null
-	if ResourceLoader.exists("res://assets/fonts/JetBrainsMono.ttf"):
-		var fv := FontVariation.new()
-		fv.base_font = load("res://assets/fonts/JetBrainsMono.ttf")
-		fv.variation_opentype = {"wght": 600}
-		f = fv
-	_font_cache["mono"] = f
-	return f
-
+	# Единый шрифт интерфейса: Manrope, полужирное начертание для цифр и цен.
+	return _font_head()
 func _font_bold() -> Font:
 	if _font_cache.has("bold"):
 		return _font_cache["bold"]
@@ -10838,11 +10863,11 @@ func _demo_mode_card(title: String, sub: String, kicker: String, locked := false
 	var normal := _card_style(false, primary)
 	normal.bg_color = Color("#122b3cdd") if primary else Color("#0b1522ed")
 	normal.border_color = Color("#57e7ff") if primary else Color("#33485f")
-	normal.set_corner_radius_all(3)
+	normal.set_corner_radius_all(0)
 	normal.border_width_left = 3 if primary else 1
 	var hover := _card_style(true, primary)
 	hover.bg_color = Color("#193043f5")
-	hover.set_corner_radius_all(3)
+	hover.set_corner_radius_all(0)
 	b.add_theme_stylebox_override("normal", normal)
 	b.add_theme_stylebox_override("hover", hover)
 	b.add_theme_stylebox_override("focus", hover)
@@ -10938,12 +10963,12 @@ func _ctrl_button(icon: String, caption: String) -> Button:
 	n.bg_color = Color("#111c29")
 	n.border_color = Color("#29394b")
 	n.set_border_width_all(1)
-	n.set_corner_radius_all(8)
+	n.set_corner_radius_all(0)
 	var h := StyleBoxFlat.new()
 	h.bg_color = Color("#142636")
 	h.border_color = Color("#55d9e888")
 	h.set_border_width_all(1)
-	h.set_corner_radius_all(8)
+	h.set_corner_radius_all(0)
 	var p := n.duplicate() as StyleBoxFlat
 	p.bg_color = Color("#0b1521f2")
 	b.add_theme_stylebox_override("normal", n)
@@ -11019,7 +11044,7 @@ func _toggle_emoji_panel(inp: LineEdit, host: Control) -> void:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.035, 0.07, 0.11, 0.98)
-	sb.set_corner_radius_all(4)
+	sb.set_corner_radius_all(0)
 	sb.set_border_width_all(1)
 	sb.border_color = Color(0.33, 0.85, 0.91, 0.65)
 	sb.content_margin_left = 8.0
@@ -11249,7 +11274,7 @@ func _build_menu() -> void:
 	mps.bg_color = Color("#080f1af2")
 	mps.border_color = Color("#66809c55")
 	mps.set_border_width_all(1)
-	mps.set_corner_radius_all(16)
+	mps.set_corner_radius_all(0)
 	mps.shadow_color = Color(0, 0, 0, 0.5)
 	mps.shadow_size = 18
 	mps.shadow_offset = Vector2(0, 6)
@@ -11266,7 +11291,7 @@ func _build_menu() -> void:
 	var chat_sb := _frame_box()
 	chat_sb.bg_color = Color(0.025, 0.055, 0.09, 0.88)
 	chat_sb.border_color = Color(0.33, 0.85, 0.91, 0.58)
-	chat_sb.set_corner_radius_all(4)
+	chat_sb.set_corner_radius_all(0)
 	chat_sb.set_content_margin_all(10)
 	chat.add_theme_stylebox_override("panel", chat_sb)
 	chat.anchor_top = 1.0
@@ -11340,7 +11365,7 @@ func _build_menu() -> void:
 	inp_sb.bg_color = Color(0.015, 0.035, 0.06, 0.82)
 	inp_sb.border_color = Color("#63809a70")
 	inp_sb.set_border_width_all(1)
-	inp_sb.set_corner_radius_all(8)
+	inp_sb.set_corner_radius_all(0)
 	inp_sb.content_margin_left = 10.0
 	inp_sb.content_margin_right = 38.0
 	inp.add_theme_stylebox_override("normal", inp_sb)
@@ -11441,7 +11466,7 @@ func _test_run() -> bool:
 
 const TIP_TEXTS := {
 	"squad": ["Отряд", "Здесь создаёшь и прокачиваешь бойцов: ник, оружие, класс, внешность.\nПогибшего бойца лечат в Медцентре — пока он восстанавливается, бери бойца из другого слота."],
-	"shop": ["Магазин", "Здесь тратишь монеты: камуфляжи, цвета ника, рамки.\nМонеты падают за бои и миссии; паки монет — за звёзды ВК."],
+	"shop": ["Магазин", "Здесь тратишь игровые монеты: камуфляжи, цвета ника, рамки.\nКамуфляж меняет окраску костюма 3D-бойца в бою. Паки монет — только в Кассе шоу."],
 	"chests": ["Сундуки", "Сундук удачи открывается за 150 монет.\nВнутри: осколки, косметика, аренда героев. Осколки — валюта редких наград."],
 	"bp": ["Battle Pass", "Миссии дня и недели дают сезонный опыт — он качнет уровни пропуска со дня старта сезона.\nБесплатная лента у всех. Premium открывает вторую ленту наград. Старт сезона — СКОРО."],
 	"med": ["Медцентр", "Погибшие бойцы восстанавливаются со временем.\nХочешь быстрее — заплати монетами или осколками."],
@@ -11496,12 +11521,16 @@ func _tip_overlay(tip_id: String, mark_seen := true) -> void:
 	vb.add_child(ok)
 
 func _maybe_auto_tip(tip_id: String) -> void:
-	# показать подсказку раздела при первом визите (отметка — по закрытию)
+	# Автопоказ строго один раз. Отметка сохраняется ДО оверлея: выход из игры
+	# до нажатия «Понятно» не должен запускать подсказку заново. «?» всегда открывает её вручную.
 	if _test_run():
 		return
 	var seen: Array = _profile.get("seen_tips", [])
 	if tip_id in seen:
 		return
+	seen.append(tip_id)
+	_profile.seen_tips = seen
+	_save_profile()
 	_tip_overlay(tip_id)
 
 func _help_button(tip_id: String) -> Button:
@@ -11577,12 +11606,12 @@ func _toggle_menu_chat() -> void:
 	# свёрнутый: заголовок 26 + ряд иконок 34 + отступы рамки ~18 = ~80px. Ширина — по
 	# содержимому (узкая полоса), развёрнутый — полная. Область сообщений развёрнутого —
 	# прокручиваемая фиксированной высоты, рамка не растёт от числа сообщений
-	p.offset_top = -82.0 if _menu_chat_collapsed else -242.0
+	p.offset_top = -110.0 if _menu_chat_collapsed else -242.0
 	if not _mob():
 		p.offset_right = 210.0 if _menu_chat_collapsed else 398.0
 	# Нижний край меню едет вслед за чатом, не перекрывая поле ввода.
 	if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll):
-		_ui.menu_scroll.offset_bottom = -110.0 if _menu_chat_collapsed else -262.0
+		_ui.menu_scroll.offset_bottom = -132.0 if _menu_chat_collapsed else -262.0
 	_ui.menu_chat_collapse.text = "+" if _menu_chat_collapsed else "—"
 	_render_menu_chat()
 
@@ -11675,79 +11704,99 @@ func _style_locked_button(b: Button) -> void:
 	sb.bg_color = Color(0.05, 0.07, 0.10, 0.85)
 	sb.border_color = Color(0.45, 0.5, 0.6, 0.7)
 	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(8)
+	sb.set_corner_radius_all(0)
 	b.add_theme_stylebox_override("disabled", sb)
 	b.add_theme_color_override("font_disabled_color", Color(0.65, 0.7, 0.8))
 
 func _show_menu_showbiz() -> void:
-	# Единый актуальный каталог VK: никаких старых SKU и кнопок-заглушек.
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
 		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(680.0, _menu_content_w(0.92)), 0)
-	vb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	vb.add_child(_screen_title("coin", "Касса шоу", ""))
-	vb.add_child(_inv_section("ПАКИ МОНЕТ — оплата через VK"))
+	vb.custom_minimum_size = Vector2(minf(1120.0, _menu_content_w(0.96)), 0)
+	vb.add_child(_screen_title("coin", "Касса шоу"))
+	var first := int(_profile.get("first_purchase_discount", 0)) == 1
+	var lead := Label.new()
+	lead.text = "Первая покупка любого пака — скидка 25%. Цена и начисление подтверждаются сервером VK." if first else "Паки монет и Premium покупаются только здесь. Начисление — после подтверждения заказа сервером VK."
+	lead.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lead.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
+	lead.add_theme_color_override("font_color", Color("#8edce7") if first else Color("#9aa7bd"))
+	vb.add_child(lead)
+	vb.add_child(_section_title("ПАКИ МОНЕТ"))
+	var grid := GridContainer.new()
+	var sw := _css_win_w()
+	grid.columns = 4 if sw >= 1080.0 else (2 if sw >= 620.0 else 1)
+	grid.add_theme_constant_override("h_separation", SUB_SEP)
+	grid.add_theme_constant_override("v_separation", SUB_SEP)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(grid)
 	var pnames := ["Разведчик", "Штурмовик", "Легенда шоу", "Королевский"]
 	for pi in COIN_PACKS.size():
 		var pk: Dictionary = COIN_PACKS[pi]
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", SUB_SEP)
-		row.custom_minimum_size = Vector2(0, SUB_ROW_H)
-		vb.add_child(row)
-		var tip := "Фикс: %d монет, без рандома" % int(pk["coins"])
-		row.tooltip_text = tip
-		var lb := Label.new()
-		lb.text = "Пак «%s» — %d монет" % [pnames[pi], int(pk["coins"])]
-		lb.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
-		lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		lb.focus_mode = Control.FOCUS_ALL
-		lb.mouse_filter = Control.MOUSE_FILTER_STOP
-		lb.tooltip_text = tip
-		row.add_child(lb)
-		var buy := _menu_button("%d руб" % int(pk["price"]), true)
-		_compact_button(buy, 32, SUB_PRICE_FONT)
-		buy.custom_minimum_size = Vector2(128, 32)
-		buy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		var bfm := _font_mono()
-		if bfm != null:
-			buy.add_theme_font_override("font", bfm)
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _compact_card_style(false, first))
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		grid.add_child(card)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 5)
+		card.add_child(cv)
+		var icon := TextureRect.new()
+		icon.texture = _png_icon("res://assets/ui/shop/coin_pack_%d.png" % (pi + 1))
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.custom_minimum_size = Vector2(0, 106)
+		cv.add_child(icon)
+		var title := Label.new()
+		title.text = pnames[pi]
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title.add_theme_font_override("font", _font_head())
+		title.add_theme_font_size_override("font_size", 14)
+		cv.add_child(title)
+		var amount := Label.new()
+		amount.text = "%d монет" % int(pk["coins"])
+		amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		amount.add_theme_font_size_override("font_size", 17)
+		amount.add_theme_font_override("font", _font_head())
+		amount.add_theme_color_override("font_color", COIN_COLOR)
+		cv.add_child(amount)
+		var old := Label.new()
+		old.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		old.add_theme_font_size_override("font_size", 11)
+		old.add_theme_color_override("font_color", Color("#ffcf83") if first else Color("#7f91a4"))
+		old.text = ("−25%% · обычная цена %d ₽" % int(pk["price"])) if first else "Фиксированный пак · без рандома"
+		cv.add_child(old)
+		var buy := _menu_button("%d ₽" % _coin_pack_price(pi), true)
+		_compact_button(buy, 38, 14)
 		buy.disabled = not PAYMENTS_ENABLED
+		buy.tooltip_text = "Купить %d монет через VK" % int(pk["coins"])
 		var pi2: int = pi
 		buy.pressed.connect(func(): _buy_coin_pack(pi2))
-		row.add_child(buy)
-	vb.add_child(_inv_section("PREMIUM BATTLE PASS"))
-	var brow := HBoxContainer.new()
-	brow.add_theme_constant_override("separation", SUB_SEP)
-	brow.custom_minimum_size = Vector2(0, SUB_ROW_H)
-	vb.add_child(brow)
-	var bl := Label.new()
-	bl.text = "Premium · сезон 1 — две ленты наград"
-	bl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
-	bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	brow.add_child(bl)
-	var bb := _menu_button("Premium — 399 руб", true)
-	_compact_button(bb, 32, SUB_PRICE_FONT)
-	bb.custom_minimum_size = Vector2(160, 32)
-	bb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	if int(_profile.get("bp_owned", 0)) == 1:
-		bb.text = "АКТИВЕН"
-		bb.disabled = true
-	else:
-		bb.pressed.connect(_buy_bp_pass)
-	brow.add_child(bb)
+		cv.add_child(buy)
+	if BP_SEASON_LIVE:
+		vb.add_child(_section_title("PREMIUM BATTLE PASS"))
+		var brow := HBoxContainer.new()
+		brow.add_theme_constant_override("separation", SUB_SEP)
+		vb.add_child(brow)
+		var bl := Label.new()
+		bl.text = "Premium · сезон 1 — вторая лента наград"
+		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brow.add_child(bl)
+		var bb := _menu_button("Premium — 399 ₽", true)
+		_compact_button(bb, 34, SUB_PRICE_FONT)
+		if int(_profile.get("bp_owned", 0)) == 1:
+			bb.text = "АКТИВЕН"
+			bb.disabled = true
+		else:
+			bb.pressed.connect(_buy_bp_pass)
+		brow.add_child(bb)
 	var note := Label.new()
-	note.text = "Начисление выполняется один раз после подтверждения заказа сервером VK."
+	note.text = "Оплата открывается в защищённом окне VK. Повторное нажатие на уже подтверждённый заказ не начисляет монеты дважды."
 	note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
+	note.add_theme_color_override("font_color", Color("#8295a9"))
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
-
 func _show_menu_deck() -> void:
 	# колода: 3 слота на бой; коллекция — карты за триумф/Жнеца
 	_menu_back_show(true)
@@ -11791,7 +11840,7 @@ func _show_menu_deck() -> void:
 			csb.bg_color = Color(0.02, 0.03, 0.06, 0.6)
 			csb.border_color = Color("#28d8ff88")
 			csb.set_border_width_all(1)
-			csb.set_corner_radius_all(8)
+			csb.set_corner_radius_all(0)
 			b.add_theme_stylebox_override("normal", csb)
 			b.add_theme_stylebox_override("hover", csb)
 			b.add_theme_stylebox_override("pressed", csb)
@@ -11816,7 +11865,7 @@ func _show_menu_deck() -> void:
 			esb.bg_color = Color(0.02, 0.03, 0.06, 0.25)
 			esb.border_color = Color("#28d8ff55")
 			esb.set_border_width_all(1)
-			esb.set_corner_radius_all(8)
+			esb.set_corner_radius_all(0)
 			b.add_theme_stylebox_override("normal", esb)
 			b.add_theme_stylebox_override("hover", esb)
 			b.add_theme_stylebox_override("pressed", esb)
@@ -11932,7 +11981,7 @@ func _show_menu_main() -> void:
 		elif _auth_email != "":
 			acc_tip = "Твой аккаунт. Прогресс сохраняется на сервере"
 		ch.add_child(_chip("person", acc_name if acc_name != "" else str(_profile.names[0]), acc_tip, _auth_email == ""))
-		var online_chip := _chip("globe", "● %d онлайн" % _social_online, _social_players_text(true))
+		var online_chip := _chip("person", "%d онлайн" % _social_online, _social_players_text(true))
 		var online_lbl := online_chip.get_child(0).get_child(1) as Label
 		online_lbl.add_theme_color_override("font_color", Color("#73e68c"))
 		ch.add_child(online_chip)
@@ -12028,7 +12077,7 @@ func _show_menu_main() -> void:
 	scs.bg_color = Color("#e7c9850c")
 	scs.border_color = Color("#e7c98544")
 	scs.set_border_width_all(1)
-	scs.set_corner_radius_all(6)
+	scs.set_corner_radius_all(0)
 	scs.set_content_margin_all(8)
 	season_chip.add_theme_stylebox_override("panel", scs)
 	season_chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -12336,7 +12385,7 @@ func _menu_back_show(on: bool) -> void:
 			mps2.content_margin_right = SUB_PAD if on else (16.0 if _mob() else 24.0)
 			mps2.content_margin_top = SUB_PAD if on else (18.0 if _mob() else 24.0)
 			mps2.content_margin_bottom = SUB_PAD if on else (18.0 if _mob() else 24.0)
-			mps2.set_corner_radius_all(SUB_RADIUS if on else 16)
+			mps2.set_corner_radius_all(0)
 		if on and vb2.get_parent() != mp2:
 			# Godot 4: add_child к уже родителю имеющему узел падает с ERROR —
 			# контент оставался в cc, а пустая подложка висела по центру (квадрат-артефакт)
@@ -12422,28 +12471,6 @@ func _show_menu_settings() -> void:
 		_refresh_menu_screen("settings")
 	)
 	srow.add_child(st)
-	var tprow: BoxContainer = VBoxContainer.new() if _mob() else HBoxContainer.new()
-	tprow.add_theme_constant_override("separation", 8)
-	vb.add_child(tprow)
-	var tpl := Label.new()
-	tpl.text = "Телепорт:"
-	tprow.add_child(tpl)
-	for tp in [["beam", "Луч"], ["hole", "Дыра"], ["storm", "Шторм"]]:
-		var tb2 := _menu_button(str(tp[1]))
-		var tid: String = tp[0]
-		var ots: Array = _profile.get("owned_teleports", [1, 1, 0])
-		var locked := tid == "storm" and (ots.size() < 3 or int(ots[2]) == 0)
-		tb2.selected = str(_profile.get("teleport", "beam")) == tid
-		tb2.disabled = locked
-		if locked:
-			tb2.tooltip_text = "Пока недоступно — появится в одном из будущих событий"
-		else:
-			tb2.pressed.connect(func():
-				_profile.teleport = tid
-				_save_profile()
-				_refresh_menu_screen("settings")
-			)
-		tprow.add_child(tb2)
 	var note := Label.new()
 	note.text = "(звуки: выстрел, попадание, шаги, вскрытие ящика)"
 	note.add_theme_font_size_override("font_size", 11)
@@ -12707,6 +12734,7 @@ func _refresh_menu_screen(screen: String) -> void:
 		"settings": _show_menu_settings()
 		"med": _show_menu_med()
 		"deck": _show_menu_deck()
+		"showbiz": _show_menu_showbiz()
 		"bp": _show_menu_bp()
 		_:
 			return
@@ -12721,6 +12749,67 @@ func _refresh_menu_screen(screen: String) -> void:
 	for i in mini(inner_y.size(), scrolls.size()):
 		scrolls[i].scroll_vertical = int(inner_y[i])
 
+
+func _teleport_selector() -> Control:
+	var wrap := VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", 6)
+	wrap.add_child(_section_title("ТЕЛЕПОРТ — ЭФФЕКТ ПОЯВЛЕНИЯ БОЙЦА"))
+	var grid := GridContainer.new()
+	grid.columns = 1 if _mob() else 3
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.add_child(grid)
+	var items := [
+		{"id": "beam", "name": "Луч", "icon": "teleport_beam", "src": "Доступен сразу"},
+		{"id": "hole", "name": "Разлом", "icon": "teleport_hole", "src": "Доступен сразу"},
+		{"id": "storm", "name": "Шторм", "icon": "teleport_storm", "src": "Premium Battle Pass · 50 ур.\nПосле запуска сезона"},
+	]
+	for ti in items.size():
+		var data: Dictionary = items[ti]
+		var tid := str(data["id"])
+		var owned: Array = _profile.get("owned_teleports", [1, 1, 0])
+		var is_owned := tid != "storm" or (owned.size() > 2 and int(owned[2]) == 1)
+		var selected := str(_profile.get("teleport", "beam")) == tid
+		var card := PanelContainer.new()
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.add_theme_stylebox_override("panel", _compact_card_style(false, selected))
+		grid.add_child(card)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 4)
+		card.add_child(cv)
+		var icon := TextureRect.new()
+		icon.texture = _png_icon("res://assets/ui/shop/%s.png" % str(data["icon"]))
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.custom_minimum_size = Vector2(0, 68)
+		cv.add_child(icon)
+		var name := Label.new()
+		name.text = str(data["name"])
+		name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name.add_theme_font_override("font", _font_head())
+		name.add_theme_font_size_override("font_size", 13)
+		cv.add_child(name)
+		var src := Label.new()
+		src.text = str(data["src"]) if not is_owned else "В коллекции · " + str(data["src"])
+		src.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		src.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		src.add_theme_font_size_override("font_size", 10)
+		src.add_theme_color_override("font_color", Color("#8fa4b8"))
+		cv.add_child(src)
+		var choose := _menu_button("Выбран" if selected else ("Надеть" if is_owned else "Закрыт"), selected)
+		_compact_button(choose, 30, 11)
+		choose.disabled = selected or not is_owned
+		if not is_owned:
+			choose.tooltip_text = "Награда Premium Battle Pass на 50 уровне. Сезон пока скрыт."
+		else:
+			choose.pressed.connect(func():
+				_profile.teleport = tid
+				_save_profile()
+				_refresh_menu_screen("squad")
+			)
+		cv.add_child(choose)
+	return wrap
 
 func _show_menu_squad() -> void:
 	_menu_back_show(true)
@@ -12749,7 +12838,7 @@ func _show_menu_squad() -> void:
 				asb.bg_color = Color(0.16, 0.42, 0.62)
 				asb.border_color = Color(0.45, 0.85, 1.0)
 				asb.set_border_width_all(1)
-				asb.set_corner_radius_all(6)
+				asb.set_corner_radius_all(0)
 				b.add_theme_stylebox_override("normal", asb)
 				b.add_theme_stylebox_override("hover", asb)
 				b.add_theme_color_override("font_color", Color(1, 1, 1))
@@ -12913,7 +13002,7 @@ func _show_menu_squad() -> void:
 		hbs.bg_color = Color(0.08, 0.14, 0.24)
 		hbs.border_color = Color(0.30, 0.55, 0.72)
 	hbs.set_border_width_all(1)
-	hbs.set_corner_radius_all(6)
+	hbs.set_corner_radius_all(0)
 	hb.add_theme_stylebox_override("normal", hbs)
 	hb.add_theme_stylebox_override("hover", hbs)
 	hb.add_theme_stylebox_override("pressed", hbs)
@@ -12961,8 +13050,16 @@ func _show_menu_squad() -> void:
 		grow2.add_child(gl)
 		for g in [["m", "Мужчина"], ["f", "Женщина"]]:
 			var gb := Button.new()
-			gb.text = _sel(g[1], _profile.gender == g[0])
+			gb.text = str(g[1])
 			_compact_button(gb, 32, 12)
+			if _profile.gender == g[0]:
+				var selected_g := _menu_button_state(false, "normal")
+				selected_g.bg_color = Color("#123d4b")
+				selected_g.border_color = Color("#55d9e8")
+				selected_g.set_border_width_all(2)
+				for gst in ["normal", "hover", "pressed"]:
+					gb.add_theme_stylebox_override(gst, selected_g)
+				gb.add_theme_color_override("font_color", Color.WHITE)
 			if not _mob():
 				gb.add_theme_font_size_override("font_size", 12)
 			var gv: String = g[0]
@@ -12986,7 +13083,7 @@ func _show_menu_squad() -> void:
 			sb.tooltip_text = SKIN_NAMES[si]
 			var ss := StyleBoxFlat.new()
 			ss.bg_color = SKIN_COLS[si]
-			ss.set_corner_radius_all(15)
+			ss.set_corner_radius_all(0)
 			if _profile.skin == si:
 				ss.border_color = Color(1, 1, 1)
 				ss.set_border_width_all(2)
@@ -13045,7 +13142,7 @@ func _show_menu_squad() -> void:
 			os.bg_color = Color("#141f2d") if owned_ofi else Color(0.055, 0.075, 0.105, 0.9)
 			if not owned_ofi:
 				ob.add_theme_color_override("font_color", Color(0.45, 0.5, 0.58))
-			os.set_corner_radius_all(8)
+			os.set_corner_radius_all(0)
 			if int(_profile.get("outfit", 0)) == oi:
 				os.bg_color = Color("#28d8ff22")
 				os.border_color = Color("#28d8ff")
@@ -13109,7 +13206,7 @@ func _show_menu_squad() -> void:
 			skss.bg_color = Color("#141824") if owned_si else Color(0.10, 0.11, 0.14, 0.9)
 			if not owned_si:
 				skb.add_theme_color_override("font_color", Color(0.45, 0.5, 0.58))
-			skss.set_corner_radius_all(15)
+			skss.set_corner_radius_all(0)
 			if str(_profile.get("fighter_skin", "soldier")) == str(skd["id"]):
 				skss.bg_color = Color("#28d8ff22")
 				skss.border_color = Color("#28d8ff")
@@ -13129,7 +13226,7 @@ func _show_menu_squad() -> void:
 					_refresh_menu_screen("squad")
 				)
 			skin_row.add_child(skb)
-		# цвет ника (монетизация) — 9 цветных квадратов (переносятся на узких экранах)
+		# шесть контрастных однотонных цветов; остальные — платные новинки Магазина
 		var crow := FlowContainer.new()
 		crow.add_theme_constant_override("h_separation", 4)
 		crow.add_theme_constant_override("v_separation", 4)
@@ -13137,13 +13234,13 @@ func _show_menu_squad() -> void:
 		var cl := Label.new()
 		cl.text = "Цвет имени:"
 		crow.add_child(cl)
-		for ci in NICK_COLOR_NAMES.size():
+		for ci in mini(6, NICK_COLOR_NAMES.size()):
 			var cb := Button.new()
 			cb.custom_minimum_size = Vector2(24, 24)
 			cb.tooltip_text = NICK_COLOR_NAMES[ci]
 			var cs := StyleBoxFlat.new()
 			cs.bg_color = NICK_COLORS[ci]
-			cs.set_corner_radius_all(6)
+			cs.set_corner_radius_all(0)
 			cs.border_color = Color("#28d8ff") if _profile.nick_color == ci else Color("#ffffff22")
 			cs.set_border_width_all(2 if _profile.nick_color == ci else 1)
 			cb.add_theme_stylebox_override("normal", cs)
@@ -13211,6 +13308,8 @@ func _show_menu_squad() -> void:
 			avn.text = "Аватар: на экране «Личные настройки» (своё фото или 1 из 6 пресетов)"
 			avn.add_theme_font_size_override("font_size", 12)
 			vb.add_child(avn)
+	if _squad_edit == 0:
+		vb.add_child(_teleport_selector())
 	# --- очки навыков ---
 	# десктоп: две колонки — внешность слева, статы/таланты справа; мобильный: всё в одну колонку как раньше
 	var vs: Container = vb
@@ -13268,7 +13367,7 @@ func _show_menu_squad() -> void:
 	stps.bg_color = Color(0.02, 0.03, 0.06, 0.82)
 	stps.border_color = Color(0.16, 0.85, 1.0, 0.2)
 	stps.set_border_width_all(1)
-	stps.set_corner_radius_all(4)
+	stps.set_corner_radius_all(0)
 	stps.content_margin_left = SUB_PAD
 	stps.content_margin_right = SUB_PAD
 	stps.content_margin_top = 6.0
@@ -13700,10 +13799,10 @@ func _show_menu_med() -> void:
 		hb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var hb_tr := StyleBoxFlat.new()
 		hb_tr.bg_color = Color("#1a2030")
-		hb_tr.set_corner_radius_all(9)
+		hb_tr.set_corner_radius_all(0)
 		hb.add_theme_stylebox_override("background", hb_tr)
 		var hb_fl := StyleBoxFlat.new()
-		hb_fl.set_corner_radius_all(9)
+		hb_fl.set_corner_radius_all(0)
 		if h * 100 < mx * 60:
 			hb_fl.bg_color = Color("#ff7a45")
 		else:
@@ -13927,7 +14026,7 @@ func _show_menu_progress() -> void:
 	bar.show_percentage = false
 	var btrack := StyleBoxFlat.new()
 	btrack.bg_color = Color("#1a2030")
-	btrack.set_corner_radius_all(7)
+	btrack.set_corner_radius_all(0)
 	bar.add_theme_stylebox_override("background", btrack)
 	var bg2 := Gradient.new()
 	bg2.set_color(0, Color("#28d8ff"))
@@ -13999,7 +14098,7 @@ func _show_menu_progress() -> void:
 			var cell := PanelContainer.new()
 			cell.custom_minimum_size = Vector2(0, 26)
 			var cs := StyleBoxFlat.new()
-			cs.set_corner_radius_all(13)
+			cs.set_corner_radius_all(0)
 			cs.set_border_width_all(1)
 			cs.content_margin_left = 10
 			cs.content_margin_right = 10
@@ -14237,7 +14336,7 @@ func _show_menu_bp() -> void:
 		csb.bg_color = Color(0.08, 0.10, 0.14, 0.9)
 		csb.border_color = Color(1.0, 0.8, 0.25, 0.9) if lv <= lvl else Color(0.35, 0.38, 0.45, 0.7)
 		csb.set_border_width_all(2)
-		csb.set_corner_radius_all(6)
+		csb.set_corner_radius_all(0)
 		cellp.add_theme_stylebox_override("panel", csb)
 		grid.add_child(cellp)
 		var cv := VBoxContainer.new()
@@ -14740,7 +14839,7 @@ func _show_menu_chests() -> void:
 		if fpp == "" or _png_icon(fpp) == null:
 			fps.border_color = FRAME_ACCENTS_POOL[fi % FRAME_ACCENTS_POOL.size()]
 			fps.set_border_width_all(2)
-		fps.set_corner_radius_all(8)
+		fps.set_corner_radius_all(0)
 		fpv.add_theme_stylebox_override("panel", fps)
 		fcell.add_child(fpv)
 		var fav := Label.new()
@@ -14841,7 +14940,7 @@ func _show_menu_chests() -> void:
 		cps.bg_color = Color("#101a28")
 		cps.border_color = NICK_COLORS[ci]
 		cps.set_border_width_all(2)
-		cps.set_corner_radius_all(8)
+		cps.set_corner_radius_all(0)
 		cpv.add_theme_stylebox_override("panel", cps)
 		ccell.add_child(cpv)
 		var cav := Label.new()
@@ -15059,7 +15158,7 @@ func _show_menu_heroes() -> void:
 	for c in vb.get_children():
 		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(1080.0, _menu_content_w(0.94)), 0)
+	vb.custom_minimum_size = Vector2(minf(1280.0, _menu_content_w(0.96)), 0)
 	vb.add_child(_screen_title("swords", "Герои — наём и сборка", "heroes"))
 	_maybe_auto_tip("heroes")
 	var bal := HBoxContainer.new()
@@ -15075,7 +15174,7 @@ func _show_menu_heroes() -> void:
 	vb.add_child(note)
 	var grid := GridContainer.new()
 	var screen_w := _css_win_w()
-	grid.columns = 3 if screen_w >= 980.0 else (2 if screen_w >= 620.0 else 1)
+	grid.columns = 5 if screen_w >= 1500.0 else (4 if screen_w >= 980.0 else (2 if screen_w >= 620.0 else 1))
 	grid.add_theme_constant_override("h_separation", SUB_SEP)
 	grid.add_theme_constant_override("v_separation", SUB_SEP)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -15090,7 +15189,7 @@ func _show_menu_heroes() -> void:
 		cs.bg_color = Color(0.09, 0.10, 0.13, 0.92)
 		cs.border_color = RARITY_COLORS[rarity]
 		cs.set_border_width_all(1)
-		cs.set_corner_radius_all(SUB_RADIUS)
+		cs.set_corner_radius_all(0)
 		cs.content_margin_left = 6
 		cs.content_margin_right = 6
 		cs.content_margin_top = 4
@@ -15107,7 +15206,7 @@ func _show_menu_heroes() -> void:
 		prs.bg_color = Color(0.05, 0.07, 0.11)
 		prs.border_color = RARITY_COLORS[rarity]
 		prs.set_border_width_all(2)
-		prs.set_corner_radius_all(SUB_HERO_PORTRAIT / 2)
+		prs.set_corner_radius_all(0)
 		pr.add_theme_stylebox_override("panel", prs)
 		cv.add_child(pr)
 		var pcenter := CenterContainer.new()
@@ -15207,11 +15306,11 @@ func _show_menu_heroes() -> void:
 			fbar.custom_minimum_size = Vector2(0, 4)
 			var ftr := StyleBoxFlat.new()
 			ftr.bg_color = Color("#1a2030")
-			ftr.set_corner_radius_all(2)
+			ftr.set_corner_radius_all(0)
 			fbar.add_theme_stylebox_override("background", ftr)
 			var ffi := StyleBoxFlat.new()
 			ffi.bg_color = RARITY_COLORS[rarity]
-			ffi.set_corner_radius_all(2)
+			ffi.set_corner_radius_all(0)
 			fbar.add_theme_stylebox_override("fill", ffi)
 			cv.add_child(fbar)
 		if fn >= HERO_FRAGS_NEED and not is_owned:
@@ -15261,6 +15360,115 @@ func _show_menu_heroes() -> void:
 				_show_menu_heroes()
 			)
 			cv.add_child(tkb)
+		if _hero_available(hid):
+			var squad_h: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+			var chosen := _squad_edit < squad_h.size() and int(squad_h[_squad_edit]) == hid
+			var choose_hero := _menu_button("Выбран · слот %d" % (_squad_edit + 1) if chosen else "В отряд · слот %d" % (_squad_edit + 1), true)
+			_compact_button(choose_hero, 28, 10)
+			choose_hero.disabled = chosen
+			choose_hero.tooltip_text = "Назначить героя активному слоту Отряда. Сменить слот можно в разделе «Отряд»."
+			var hero_to_slot: int = hid
+			choose_hero.pressed.connect(func():
+				var sh5: Array = _profile.get("squad_heroes", [-1, -1, -1, -1])
+				while sh5.size() < 4:
+					sh5.append(-1)
+				sh5[_squad_edit] = hero_to_slot
+				_profile.squad_heroes = sh5
+				_save_profile()
+				_sfx_play("levelup")
+				_show_menu_heroes()
+			)
+			cv.add_child(choose_hero)
+
+func _shop_item_card(si: int) -> PanelContainer:
+	var it: Dictionary = SHOP_ITEMS[si]
+	var kind := str(it["kind"])
+	var idx := int(it["idx"])
+	var price := int(it["price"])
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _compact_card_style())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 5)
+	card.add_child(cv)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	cv.add_child(row)
+	var pv := PanelContainer.new()
+	pv.custom_minimum_size = Vector2(54, 54)
+	var pvs := StyleBoxFlat.new()
+	pvs.bg_color = Color("#0a1421")
+	pvs.border_color = Color("#405a70")
+	pvs.set_border_width_all(1)
+	pv.add_theme_stylebox_override("panel", pvs)
+	row.add_child(pv)
+	if kind == "outfit":
+		var outfit_icon := TextureRect.new()
+		var icon_name := "camo_desert" if idx == 1 else ("camo_north" if idx == 2 else "camo_blood")
+		outfit_icon.texture = _png_icon("res://assets/ui/shop/%s.png" % icon_name)
+		outfit_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		outfit_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		outfit_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+		pv.add_child(outfit_icon)
+	else:
+		var sample := Label.new()
+		sample.text = str(_profile.names[0]).substr(0, 1)
+		sample.set_anchors_preset(Control.PRESET_FULL_RECT)
+		sample.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		sample.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		sample.add_theme_font_size_override("font_size", 20)
+		sample.add_theme_color_override("font_color", NICK_COLORS[idx] if kind == "nick_color" else Color("#edf4fb"))
+		sample.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pv.add_child(sample)
+		if kind == "frame":
+			var fp := _frame_png(idx)
+			if fp != "" and _png_icon(fp) != null:
+				pv.add_child(_frame_overlay(idx))
+	var texts := VBoxContainer.new()
+	texts.add_theme_constant_override("separation", 3)
+	texts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	texts.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(texts)
+	var name := Label.new()
+	name.text = str(it["name"])
+	name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name.add_theme_font_size_override("font_size", 12)
+	name.add_theme_font_override("font", _font_head())
+	texts.add_child(name)
+	var desc := Label.new()
+	desc.text = "Окраска костюма 3D-бойца в бою" if kind == "outfit" else ("Однотонный цвет без эффектов" if kind == "nick_color" else "Арт-рамка вокруг аватара")
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.add_theme_font_size_override("font_size", 10)
+	desc.add_theme_color_override("font_color", Color("#8fa4b8"))
+	texts.add_child(desc)
+	var b := _menu_button("", true)
+	_compact_button(b, 32, SUB_PRICE_FONT)
+	if _shop_equipped(kind, idx):
+		b.text = "Надето"
+		b.disabled = true
+	elif _shop_owned(kind, idx):
+		b.text = "Надеть"
+		b.pressed.connect(func():
+			_shop_equip(kind, idx)
+			_refresh_menu_screen("shop")
+		)
+	else:
+		b.text = "%d · монет" % price
+		b.icon = _icon_tex("coin")
+		b.add_theme_constant_override("icon_max_width", 14)
+		if int(_profile.get("coins", 0)) < price:
+			b.tooltip_text = "Не хватает %d монет. Нажми — откроется Касса шоу." % (price - int(_profile.get("coins", 0)))
+		else:
+			b.tooltip_text = "Купить за %d игровых монет" % price
+		var shop_idx: int = si
+		b.pressed.connect(func():
+			var can_afford := int(_profile.get("coins", 0)) >= price
+			_shop_buy(shop_idx)
+			if can_afford:
+				_refresh_menu_screen("shop")
+		)
+	cv.add_child(b)
+	return card
 
 func _show_menu_shop() -> void:
 	_menu_back_show(true)
@@ -15269,173 +15477,57 @@ func _show_menu_shop() -> void:
 	for c in vb.get_children():
 		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(1080.0, _menu_content_w(0.94)), 0)
-	vb.add_child(_screen_title("shop", "Магазин", "shop"))
+	vb.custom_minimum_size = Vector2(minf(1120.0, _menu_content_w(0.96)), 0)
+	vb.add_child(_screen_title("shop", "Магазин · игровая валюта", "shop"))
 	_maybe_auto_tip("shop")
-	var bal2 := HBoxContainer.new()
-	bal2.add_theme_constant_override("separation", SUB_SEP)
-	bal2.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
+	var bal := HBoxContainer.new()
+	bal.add_theme_constant_override("separation", SUB_SEP)
+	bal.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
 	var bal_note := Label.new()
-	bal_note.text = "монеты за бои и задания дня"
+	bal_note.text = "Зарабатываются за бои и задания"
 	bal_note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
-	bal_note.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
-	bal2.add_child(bal_note)
-	vb.add_child(bal2)
-	vb.add_child(_section_title("КОСМЕТИКА И ПЕРСОНАЛИЗАЦИЯ"))
-	var screen_w := _css_win_w()
-	var columns := 3 if screen_w >= 980.0 else (2 if screen_w >= 620.0 else 1)
+	bal_note.add_theme_color_override("font_color", Color("#91a3b7"))
+	bal.add_child(bal_note)
+	vb.add_child(bal)
 	var grid := GridContainer.new()
-	grid.columns = columns
+	grid.columns = 3 if _css_win_w() >= 900.0 else 1
 	grid.add_theme_constant_override("h_separation", SUB_SEP)
 	grid.add_theme_constant_override("v_separation", SUB_SEP)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(grid)
-	for si in SHOP_ITEMS.size():
-		var it: Dictionary = SHOP_ITEMS[si]
-		var kind := str(it["kind"])
-		var idx := int(it["idx"])
-		var price := int(it["price"])
-		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", _compact_card_style())
-		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		grid.add_child(card)
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", SUB_SEP)
-		card.add_child(row)
-		var FRAME_ACCENTS := [Color("#8a93a6"), Color(0.2, 0.9, 1.0), Color("#d4af37"), Color(0.35, 0.5, 0.25), Color(0.85, 0.7, 0.4), Color(0.2, 1.0, 0.5), Color(1.0, 0.45, 0.1), Color(0.9, 0.9, 0.95), Color(1.0, 0.5, 1.0)]
-		var pv := PanelContainer.new()
-		pv.custom_minimum_size = Vector2(SUB_PREVIEW, SUB_PREVIEW)
-		var pvs := StyleBoxFlat.new()
-		pvs.bg_color = Color("#101a28")
-		if kind == "nick_color" and idx < NICK_COLORS.size():
-			pvs.border_color = NICK_COLORS[idx]
-			pvs.set_border_width_all(2)
-		elif kind == "outfit" and idx < OUTFIT_SKINS.size() and OUTFIT_SKINS[idx].get("col") != null:
-			pvs.bg_color = OUTFIT_SKINS[idx]["col"]
-		else:
-			var fpp: String = _frame_png(idx) if kind == "frame" else ""
-			if fpp == "" or _png_icon(fpp) == null:
-				pvs.border_color = FRAME_ACCENTS[idx] if idx < FRAME_ACCENTS.size() else Color.WHITE
-				pvs.set_border_width_all(2)
-		pvs.set_corner_radius_all(6)
-		pv.add_theme_stylebox_override("panel", pvs)
-		pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		row.add_child(pv)
-		if kind in ["frame", "nick_color"]:
-			var sample := Label.new()
-			sample.text = str(_profile.names[0]).substr(0, 1)
-			sample.set_anchors_preset(Control.PRESET_FULL_RECT)
-			sample.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			sample.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			sample.add_theme_font_size_override("font_size", 18)
-			sample.add_theme_color_override("font_color", NICK_COLORS[idx] if kind == "nick_color" else Color("#edf4fb"))
-			sample.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			pv.add_child(sample)
-		if kind == "frame":
-			var fpp2: String = _frame_png(idx)
-			if fpp2 != "" and _png_icon(fpp2) != null:
-				pv.add_child(_frame_overlay(idx))
-		var nl := Label.new()
-		nl.text = str(it["name"])
-		nl.tooltip_text = str(it["name"])
-		nl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
-		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		nl.max_lines_visible = 2
-		row.add_child(nl)
-		var b := _menu_button("", true)
-		_compact_button(b, 32, SUB_PRICE_FONT)
-		b.custom_minimum_size = Vector2(88 if _mob() else 112, 32)
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if _shop_equipped(kind, idx):
-			b.text = "Надето"
-			b.disabled = true
-		elif _shop_owned(kind, idx):
-			b.text = "Надеть"
-			b.tooltip_text = "Нажми, чтобы надеть"
-			var k1 := kind
-			var i1 := idx
-			b.pressed.connect(func():
-				_shop_equip(k1, i1)
-				_refresh_menu_screen("shop")
-			)
-		else:
-			b.text = "%d" % price
-			b.tooltip_text = "Купить за %d монет" % price
-			var bmf := _font_mono()
-			if bmf != null:
-				b.add_theme_font_override("font", bmf)
-			b.icon = _icon_tex("coin")
-			b.add_theme_constant_override("icon_max_width", 14)
-			b.add_theme_color_override("icon_normal_color", COIN_COLOR)
-			b.add_theme_color_override("icon_hover_color", COIN_COLOR)
-			b.add_theme_color_override("icon_pressed_color", COIN_COLOR)
-			b.add_theme_color_override("icon_disabled_color", Color(0.78, 0.69, 0.43))
-			b.add_theme_color_override("font_color", Color.WHITE)
-			if int(_profile.get("coins", 0)) < price:
-				b.tooltip_text = "Не хватает %d монет" % (price - int(_profile.get("coins", 0)))
-			var s1: int = si
-			b.pressed.connect(func():
-				_shop_buy(s1)
-				_refresh_menu_screen("shop")
-			)
-		row.add_child(b)
-	vb.add_child(_section_title("ПАКИ МОНЕТ"))
-	var packs := GridContainer.new()
-	packs.columns = columns
-	packs.add_theme_constant_override("h_separation", SUB_SEP)
-	packs.add_theme_constant_override("v_separation", SUB_SEP)
-	packs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vb.add_child(packs)
-	for pi in COIN_PACKS.size():
-		var pk: Dictionary = COIN_PACKS[pi]
-		var card2 := PanelContainer.new()
-		card2.add_theme_stylebox_override("panel", _compact_card_style())
-		card2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		packs.add_child(card2)
-		var row2 := HBoxContainer.new()
-		row2.add_theme_constant_override("separation", 6)
-		row2.custom_minimum_size = Vector2(0, SUB_ROW_H)
-		card2.add_child(row2)
-		var pl := Label.new()
-		pl.text = "%d монет" % int(pk["coins"])
-		pl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
-		pl.add_theme_font_override("font", _font_mono())
-		pl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		row2.add_child(pl)
-		var pn := Label.new()
-		var bonus := int(pk.get("bonus", 0))
-		pn.text = ("+%d бонусом (%d%%)" % [bonus, int(round(bonus * 100.0 / maxf(1.0, float(int(pk["coins"]) - bonus))))]) if bonus > 0 else "без бонуса"
-		pn.add_theme_font_size_override("font_size", 11)
-		pn.add_theme_color_override("font_color", Color(0.65, 0.85, 0.6))
-		pn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		pn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		pn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		row2.add_child(pn)
-		var pb := Button.new()
-		pb.text = "%d руб" % int(pk["price"])
-		_compact_button(pb, 32, SUB_PRICE_FONT)
-		pb.custom_minimum_size = Vector2(104, 32)
-		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		pb.add_theme_font_override("font", _font_mono())
-		pb.disabled = not PAYMENTS_ENABLED
-		pb.tooltip_text = "Фикс: %d монет, без рандома" % int(pk["coins"])
-		var pbs := StyleBoxFlat.new()
-		pbs.bg_color = Color(0.16, 0.5, 0.24, 0.95)
-		pbs.border_color = Color(0.4, 0.9, 0.5, 0.9)
-		pbs.set_border_width_all(1)
-		pbs.set_corner_radius_all(6)
-		pb.add_theme_stylebox_override("normal", pbs)
-		pb.add_theme_color_override("font_color", Color.WHITE)
-		var pi2: int = pi
-		pb.pressed.connect(func(): _buy_coin_pack(pi2))
-		row2.add_child(pb)
-	var note := Label.new()
-	note.text = "Скины бойца и подписка с призами — в онлайн-версии."
-	note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
-	vb.add_child(note)
-
+	var kinds := ["frame", "nick_color", "outfit"]
+	var titles := ["01 · РАМКИ", "02 · ЦВЕТ НИКА", "03 · КАМУФЛЯЖ"]
+	var subtitles := ["Арт-обрамление аватара", "Шесть базовых — в Отряде; здесь новые", "Окраска костюма на 3D-бойце в бою"]
+	for ki in kinds.size():
+		var column := PanelContainer.new()
+		column.add_theme_stylebox_override("panel", _compact_frame_box())
+		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		grid.add_child(column)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 7)
+		column.add_child(col)
+		var heading := Label.new()
+		heading.text = titles[ki]
+		heading.add_theme_font_override("font", _font_head())
+		heading.add_theme_font_size_override("font_size", 14)
+		heading.add_theme_color_override("font_color", Color("#8edce7"))
+		col.add_child(heading)
+		var sub := Label.new()
+		sub.text = subtitles[ki]
+		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sub.add_theme_font_size_override("font_size", 10)
+		sub.add_theme_color_override("font_color", Color("#8295a9"))
+		col.add_child(sub)
+		for si in SHOP_ITEMS.size():
+			if str(SHOP_ITEMS[si]["kind"]) == kinds[ki]:
+				col.add_child(_shop_item_card(si))
+	var cashier := _menu_button("Пополнить монеты · Касса шоу", true)
+	_compact_button(cashier, SUB_CTA_H, 14)
+	cashier.icon = _icon_tex("coin")
+	cashier.add_theme_constant_override("icon_max_width", 20)
+	cashier.tooltip_text = "Все покупки за реальные деньги находятся в Кассе шоу"
+	cashier.pressed.connect(_show_menu_showbiz)
+	vb.add_child(cashier)
 func _show_menu_profile() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
@@ -15696,7 +15788,7 @@ func _inv_card_style(col: Color, bg := Color(0.055, 0.09, 0.14, 0.97)) -> StyleB
 	sb.bg_color = bg
 	sb.border_color = col
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(4)
+	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 12.0
 	sb.content_margin_right = 12.0
 	sb.content_margin_top = 10.0
@@ -15711,7 +15803,7 @@ func _inv_ghost_style() -> StyleBoxFlat:
 	sb.bg_color = Color(0.03, 0.05, 0.08, 0.35)
 	sb.border_color = Color(0.45, 0.55, 0.65, 0.28)
 	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(4)
+	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 8.0
 	sb.content_margin_right = 8.0
 	sb.content_margin_top = 6.0
