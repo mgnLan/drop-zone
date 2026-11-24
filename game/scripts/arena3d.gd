@@ -10020,8 +10020,9 @@ func _toast(png_name: String, text: String, big := false) -> void:
 func _menu_button(txt: String, accent := false) -> Button:
 	var b := DzPereliv.new()
 	b.text = txt
-	b.custom_minimum_size = Vector2(150, 50)
+	b.custom_minimum_size = Vector2(150, SUB_BUTTON_H)
 	_style_menu_button(b, accent)
+	_compact_button(b, SUB_BUTTON_H, SUB_LABEL_FONT)
 	return b
 
 # ---------- иконки-пиктограммы лобби (SVG, белые силуэты) ----------
@@ -10190,13 +10191,13 @@ func _card_style(hover := false, glow := false) -> StyleBoxFlat:
 		sb.shadow_size = 10
 	return sb
 
-func _section_title(t: String) -> HBoxContainer:
-	# Небольшой дисплейный ярлык и линия: понятная иерархия без лишних панелей.
+func _section_title(t: String, compact := true) -> HBoxContainer:
+	# Небольшой дислейный ярлык; main передаёт compact=false и сохраняет эталон.
 	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 12)
+	hb.add_theme_constant_override("separation", SUB_SEP if compact else 12)
 	var l := Label.new()
 	l.text = t
-	l.add_theme_font_size_override("font_size", 13)
+	l.add_theme_font_size_override("font_size", SUB_SECTION_FONT if compact else 13)
 	l.add_theme_color_override("font_color", Color("#8edce7"))
 	var sf := _font_head()
 	if sf != null:
@@ -10214,15 +10215,93 @@ func _section_title(t: String) -> HBoxContainer:
 const COIN_COLOR := Color(1.0, 0.82, 0.25)
 const SHARD_COLOR := Color(0.55, 0.75, 1.0)
 
+# COMPACT_V2: единая геометрия подэкранов, не применяется к главному лобби/HUD.
+const SUB_SEP := 8
+const SUB_PAD := 8
+const SUB_RADIUS := 10
+const SUB_CHIP_H := 32
+const SUB_TITLE_FONT := 22
+const SUB_SECTION_FONT := 12
+const SUB_LABEL_FONT := 13
+const SUB_HINT_FONT := 11
+const SUB_PRICE_FONT := 12
+const SUB_BUTTON_H := 36
+const SUB_CTA_H := 44
+const SUB_ROW_H := 44
+const SUB_PREVIEW := 32
+const SUB_HERO_PORTRAIT := 48
+const CHEST_ODDS_TOOLTIP := "Шансы: обычный 55% · редкий 25% · эпик 13% · легенда 5% · мифик 1,9% · сиреневый 0,1%
+Гаранты: эпик — 10 · легенда — 30 · мифик — 80 · сиреневый — 200 открытий"
+
+func _compact_frame_box() -> StyleBoxFlat:
+	var sb := _frame_box()
+	sb.content_margin_left = SUB_PAD
+	sb.content_margin_right = SUB_PAD
+	sb.content_margin_top = 4.0
+	sb.content_margin_bottom = 4.0
+	sb.set_corner_radius_all(SUB_RADIUS)
+	return sb
+
+func _compact_card_style(hover := false, glow := false) -> StyleBoxFlat:
+	var sb := _card_style(hover, glow)
+	sb.content_margin_left = SUB_PAD
+	sb.content_margin_right = SUB_PAD
+	sb.content_margin_top = 6.0
+	sb.content_margin_bottom = 6.0
+	sb.set_corner_radius_all(SUB_RADIUS)
+	return sb
+
+func _compact_inv_card_style(col: Color, bg := Color(0.055, 0.09, 0.14, 0.97)) -> StyleBoxFlat:
+	var sb := _inv_card_style(col, bg)
+	sb.content_margin_left = SUB_PAD
+	sb.content_margin_right = SUB_PAD
+	sb.content_margin_top = 6.0
+	sb.content_margin_bottom = 6.0
+	sb.set_corner_radius_all(SUB_RADIUS)
+	return sb
+
+func _compact_button(b: Button, height := SUB_BUTTON_H, font_size := SUB_LABEL_FONT) -> Button:
+	b.custom_minimum_size = Vector2(b.custom_minimum_size.x, height)
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var old := b.get_theme_stylebox(state)
+		var sb := old.duplicate() if old != null else _menu_button_state(false, "hover" if state == "focus" else state)
+		if sb is StyleBoxFlat:
+			(sb as StyleBoxFlat).content_margin_left = 10.0
+			(sb as StyleBoxFlat).content_margin_right = 10.0
+			(sb as StyleBoxFlat).content_margin_top = 3.0
+			(sb as StyleBoxFlat).content_margin_bottom = 3.0
+		b.add_theme_stylebox_override(state, sb)
+	b.add_theme_font_size_override("font_size", font_size)
+	return b
+
+func _compact_top_chips(on: bool) -> void:
+	if not _ui.has("menu_chips") or not is_instance_valid(_ui.menu_chips):
+		return
+	for child in _ui.menu_chips.get_children():
+		if child is PanelContainer:
+			var pc := child as PanelContainer
+			pc.add_theme_stylebox_override("panel", _compact_frame_box() if on else _frame_box())
+			pc.custom_minimum_size.y = SUB_CHIP_H if on else 0.0
+			for tr in pc.find_children("*", "TextureRect", true, false):
+				(tr as TextureRect).custom_minimum_size = Vector2(16, 16)
+			for lb in pc.find_children("*", "Label", true, false):
+				(lb as Label).add_theme_font_size_override("font_size", 12 if on else 13)
+		elif child is Button:
+			(child as Button).custom_minimum_size.y = SUB_CHIP_H
+	if _ui.has("menu_scroll") and is_instance_valid(_ui.menu_scroll) and _ui.menu_scroll.theme != null:
+		var th: Theme = _ui.menu_scroll.theme
+		th.set_font("font", "TooltipLabel", _font_mono() if on else ThemeDB.fallback_font)
+		th.set_font_size("font_size", "TooltipLabel", 12 if on else 15)
+
 func _screen_title(icon: String, txt: String, tip_id := "") -> HBoxContainer:
 	# заголовок экрана: пиктограмма в подложке + крупный текст; справа — кнопка «?»
 	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 10)
-	var chip := _icon_chip(icon, 22)
+	hb.add_theme_constant_override("separation", SUB_SEP)
+	var chip := _icon_chip(icon, 14)   # 14 + 16 = 30 px вместе с подложкой
 	hb.add_child(chip)
 	var l := Label.new()
 	l.text = txt
-	l.add_theme_font_size_override("font_size", 20 if _mob() else 28)
+	l.add_theme_font_size_override("font_size", SUB_TITLE_FONT)
 	if _mob():
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -10241,9 +10320,10 @@ func _screen_title(icon: String, txt: String, tip_id := "") -> HBoxContainer:
 func _currency_chip(icon: String, col: Color, txt: String) -> PanelContainer:
 	# чип валюты: цветная пиктограмма + значение, неоновая рамка как у _frame_box
 	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _frame_box())
+	pc.add_theme_stylebox_override("panel", _compact_frame_box())
+	pc.custom_minimum_size.y = SUB_CHIP_H
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 6)
+	h.add_theme_constant_override("separation", 5)
 	var tr := TextureRect.new()
 	var pngt := _png_icon(PNG_BY_NAME.get(icon, ""))
 	if pngt != null:
@@ -10253,11 +10333,11 @@ func _currency_chip(icon: String, col: Color, txt: String) -> PanelContainer:
 		tr.modulate = col
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	tr.custom_minimum_size = Vector2(18, 18)
+	tr.custom_minimum_size = Vector2(14, 14)
 	h.add_child(tr)
 	var l := Label.new()
 	l.text = txt
-	l.add_theme_font_size_override("font_size", 14)
+	l.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 	var mf := _font_mono()
 	if mf != null:
 		l.add_theme_font_override("font", mf)
@@ -11429,7 +11509,8 @@ func _help_button(tip_id: String) -> Button:
 	var hb := Button.new()
 	hb.text = "?"
 	hb.tooltip_text = "Что здесь"
-	hb.custom_minimum_size = Vector2(40, 30)
+	hb.custom_minimum_size = Vector2(32, 26)
+	_compact_button(hb, 26, 13)
 	hb.pressed.connect(func(): _tip_overlay(tip_id, false))
 	return hb
 
@@ -11603,28 +11684,35 @@ func _show_menu_showbiz() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
-		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
-		# в конце кадра, но до этого они не должны влиять на позиции новых.
 		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(560.0, _menu_content_w(0.92)), 0)
+	vb.custom_minimum_size = Vector2(minf(680.0, _menu_content_w(0.92)), 0)
+	vb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	vb.add_child(_screen_title("coin", "Касса шоу", ""))
 	vb.add_child(_inv_section("ПАКИ МОНЕТ — оплата через VK"))
 	var pnames := ["Разведчик", "Штурмовик", "Легенда шоу", "Королевский"]
 	for pi in COIN_PACKS.size():
 		var pk: Dictionary = COIN_PACKS[pi]
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
+		row.add_theme_constant_override("separation", SUB_SEP)
+		row.custom_minimum_size = Vector2(0, SUB_ROW_H)
 		vb.add_child(row)
+		var tip := "Фикс: %d монет, без рандома" % int(pk["coins"])
+		row.tooltip_text = tip
 		var lb := Label.new()
 		lb.text = "Пак «%s» — %d монет" % [pnames[pi], int(pk["coins"])]
-		lb.add_theme_font_size_override("font_size", 14)
+		lb.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 		lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		lb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lb.focus_mode = Control.FOCUS_ALL
+		lb.mouse_filter = Control.MOUSE_FILTER_STOP
+		lb.tooltip_text = tip
 		row.add_child(lb)
 		var buy := _menu_button("%d руб" % int(pk["price"]), true)
-		buy.custom_minimum_size = Vector2(140, 40)
+		_compact_button(buy, 32, SUB_PRICE_FONT)
+		buy.custom_minimum_size = Vector2(128, 32)
+		buy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var bfm := _font_mono()
 		if bfm != null:
 			buy.add_theme_font_override("font", bfm)
@@ -11634,17 +11722,20 @@ func _show_menu_showbiz() -> void:
 		row.add_child(buy)
 	vb.add_child(_inv_section("PREMIUM BATTLE PASS"))
 	var brow := HBoxContainer.new()
-	brow.add_theme_constant_override("separation", 10)
+	brow.add_theme_constant_override("separation", SUB_SEP)
+	brow.custom_minimum_size = Vector2(0, SUB_ROW_H)
 	vb.add_child(brow)
 	var bl := Label.new()
 	bl.text = "Premium · сезон 1 — две ленты наград"
-	bl.add_theme_font_size_override("font_size", 14)
+	bl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 	bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	brow.add_child(bl)
 	var bb := _menu_button("Premium — 399 руб", true)
-	bb.custom_minimum_size = Vector2(140, 40)
+	_compact_button(bb, 32, SUB_PRICE_FONT)
+	bb.custom_minimum_size = Vector2(160, 32)
+	bb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	if int(_profile.get("bp_owned", 0)) == 1:
 		bb.text = "АКТИВЕН"
 		bb.disabled = true
@@ -11653,7 +11744,7 @@ func _show_menu_showbiz() -> void:
 	brow.add_child(bb)
 	var note := Label.new()
 	note.text = "Начисление выполняется один раз после подтверждения заказа сервером VK."
-	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
 
@@ -12158,7 +12249,7 @@ func _show_menu_main() -> void:
 		vb.add_child(m4)
 		vb.add_child(m5)
 		vb.add_child(m6)
-		vb.add_child(_section_title("УПРАВЛЕНИЕ"))
+		vb.add_child(_section_title("УПРАВЛЕНИЕ", false))
 		var grid := GridContainer.new()
 		grid.columns = 3
 		grid.add_theme_constant_override("h_separation", 6)
@@ -12211,6 +12302,10 @@ func _menu_back_show(on: bool) -> void:
 	if not _ui.has("menu_back") or not is_instance_valid(_ui.menu_back):
 		return
 	_ui.menu_back.visible = on
+	_compact_top_chips(on)
+	if _ui.has("menu_box") and is_instance_valid(_ui.menu_box):
+		_ui.menu_box.add_theme_constant_override("separation", SUB_SEP if on else 12)
+		_ui.menu_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# На телефоне кнопка занимает отдельную строку под чипами, а не перекрывает их.
 	if _mob():
 		_ui.menu_back.offset_top = 96.0 if on else 12.0
@@ -12235,6 +12330,13 @@ func _menu_back_show(on: bool) -> void:
 	if _ui.has("menu_panel") and is_instance_valid(_ui.menu_panel):
 		var mp2: PanelContainer = _ui.menu_panel
 		var vb2: Control = _ui.menu_box
+		var mps2 := mp2.get_theme_stylebox("panel") as StyleBoxFlat
+		if mps2 != null:
+			mps2.content_margin_left = SUB_PAD if on else (16.0 if _mob() else 24.0)
+			mps2.content_margin_right = SUB_PAD if on else (16.0 if _mob() else 24.0)
+			mps2.content_margin_top = SUB_PAD if on else (18.0 if _mob() else 24.0)
+			mps2.content_margin_bottom = SUB_PAD if on else (18.0 if _mob() else 24.0)
+			mps2.set_corner_radius_all(SUB_RADIUS if on else 16)
 		if on and vb2.get_parent() != mp2:
 			# Godot 4: add_child к уже родителю имеющему узел падает с ERROR —
 			# контент оставался в cc, а пустая подложка висела по центру (квадрат-артефакт)
@@ -12655,8 +12757,8 @@ func _show_menu_squad() -> void:
 			b.text = "🔒 %d" % (i + 1)
 			b.tooltip_text = ("Нужен %d уровень любого бойца" % SLOT3_LVL) if i == 2 else "Только по месячной подписке ВИП — появится в магазине"
 			b.add_theme_color_override("font_color", Color(0.55, 0.6, 0.68))
-		b.custom_minimum_size = Vector2(slot_w, 34)
-		b.add_theme_font_size_override("font_size", 12 if _mob() else 14)
+		b.custom_minimum_size = Vector2(slot_w, 30)
+		_compact_button(b, 30, 12)
 		var fi: int = i
 		b.pressed.connect(func():
 			_squad_edit = fi
@@ -12673,7 +12775,7 @@ func _show_menu_squad() -> void:
 				cond = "Только по месячной подписке ВИП (с призами) — появится в магазине. Слот 4 открывается после слота 3."
 		var lock := Label.new()
 		lock.text = "Слот закрыт. " + cond
-		lock.add_theme_font_size_override("font_size", 15)
+		lock.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 		lock.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vb.add_child(lock)
 		return
@@ -12687,7 +12789,8 @@ func _show_menu_squad() -> void:
 	nrow.add_child(nl)
 	var ne := LineEdit.new()
 	ne.text = _profile.names[_squad_edit]
-	ne.custom_minimum_size = Vector2(200, 0)
+	ne.custom_minimum_size = Vector2(200, 32)
+	ne.add_theme_font_size_override("font_size", 12)
 	ne.max_length = 16
 	ne.tooltip_text = "Это имя видно в бою и списке отряда."
 	if _squad_edit == 0:
@@ -12722,6 +12825,7 @@ func _show_menu_squad() -> void:
 		wb.text = _sel(str(wd.get("name", SIDEARMS[wi])), int(_profile.sidearm[_squad_edit]) == wi)
 		if not _mob():
 			wb.add_theme_font_size_override("font_size", 12)
+		_compact_button(wb, 32, 12)
 		wb.tooltip_text = "Стартовое оружие. Нож есть всегда, остальное можно найти в бою.\nУрон %d · выстрел %d оч. действия · обойма %d · дальность %d" % [
 			int(wd.get("damage", 0)), int(wd.get("ap_cost", 0)), int(wd.get("ammo", 0)), int(wd.get("range", 0))]
 		var wv: int = wi
@@ -12752,6 +12856,7 @@ func _show_menu_squad() -> void:
 		cb.text = _sel(FIGHTER_CLASSES[ci]["name"], int(_profile.cls[_squad_edit]) == ci)
 		if not _mob():
 			cb.add_theme_font_size_override("font_size", 12)
+		_compact_button(cb, 32, 12)
 		cb.tooltip_text = "Особый навык роли:\n" + str(FIGHTER_CLASSES[ci]["desc"]).replace("+1 ОД", "+1 очко действия")
 		var cv: int = ci
 		cb.pressed.connect(func():
@@ -12797,7 +12902,7 @@ func _show_menu_squad() -> void:
 	hb.icon = _icon_tex("chevron")
 	hb.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	hb.add_theme_constant_override("icon_max_width", 16)
-	hb.custom_minimum_size = Vector2(220, 34)
+	hb.custom_minimum_size = Vector2(220, 32)
 	hb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	# SVG вместо символа ▾: последний отсутствует в Manrope и превращался в «тофу».
 	var hbs := StyleBoxFlat.new()
@@ -12857,6 +12962,7 @@ func _show_menu_squad() -> void:
 		for g in [["m", "Мужчина"], ["f", "Женщина"]]:
 			var gb := Button.new()
 			gb.text = _sel(g[1], _profile.gender == g[0])
+			_compact_button(gb, 32, 12)
 			if not _mob():
 				gb.add_theme_font_size_override("font_size", 12)
 			var gv: String = g[0]
@@ -12929,7 +13035,7 @@ func _show_menu_squad() -> void:
 			var ob := Button.new()
 			var owned_ofi: bool = oi < owned_of.size() and int(owned_of[oi]) == 1
 			# Открытый камуфляж всегда вмещает название; закрытый остаётся компактным.
-			ob.custom_minimum_size = Vector2(100 if owned_ofi else 42, 34)
+			ob.custom_minimum_size = Vector2(100 if owned_ofi else 42, 26)
 			ob.text = str(OUTFIT_SKINS[oi]["name"]) if owned_ofi else "?"
 			ob.tooltip_text = str(OUTFIT_SKINS[oi]["name"]) + ("" if owned_ofi else " — купи в магазине или получи из наград")
 			ob.add_theme_font_size_override("font_size", 12)
@@ -13112,7 +13218,7 @@ func _show_menu_squad() -> void:
 		vb.custom_minimum_size = Vector2(minf(1000.0, _menu_content_w(0.94)), 0)
 		var sep: int = clampi(int(vb.get_theme_constant("separation")) - 4, 4, 10)
 		var body := HBoxContainer.new()
-		body.add_theme_constant_override("separation", 24)
+		body.add_theme_constant_override("separation", 16)
 		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		vb.add_child(body)
 		# тикет #1: на невысоком окне ВК колонки отряда переполнялись — каждая в своём
@@ -13163,10 +13269,10 @@ func _show_menu_squad() -> void:
 	stps.border_color = Color(0.16, 0.85, 1.0, 0.2)
 	stps.set_border_width_all(1)
 	stps.set_corner_radius_all(4)
-	stps.content_margin_left = 10.0    # OTRYAD_V1: 14/12 -> 10/8
-	stps.content_margin_right = 10.0
-	stps.content_margin_top = 8.0
-	stps.content_margin_bottom = 8.0
+	stps.content_margin_left = SUB_PAD
+	stps.content_margin_right = SUB_PAD
+	stps.content_margin_top = 6.0
+	stps.content_margin_bottom = 6.0
 	st_panel.add_theme_stylebox_override("panel", stps)
 	vs.add_child(st_panel)
 	var stv := VBoxContainer.new()
@@ -13176,17 +13282,19 @@ func _show_menu_squad() -> void:
 	var left := _stat_points_left(st, _profile.lvl[_squad_edit])
 	var pl := Label.new()
 	pl.text = "Уровень %d · опыт %d/%d · очков характеристик: %d" % [_profile.lvl[_squad_edit], _profile.xp[_squad_edit], _xp_need(_profile.lvl[_squad_edit]), left]
-	pl.add_theme_font_size_override("font_size", 17 if _mob() else 14)   # OTRYAD_V1: -1 px
+	pl.add_theme_font_size_override("font_size", 13 if _mob() else 12)
 	var plf := _font_mono()
 	if plf != null:
 		pl.add_theme_font_override("font", plf)
 	stv.add_child(pl)
 	for k in STAT_KEYS:
 		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		row.custom_minimum_size = Vector2(0, 26)
 		stv.add_child(row)
 		var lb := Label.new()
 		lb.text = "%s: %d" % [STAT_NAMES[k], st[k]]
-		lb.custom_minimum_size = Vector2(100, 0) if _mob() else Vector2(150, 0)
+		lb.custom_minimum_size = Vector2(100, 0) if _mob() else Vector2(120, 0)
 		lb.add_theme_font_size_override("font_size", 12 if not _mob() else 14)
 		var lbf := _font_mono()
 		if lbf != null:
@@ -13198,6 +13306,7 @@ func _show_menu_squad() -> void:
 		# Вложенные очки не снимаются по одному; полный сброс — отдельной кнопкой ниже.
 		minus.disabled = true
 		minus.tooltip_text = "Вложенные очки нельзя снять по одному. Полный сброс — кнопкой «Сбросить характеристики» ниже."
+		_compact_button(minus, 26, 13)
 		if not _mob():
 			minus.add_theme_font_size_override("font_size", 13)
 		var kk: String = k
@@ -13211,6 +13320,7 @@ func _show_menu_squad() -> void:
 		plus.text = "+"
 		plus.disabled = left <= 0
 		plus.tooltip_text = "Добавить 1 очко характеристики" if left > 0 else "Свободных очков нет. Новые очки даются с уровнями бойца."
+		_compact_button(plus, 26, 13)
 		if not _mob():
 			plus.add_theme_font_size_override("font_size", 13)
 		plus.pressed.connect(func():
@@ -13221,7 +13331,9 @@ func _show_menu_squad() -> void:
 		row.add_child(plus)
 		var hint := Label.new()
 		hint.text = "  " + STAT_HINTS[k]
-		hint.add_theme_font_size_override("font_size", 10 if _mob() else 11)   # OTRYAD_V1: 12->11
+		hint.add_theme_font_size_override("font_size", 10)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(hint)
 	# переподготовка: сброс очков статов за монеты (вернёт все вложенные очки)
 	var invested := 0
@@ -13229,7 +13341,7 @@ func _show_menu_squad() -> void:
 		invested += int(st.get(k2, 0))
 	if invested > 0:
 		var rstat := _menu_button("Сбросить характеристики — %d монет" % RETRAIN_STATS_COST, true)
-		rstat.add_theme_font_size_override("font_size", 15)   # OTRYAD_V1: -1 px
+		_compact_button(rstat, SUB_BUTTON_H, SUB_LABEL_FONT)
 		rstat.icon = _icon_tex("coin")
 		rstat.add_theme_constant_override("icon_max_width", 16)
 		rstat.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
@@ -13248,7 +13360,7 @@ func _show_menu_squad() -> void:
 		vs.add_child(rstat)
 	var tl2 := Label.new()
 	tl2.text = "Очки талантов: %d · +1 каждые 3 уровня" % int(_profile.tpts[_squad_edit])
-	tl2.add_theme_font_size_override("font_size", 14)   # OTRYAD_V1: -1 px
+	tl2.add_theme_font_size_override("font_size", 12)
 	tl2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.45))
 	vs.add_child(tl2)
 	var tprof: Dictionary = _profile.talents[_squad_edit]
@@ -13259,13 +13371,14 @@ func _show_menu_squad() -> void:
 		tv.add_theme_constant_override("separation", 2)
 		vs.add_child(tv)
 		var trow := HBoxContainer.new()
-		trow.add_theme_constant_override("separation", 8)
+		trow.add_theme_constant_override("separation", 6)
+		trow.custom_minimum_size = Vector2(0, 32)
 		tv.add_child(trow)
 		var tico := TextureRect.new()
 		tico.texture = _icon_tex(str(tal["icon"]))
 		tico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tico.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tico.custom_minimum_size = Vector2(22, 22)
+		tico.custom_minimum_size = Vector2(16, 16)
 		tico.tooltip_text = str(tal["desc"])
 		tico.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		trow.add_child(tico)
@@ -13276,10 +13389,9 @@ func _show_menu_squad() -> void:
 		tnl.mouse_filter = Control.MOUSE_FILTER_STOP
 		tnl.tooltip_text = str(tal["desc"])
 		trow.add_child(tnl)
-		# Компактная кнопка ранга: одинаковые 68×34 для «+1» и «МАКС».
 		var tb := _menu_button("")
-		tb.custom_minimum_size = Vector2(68, 34)
-		tb.add_theme_font_size_override("font_size", 12)
+		_compact_button(tb, 28, 11)
+		tb.custom_minimum_size = Vector2(52, 28)
 		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		for tstate in ["normal", "hover", "pressed", "disabled", "focus"]:
 			var tsb := _menu_button_state(false, "hover" if tstate == "focus" else tstate)
@@ -13327,7 +13439,7 @@ func _show_menu_squad() -> void:
 	if spent > 0:
 		# сброс — покупка за монеты: «Перелив v2» PRIORITY (docs/BUTTONS_V2.md)
 		var rst := _menu_button("Сброс талантов — %d (вернёт %d очк.)" % [TALENT_RESET_COST, spent], true)
-		rst.custom_minimum_size = Vector2(0, 44)
+		_compact_button(rst, SUB_CTA_H, 15)
 		rst.add_theme_font_size_override("font_size", 15)
 		rst.icon = _icon_tex("coin")
 		rst.add_theme_color_override("icon_normal_color", COIN_COLOR)
@@ -13348,7 +13460,7 @@ func _show_menu_squad() -> void:
 	var lvl_bonus := 3 * (int(_profile.lvl[_squad_edit]) - 1)
 	sum.text = "Итог: HP %d (ур. +%d) · ОД %d · вес %.0f кг · обзор %d" % [
 		_stat_hp(st) + lvl_bonus, lvl_bonus, _stat_ap(st), _stat_carry(st), _stat_vision(st)]
-	sum.add_theme_font_size_override("font_size", 15)
+	sum.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 	vs.add_child(sum)
 
 # ---------- личные настройки: аватар, город ----------
@@ -14572,8 +14684,9 @@ func _show_menu_chests() -> void:
 		chest_accent = RARITY_COLORS[2]
 		chest_art_path = "res://assets/ui/chests/chest_epic_512.png"
 	var showcase := PanelContainer.new()
-	showcase.add_theme_stylebox_override("panel", _inv_card_style(chest_accent, Color(0.025, 0.045, 0.075, 0.96)))
+	showcase.add_theme_stylebox_override("panel", _compact_inv_card_style(chest_accent, Color(0.025, 0.045, 0.075, 0.96)))
 	showcase.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	showcase.tooltip_text = CHEST_ODDS_TOOLTIP
 	colL.add_child(showcase)
 	var showbox := VBoxContainer.new()
 	showbox.add_theme_constant_override("separation", 2)
@@ -14582,10 +14695,13 @@ func _show_menu_chests() -> void:
 	chest_art.texture = load(chest_art_path)
 	chest_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	chest_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	chest_art.custom_minimum_size = Vector2(0, 210 if _mob() else 240)
+	chest_art.custom_minimum_size = Vector2(0, 150 if _mob() else 170)
 	chest_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	showbox.add_child(chest_art)
-	var chest_caption := _mk_label("СУНДУК УДАЧИ", 16)
+	var chest_caption := _mk_label("СУНДУК УДАЧИ", 14)
+	chest_caption.tooltip_text = CHEST_ODDS_TOOLTIP
+	chest_caption.focus_mode = Control.FOCUS_ALL
+	chest_caption.mouse_filter = Control.MOUSE_FILTER_STOP
 	chest_caption.add_theme_color_override("font_color", chest_accent)
 	chest_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	showbox.add_child(chest_caption)
@@ -14616,7 +14732,7 @@ func _show_menu_chests() -> void:
 		fcell.add_theme_constant_override("separation", 2)
 		fgrid.add_child(fcell)
 		var fpv := PanelContainer.new()
-		fpv.custom_minimum_size = Vector2(64, 64) if _mob() else Vector2(72, 72)
+		fpv.custom_minimum_size = Vector2(48, 48)
 		fpv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var fps := StyleBoxFlat.new()
 		fps.bg_color = Color("#101a28")
@@ -14719,7 +14835,7 @@ func _show_menu_chests() -> void:
 		ccell.add_theme_constant_override("separation", 2)
 		cgrid.add_child(ccell)
 		var cpv := PanelContainer.new()
-		cpv.custom_minimum_size = Vector2(64, 64) if _mob() else Vector2(72, 72)
+		cpv.custom_minimum_size = Vector2(48, 48)
 		cpv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var cps := StyleBoxFlat.new()
 		cps.bg_color = Color("#101a28")
@@ -14801,7 +14917,7 @@ func _show_menu_chests() -> void:
 	var pity_siren: int = int(_profile.get("pity_siren", 0))
 	# гаранты: карточка с прогресс-барами, подписи цветом редкости
 	var gwrap := PanelContainer.new()
-	gwrap.add_theme_stylebox_override("panel", _inv_card_style(Color(0.30, 0.42, 0.58, 0.6)))
+	gwrap.add_theme_stylebox_override("panel", _compact_inv_card_style(Color(0.30, 0.42, 0.58, 0.6)))
 	gwrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	colL.add_child(gwrap)
 	var gbox := VBoxContainer.new()
@@ -14835,7 +14951,7 @@ func _show_menu_chests() -> void:
 	if _chest_last != "":
 		# последний дроп: карточка с обводкой редкости
 		var lwrap := PanelContainer.new()
-		lwrap.add_theme_stylebox_override("panel", _inv_card_style(RARITY_COLORS[clampi(_chest_last_rarity, 0, 5)]))
+		lwrap.add_theme_stylebox_override("panel", _compact_inv_card_style(RARITY_COLORS[clampi(_chest_last_rarity, 0, 5)]))
 		lwrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		colL.add_child(lwrap)
 		var lv := VBoxContainer.new()
@@ -14857,7 +14973,7 @@ func _show_menu_chests() -> void:
 	ob.add_theme_color_override("icon_normal_color", Color(0.12, 0.08, 0.02))
 	ob.add_theme_color_override("icon_hover_color", Color(0.12, 0.08, 0.02))
 	ob.add_theme_color_override("icon_pressed_color", Color(0.12, 0.08, 0.02))
-	ob.custom_minimum_size = Vector2(0, 56)
+	_compact_button(ob, SUB_CTA_H, 15)
 	# крупная золотая кнопка открытия — акцентный градиент
 	var at := Color(1.0, 0.80, 0.36)
 	var ab := Color(0.86, 0.44, 0.10)
@@ -14867,7 +14983,7 @@ func _show_menu_chests() -> void:
 	ob.add_theme_stylebox_override("hover", _grad_button_sb("chest_h", at * 1.16, ab * 1.16, abr, ag))
 	ob.add_theme_stylebox_override("pressed", _grad_button_sb("chest_p", at * 0.78, ab * 0.72, abr * 0.85, ag))
 	ob.add_theme_color_override("font_color", Color(0.12, 0.08, 0.02))
-	ob.add_theme_font_size_override("font_size", 18)
+	ob.add_theme_font_size_override("font_size", 15)
 	ob.disabled = int(_profile.get("coins", 0)) < CHEST_PRICE
 	ob.pressed.connect(func():
 		_open_show_chest()
@@ -14875,8 +14991,9 @@ func _show_menu_chests() -> void:
 	)
 	colL.add_child(ob)
 	var leg := Label.new()
-	leg.text = "Шансы: обычный 55% · редкий 25% · эпик 13% · лега 5% · мифик 1.9% · алмазный 0.1%"
-	leg.add_theme_font_size_override("font_size", 12)
+	leg.text = "Шансы: обычный 55% · редкий 25% · эпик 13% · легенда 5% · мифик 1,9% · сиреневый 0,1%"
+	leg.tooltip_text = CHEST_ODDS_TOOLTIP
+	leg.add_theme_font_size_override("font_size", SUB_HINT_FONT)
 	leg.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	if _mob():
 		leg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -14897,7 +15014,7 @@ func _show_menu_chests() -> void:
 			var i2 := int(e["i"])
 			var rcol2: Color = RARITY_COLORS[r]
 			var roww := PanelContainer.new()
-			roww.add_theme_stylebox_override("panel", _inv_card_style(Color(rcol2.r, rcol2.g, rcol2.b, 0.55), Color(0.05, 0.06, 0.10, 0.9)))
+			roww.add_theme_stylebox_override("panel", _compact_inv_card_style(Color(rcol2.r, rcol2.g, rcol2.b, 0.55), Color(0.05, 0.06, 0.10, 0.9)))
 			roww.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			colL.add_child(roww)
 			var row := HBoxContainer.new()
@@ -14914,7 +15031,8 @@ func _show_menu_chests() -> void:
 				nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			row.add_child(nl)
 			var eb := Button.new()
-			eb.custom_minimum_size = Vector2(76 if _mob() else 140, 40 if _mob() else 34)
+			_compact_button(eb, 32, SUB_PRICE_FONT)
+			eb.custom_minimum_size = Vector2(76 if _mob() else 140, 32)
 			eb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			if _cosm_owned(k2, i2):
 				eb.text = "Есть"
@@ -14939,57 +15057,57 @@ func _show_menu_heroes() -> void:
 	_menu_back_show(true)
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
-		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
-		# в конце кадра, но до этого они не должны влиять на позиции новых.
 		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(minf(760.0, _menu_content_w(0.94)), 0)
+	vb.custom_minimum_size = Vector2(minf(1080.0, _menu_content_w(0.94)), 0)
 	vb.add_child(_screen_title("swords", "Герои — наём и сборка", "heroes"))
 	_maybe_auto_tip("heroes")
 	var bal := HBoxContainer.new()
-	bal.add_theme_constant_override("separation", 8)
+	bal.add_theme_constant_override("separation", SUB_SEP)
 	bal.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
 	bal.add_child(_currency_chip("shard", SHARD_COLOR, str(int(_profile.get("shards", 0)))))
 	vb.add_child(bal)
 	var note := Label.new()
-	note.text = "Герои заменяют базового бойца в отряде: у каждого своё оружие, класс и таланты. Собери 45 фрагментов — герой твой навсегда, или арендуй на 3/5/7 дней за фрагменты."
-	note.add_theme_font_size_override("font_size", 12)
+	note.text = "Герои заменяют базового бойца: у каждого своё оружие, класс и таланты. Собери 45 фрагментов — герой твой навсегда, или активируй аренду."
+	note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
 	note.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(note)
 	var grid := GridContainer.new()
-	grid.columns = 2 if _mob() else 3
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
+	var screen_w := _css_win_w()
+	grid.columns = 3 if screen_w >= 980.0 else (2 if screen_w >= 620.0 else 1)
+	grid.add_theme_constant_override("h_separation", SUB_SEP)
+	grid.add_theme_constant_override("v_separation", SUB_SEP)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(grid)
 	var now := Time.get_unix_time_from_system()
 	for hid in HEROES.size():
 		var h: Dictionary = HEROES[hid]
 		var rarity := int(h["rarity"])
 		var card := PanelContainer.new()
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var cs := StyleBoxFlat.new()
 		cs.bg_color = Color(0.09, 0.10, 0.13, 0.92)
 		cs.border_color = RARITY_COLORS[rarity]
 		cs.set_border_width_all(1)
-		cs.set_corner_radius_all(4)
-		cs.content_margin_left = 8
-		cs.content_margin_right = 8
-		cs.content_margin_top = 6
-		cs.content_margin_bottom = 6
+		cs.set_corner_radius_all(SUB_RADIUS)
+		cs.content_margin_left = 6
+		cs.content_margin_right = 6
+		cs.content_margin_top = 4
+		cs.content_margin_bottom = 4
 		card.add_theme_stylebox_override("panel", cs)
 		grid.add_child(card)
 		var cv := VBoxContainer.new()
-		cv.add_theme_constant_override("separation", 3)
+		cv.add_theme_constant_override("separation", 2)
 		card.add_child(cv)
-		# Блок 10: портрет 64 px — аватар с инициалом и рамкой редкости
 		var pr := PanelContainer.new()
-		pr.custom_minimum_size = Vector2(64, 64)
+		pr.custom_minimum_size = Vector2(SUB_HERO_PORTRAIT, SUB_HERO_PORTRAIT)
 		pr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var prs := StyleBoxFlat.new()
 		prs.bg_color = Color(0.05, 0.07, 0.11)
 		prs.border_color = RARITY_COLORS[rarity]
 		prs.set_border_width_all(2)
-		prs.set_corner_radius_all(32)
+		prs.set_corner_radius_all(SUB_HERO_PORTRAIT / 2)
 		pr.add_theme_stylebox_override("panel", prs)
 		cv.add_child(pr)
 		var pcenter := CenterContainer.new()
@@ -14997,7 +15115,7 @@ func _show_menu_heroes() -> void:
 		pr.add_child(pcenter)
 		var pin := Label.new()
 		pin.text = str(h["name"]).substr(0, 1)
-		pin.add_theme_font_size_override("font_size", 28)
+		pin.add_theme_font_size_override("font_size", 20)
 		var pinf := _font_head()
 		if pinf != null:
 			pin.add_theme_font_override("font", pinf)
@@ -15006,14 +15124,12 @@ func _show_menu_heroes() -> void:
 		var nl := Label.new()
 		nl.text = str(h["name"])
 		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		nl.add_theme_font_size_override("font_size", 15)
+		nl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 		nl.add_theme_color_override("font_color", RARITY_COLORS[rarity])
 		var nhf := _font_head()
 		if nhf != null:
 			nl.add_theme_font_override("font", nhf)
 		cv.add_child(nl)
-		# тикет #3: hover-подсветка карточки (подъём позиции в GridContainer перезаписывается
-		# контейнером — делаем свечение рамки той же редкости + лёгкое осветление)
 		card.mouse_entered.connect(func():
 			var tw := card.create_tween()
 			tw.tween_property(card, "modulate", Color(1.18, 1.18, 1.18), 0.12)
@@ -15029,7 +15145,7 @@ func _show_menu_heroes() -> void:
 		var dl := Label.new()
 		dl.text = str(h["weapon"]) + " · " + str(FIGHTER_CLASSES[clampi(int(h["cls"]), 0, FIGHTER_CLASSES.size() - 1)]["name"])
 		dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		dl.add_theme_font_size_override("font_size", 12)
+		dl.add_theme_font_size_override("font_size", 11)
 		var dbf := _font_bold()
 		if dbf != null:
 			dl.add_theme_font_override("font", dbf)
@@ -15037,52 +15153,58 @@ func _show_menu_heroes() -> void:
 		cv.add_child(dl)
 		var pl := Label.new()
 		pl.text = str(h["perk"])
-		pl.add_theme_font_size_override("font_size", 12)
+		pl.tooltip_text = str(h["perk"])
+		pl.add_theme_font_size_override("font_size", 11)
 		pl.add_theme_color_override("font_color", Color(0.62, 0.67, 0.75))
 		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pl.custom_minimum_size = Vector2(minf(300.0, _vw() * 0.4), 0)
+		pl.max_lines_visible = 2
+		pl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		pl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cv.add_child(pl)
-		var sl := Label.new()
-		sl.text = _hero_status(hid)
-		sl.add_theme_font_size_override("font_size", 12)
-		var rentals: Dictionary = _profile.get("hero_rentals", {})
-		if hid < (_profile.get("hero_owned", []) as Array).size() and int((_profile.get("hero_owned", []) as Array)[hid]) == 1:
-			sl.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
-		elif float(rentals.get(str(hid), 0)) > now:
-			sl.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0))
-		else:
-			sl.add_theme_color_override("font_color", Color(0.75, 0.78, 0.85))
-		cv.add_child(sl)
-		# сборка из фрагментов (ручная кнопка; автосборка уже срабатывает при начислении)
+		var owned_arr: Array = _profile.get("hero_owned", [])
+		var is_owned := hid < owned_arr.size() and int(owned_arr[hid]) == 1
+		var status_text := _hero_status(hid)
+		if not status_text.begins_with("Фрагменты"):
+			# Статус не дублирует моно-строку фрагментов.
+			status_text = status_text.split(" · фрагменты")[0]
+			var sl := Label.new()
+			sl.text = status_text
+			sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			sl.add_theme_font_size_override("font_size", 11)
+			var rentals: Dictionary = _profile.get("hero_rentals", {})
+			if is_owned:
+				sl.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
+			elif float(rentals.get(str(hid), 0)) > now:
+				sl.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0))
+			else:
+				sl.add_theme_color_override("font_color", Color(0.75, 0.78, 0.85))
+			cv.add_child(sl)
 		var frags: Dictionary = _profile.get("hero_frags", {})
 		var fn := int(frags.get(str(hid), 0))
-		var owned_arr: Array = _profile.get("hero_owned", [])
-		# тикет #3: «Фрагменты X/45» моношрифтом — прогресс виден всегда, а не только у кнопки
-		if not (hid < owned_arr.size() and int(owned_arr[hid]) == 1):
+		if not is_owned:
 			var flrow := HBoxContainer.new()
 			flrow.alignment = BoxContainer.ALIGNMENT_CENTER
 			flrow.add_theme_constant_override("separation", 5)
 			var fr_ic := TextureRect.new()
-			fr_ic.texture = _png_icon("res_fragment")   # Хвост v1 §5
+			fr_ic.texture = _png_icon("res_fragment")
 			fr_ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			fr_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			fr_ic.custom_minimum_size = Vector2(14, 14)
 			flrow.add_child(fr_ic)
 			var fl := Label.new()
 			fl.text = "Фрагменты %d/%d" % [fn, HERO_FRAGS_NEED]
-			fl.add_theme_font_size_override("font_size", 12)
+			fl.add_theme_font_size_override("font_size", 11)
 			var flf := _font_mono()
 			if flf != null:
 				fl.add_theme_font_override("font", flf)
 			fl.add_theme_color_override("font_color", Color(0.72, 0.76, 0.85))
 			flrow.add_child(fl)
 			cv.add_child(flrow)
-			# Блок 10: мини-бар прогресса фрагментов
 			var fbar := ProgressBar.new()
 			fbar.max_value = HERO_FRAGS_NEED
 			fbar.value = fn
 			fbar.show_percentage = false
-			fbar.custom_minimum_size = Vector2(0, 5)
+			fbar.custom_minimum_size = Vector2(0, 4)
 			var ftr := StyleBoxFlat.new()
 			ftr.bg_color = Color("#1a2030")
 			ftr.set_corner_radius_all(2)
@@ -15092,9 +15214,9 @@ func _show_menu_heroes() -> void:
 			ffi.set_corner_radius_all(2)
 			fbar.add_theme_stylebox_override("fill", ffi)
 			cv.add_child(fbar)
-		if fn >= HERO_FRAGS_NEED and not (hid < owned_arr.size() and int(owned_arr[hid]) == 1):
+		if fn >= HERO_FRAGS_NEED and not is_owned:
 			var bb := _menu_button("Собрать (%d/45)" % fn, true)
-			bb.custom_minimum_size = Vector2(0, 34)
+			_compact_button(bb, 28, 11)
 			var hv: int = hid
 			bb.pressed.connect(func():
 				var ho2: Array = _profile.get("hero_owned", [])
@@ -15110,8 +15232,6 @@ func _show_menu_heroes() -> void:
 				_show_menu_heroes()
 			)
 			cv.add_child(bb)
-		# BP_SEASON_V1 §1: активация токена аренды — перенос в hero_rentals, часы пошли.
-		# Токенов может быть несколько — очередь: активировать по одному.
 		var tk_idx := -1
 		var tk_days2 := 0
 		var ht3: Array = _profile.get("hero_tokens", [])
@@ -15120,9 +15240,9 @@ func _show_menu_heroes() -> void:
 				tk_idx = tki
 				tk_days2 = int(ht3[tki].get("days", 30))
 				break
-		if tk_idx >= 0 and not (hid < owned_arr.size() and int(owned_arr[hid]) == 1):
+		if tk_idx >= 0 and not is_owned:
 			var tkb := _menu_button("Активировать аренду (%d дн)" % tk_days2, true)
-			tkb.custom_minimum_size = Vector2(0, 34)
+			_compact_button(tkb, 28, 11)
 			var hv2: int = hid
 			var tidx: int = tk_idx
 			tkb.pressed.connect(func():
@@ -15147,38 +15267,44 @@ func _show_menu_shop() -> void:
 	_an_event("shop_view", {})
 	var vb: VBoxContainer = _ui.menu_box
 	for c in vb.get_children():
-		# Сразу убираем старую раскладку из Container: queue_free() удалит узлы
-		# в конце кадра, но до этого они не должны влиять на позиции новых.
 		vb.remove_child(c)
 		c.queue_free()
-	vb.custom_minimum_size = Vector2(_menu_w(), 0)
+	vb.custom_minimum_size = Vector2(minf(1080.0, _menu_content_w(0.94)), 0)
 	vb.add_child(_screen_title("shop", "Магазин", "shop"))
 	_maybe_auto_tip("shop")
 	var bal2 := HBoxContainer.new()
-	bal2.add_theme_constant_override("separation", 8)
+	bal2.add_theme_constant_override("separation", SUB_SEP)
 	bal2.add_child(_currency_chip("coin", COIN_COLOR, str(int(_profile.get("coins", 0)))))
 	var bal_note := Label.new()
 	bal_note.text = "монеты за бои и задания дня"
-	bal_note.add_theme_font_size_override("font_size", 13)
+	bal_note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
 	bal_note.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
 	bal2.add_child(bal_note)
 	vb.add_child(bal2)
 	vb.add_child(_section_title("КОСМЕТИКА И ПЕРСОНАЛИЗАЦИЯ"))
+	var screen_w := _css_win_w()
+	var columns := 3 if screen_w >= 980.0 else (2 if screen_w >= 620.0 else 1)
+	var grid := GridContainer.new()
+	grid.columns = columns
+	grid.add_theme_constant_override("h_separation", SUB_SEP)
+	grid.add_theme_constant_override("v_separation", SUB_SEP)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(grid)
 	for si in SHOP_ITEMS.size():
 		var it: Dictionary = SHOP_ITEMS[si]
 		var kind := str(it["kind"])
 		var idx := int(it["idx"])
 		var price := int(it["price"])
-		# Крупное живое превью: покупатель видит арт и результат до оплаты.
 		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", _card_style())
-		vb.add_child(card)
+		card.add_theme_stylebox_override("panel", _compact_card_style())
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		grid.add_child(card)
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
+		row.add_theme_constant_override("separation", SUB_SEP)
 		card.add_child(row)
 		var FRAME_ACCENTS := [Color("#8a93a6"), Color(0.2, 0.9, 1.0), Color("#d4af37"), Color(0.35, 0.5, 0.25), Color(0.85, 0.7, 0.4), Color(0.2, 1.0, 0.5), Color(1.0, 0.45, 0.1), Color(0.9, 0.9, 0.95), Color(1.0, 0.5, 1.0)]
 		var pv := PanelContainer.new()
-		pv.custom_minimum_size = Vector2(72, 72) if _mob() else Vector2(84, 84)
+		pv.custom_minimum_size = Vector2(SUB_PREVIEW, SUB_PREVIEW)
 		var pvs := StyleBoxFlat.new()
 		pvs.bg_color = Color("#101a28")
 		if kind == "nick_color" and idx < NICK_COLORS.size():
@@ -15190,8 +15316,8 @@ func _show_menu_shop() -> void:
 			var fpp: String = _frame_png(idx) if kind == "frame" else ""
 			if fpp == "" or _png_icon(fpp) == null:
 				pvs.border_color = FRAME_ACCENTS[idx] if idx < FRAME_ACCENTS.size() else Color.WHITE
-				pvs.set_border_width_all(3)
-		pvs.set_corner_radius_all(4)
+				pvs.set_border_width_all(2)
+		pvs.set_corner_radius_all(6)
 		pv.add_theme_stylebox_override("panel", pvs)
 		pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(pv)
@@ -15201,7 +15327,7 @@ func _show_menu_shop() -> void:
 			sample.set_anchors_preset(Control.PRESET_FULL_RECT)
 			sample.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			sample.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			sample.add_theme_font_size_override("font_size", 28)
+			sample.add_theme_font_size_override("font_size", 18)
 			sample.add_theme_color_override("font_color", NICK_COLORS[idx] if kind == "nick_color" else Color("#edf4fb"))
 			sample.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			pv.add_child(sample)
@@ -15211,24 +15337,22 @@ func _show_menu_shop() -> void:
 				pv.add_child(_frame_overlay(idx))
 		var nl := Label.new()
 		nl.text = str(it["name"])
-		# на мобиле шрифт меньше, чтобы самое длинное имя влезало без переноса
-		# (Label без autowrap требует полной ширины текста и иначе выталкивает цену за экран)
-		nl.add_theme_font_size_override("font_size", 13 if _mob() else 15)
-		nl.custom_minimum_size = Vector2(0, 0)
+		nl.tooltip_text = str(it["name"])
+		nl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
 		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if _mob():
-			# на 360px переносим длинные имена — иначе Label выталкивает цену за экран
-			nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		nl.max_lines_visible = 2
 		row.add_child(nl)
 		var b := _menu_button("", true)
-		b.custom_minimum_size = Vector2(104, 40) if _mob() else Vector2(140, 40)
+		_compact_button(b, 32, SUB_PRICE_FONT)
+		b.custom_minimum_size = Vector2(88 if _mob() else 112, 32)
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if _shop_equipped(kind, idx):
 			b.text = "Надето"
 			b.disabled = true
 		elif _shop_owned(kind, idx):
-			b.text = "Получено"
+			b.text = "Надеть"
 			b.tooltip_text = "Нажми, чтобы надеть"
 			var k1 := kind
 			var i1 := idx
@@ -15237,20 +15361,18 @@ func _show_menu_shop() -> void:
 				_refresh_menu_screen("shop")
 			)
 		else:
-			# на мобиле длинное «Купить · N» не влезает — только цена с иконкой монеты
-			b.text = ("%d" % price) if _mob() else ("Купить · %d" % price)
-			b.add_theme_font_size_override("font_size", 13 if _mob() else 16)
+			b.text = "%d" % price
+			b.tooltip_text = "Купить за %d монет" % price
 			var bmf := _font_mono()
 			if bmf != null:
 				b.add_theme_font_override("font", bmf)
 			b.icon = _icon_tex("coin")
-			b.add_theme_constant_override("icon_max_width", 18)
+			b.add_theme_constant_override("icon_max_width", 14)
 			b.add_theme_color_override("icon_normal_color", COIN_COLOR)
 			b.add_theme_color_override("icon_hover_color", COIN_COLOR)
 			b.add_theme_color_override("icon_pressed_color", COIN_COLOR)
 			b.add_theme_color_override("icon_disabled_color", Color(0.78, 0.69, 0.43))
 			b.add_theme_color_override("font_color", Color.WHITE)
-			# Оставляем кнопку доступной: нажатие объясняет, сколько монет не хватает.
 			if int(_profile.get("coins", 0)) < price:
 				b.tooltip_text = "Не хватает %d монет" % (price - int(_profile.get("coins", 0)))
 			var s1: int = si
@@ -15260,42 +15382,50 @@ func _show_menu_shop() -> void:
 			)
 		row.add_child(b)
 	vb.add_child(_section_title("ПАКИ МОНЕТ"))
+	var packs := GridContainer.new()
+	packs.columns = columns
+	packs.add_theme_constant_override("h_separation", SUB_SEP)
+	packs.add_theme_constant_override("v_separation", SUB_SEP)
+	packs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(packs)
 	for pi in COIN_PACKS.size():
 		var pk: Dictionary = COIN_PACKS[pi]
 		var card2 := PanelContainer.new()
-		card2.add_theme_stylebox_override("panel", _card_style())
-		vb.add_child(card2)
+		card2.add_theme_stylebox_override("panel", _compact_card_style())
+		card2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		packs.add_child(card2)
 		var row2 := HBoxContainer.new()
-		row2.add_theme_constant_override("separation", 10)
+		row2.add_theme_constant_override("separation", 6)
+		row2.custom_minimum_size = Vector2(0, SUB_ROW_H)
 		card2.add_child(row2)
 		var pl := Label.new()
 		pl.text = "%d монет" % int(pk["coins"])
-		pl.add_theme_font_size_override("font_size", 16)
-		pl.custom_minimum_size = Vector2(90, 40)
+		pl.add_theme_font_size_override("font_size", SUB_LABEL_FONT)
+		pl.add_theme_font_override("font", _font_mono())
 		pl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row2.add_child(pl)
 		var pn := Label.new()
 		var bonus := int(pk.get("bonus", 0))
 		pn.text = ("+%d бонусом (%d%%)" % [bonus, int(round(bonus * 100.0 / maxf(1.0, float(int(pk["coins"]) - bonus))))]) if bonus > 0 else "без бонуса"
-		pn.add_theme_font_size_override("font_size", 13)
+		pn.add_theme_font_size_override("font_size", 11)
 		pn.add_theme_color_override("font_color", Color(0.65, 0.85, 0.6))
-		pn.custom_minimum_size = Vector2(0, 0)
 		pn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		pn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if _mob():
-			pn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row2.add_child(pn)
 		var pb := Button.new()
 		pb.text = "%d руб" % int(pk["price"])
-		pb.custom_minimum_size = Vector2(140, 40)
+		_compact_button(pb, 32, SUB_PRICE_FONT)
+		pb.custom_minimum_size = Vector2(104, 32)
 		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pb.add_theme_font_override("font", _font_mono())
 		pb.disabled = not PAYMENTS_ENABLED
-		pb.tooltip_text = "Платежи заработают с онлайн-запуском (голоса ВК + серверная проверка)"
+		pb.tooltip_text = "Фикс: %d монет, без рандома" % int(pk["coins"])
 		var pbs := StyleBoxFlat.new()
 		pbs.bg_color = Color(0.16, 0.5, 0.24, 0.95)
 		pbs.border_color = Color(0.4, 0.9, 0.5, 0.9)
 		pbs.set_border_width_all(1)
-		pbs.set_corner_radius_all(4)
+		pbs.set_corner_radius_all(6)
 		pb.add_theme_stylebox_override("normal", pbs)
 		pb.add_theme_color_override("font_color", Color.WHITE)
 		var pi2: int = pi
@@ -15303,7 +15433,7 @@ func _show_menu_shop() -> void:
 		row2.add_child(pb)
 	var note := Label.new()
 	note.text = "Скины бойца и подписка с призами — в онлайн-версии."
-	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_font_size_override("font_size", SUB_HINT_FONT)
 	vb.add_child(note)
 
 func _show_menu_profile() -> void:
@@ -15594,7 +15724,7 @@ func _inv_section(txt: String, accent := Color(0.35, 0.85, 1.0)) -> VBoxContaine
 	vb.add_theme_constant_override("separation", 2)
 	var l := Label.new()
 	l.text = txt
-	l.add_theme_font_size_override("font_size", 14)
+	l.add_theme_font_size_override("font_size", SUB_SECTION_FONT)
 	l.add_theme_color_override("font_color", accent)
 	vb.add_child(l)
 	var line := ColorRect.new()
