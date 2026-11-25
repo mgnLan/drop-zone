@@ -5120,9 +5120,13 @@ func _select_initial_fighter() -> void:
 func _focus_selected_fighter(animated := true) -> void:
 	if _selected < 0 or _selected >= _fighters.size() or not bool(_fighters[_selected].alive):
 		_select_initial_fighter()
-	if _selected < 0 or _selected >= _fighters.size() or _cam == null:
+	if _selected >= 0 and _selected < _fighters.size():
+		_focus_fighter(_selected, animated)
+
+func _focus_fighter(fi: int, animated := true) -> void:
+	if fi < 0 or fi >= _fighters.size() or _cam == null or not bool(_fighters[fi].alive):
 		return
-	var target: Vector3 = _fighters[_selected].node.position + Vector3(0, 0.6, 0)
+	var target: Vector3 = _fighters[fi].node.position + Vector3(0, 0.6, 0)
 	if not animated:
 		_cam_target = target
 		_update_camera()
@@ -5132,6 +5136,21 @@ func _focus_selected_fighter(animated := true) -> void:
 	tw.tween_method(func(v: Vector3):
 		_cam_target = v
 		_update_camera(), start, target, 0.28).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+func _fighter_card_input(event: InputEvent, fi: int, select_single: bool) -> void:
+	# Одиночный клик по маленькой иконке только выбирает бойца. Двойной клик
+	# (и эмулируемый двойной тап) центрирует камеру именно на этом бойце.
+	if not event is InputEventMouseButton:
+		return
+	var mb := event as InputEventMouseButton
+	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.pressed:
+		return
+	if mb.double_click:
+		if select_single:
+			_select_from_squad(fi)
+		_focus_fighter(fi)
+	elif select_single:
+		_select_from_squad(fi)
 
 func _refresh_squad() -> void:
 	if not _ui.has("squad_rows"):
@@ -7299,6 +7318,143 @@ func _nearest_visible_enemy(from_cell: Vector2i, vision: int, enemy_team: int) -
 			best = i
 	return best
 
+func _bot_path_to(i: int, target: Vector2i) -> Array[Vector2i]:
+	# Обход препятствий, стен домов и других бойцов. Если цель занята
+	# (противник или ящик), достаточно любой соседней клетки по вертикали/горизонтали.
+	var result: Array[Vector2i] = []
+	if i < 0 or i >= _fighters.size():
+		return result
+	var start: Vector2i = _fighters[i].cell
+	var target_key := _key(target)
+	var target_blocked := _unit_at.has(target_key) or _fire.has(target) or (_occupied.has(target_key) and not _house_at.has(target_key))
+	var queue: Array[Vector2i] = [start]
+	var came := {_key(start): start}
+	var goal := Vector2i(-1, -1)
+	var head := 0
+	while head < queue.size():
+		var cur: Vector2i = queue[head]
+		head += 1
+		var at_side := maxi(absi(cur.x - target.x), absi(cur.y - target.y)) == 1
+		if cur == target or (target_blocked and at_side):
+			goal = cur
+			break
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = cur + d
+			if n.x < 0 or n.y < 0 or n.x >= _grid_n or n.y >= _grid_n:
+				continue
+			var nk := _key(n)
+			if came.has(nk) or _unit_at.has(nk) or _fire.has(n):
+				continue
+			if not _in_zone(n) and _in_zone(start):
+				continue
+			if not _can_enter(cur, n):
+				continue
+			if _occupied.has(nk) and not _house_at.has(nk):
+				continue
+			came[nk] = cur
+			queue.append(n)
+	if goal.x < 0:
+		return result
+	var cur_back := goal
+	while cur_back != start:
+		result.append(cur_back)
+		cur_back = came[_key(cur_back)]
+	result.reverse()
+	return result
+
+func _bot_best_chest(i: int) -> Dictionary:
+	# Ближайший именно достижимый ящик: недоступная цель не блокирует остальные.
+	var f = _fighters[i]
+	var best := {}
+	var best_len := 99999
+	var keys := _chests.keys()
+	keys.sort()
+	for k in keys:
+		var entries: Array = _chests.get(k, [])
+		if entries.is_empty():
+			continue
+		var parts: PackedStringArray = str(k).split(",")
+		if parts.size() != 2:
+			continue
+		var cell := Vector2i(int(parts[0]), int(parts[1]))
+		var side_dist := maxi(absi(f.cell.x - cell.x), absi(f.cell.y - cell.y))
+		if side_dist == 1:
+			return {"cell": cell, "path": []}
+		if side_dist == 0:
+			continue
+		var path := _bot_path_to(i, cell)
+		if not path.is_empty() and path.size() < best_len:
+			best_len = path.size()
+			best = {"cell": cell, "path": path}
+	return best
+
+func _bot_weapon_score(w: Dictionary) -> float:
+	if w.is_empty():
+		return 0.0
+	return float(w.get("damage", 0)) * float(w.get("burst", 1)) + float(w.get("range", 1)) * 0.2
+
+func _bot_open_chest(i: int, cell: Vector2i) -> bool:
+	# Автономное вскрытие для ИИ: без смены _selected, окон и начисления
+	# чужих монет в профиль игрока. Бот экипирует улучшения и берёт расходники.
+	if i < 0 or i >= _fighters.size():
+		return false
+	var f = _fighters[i]
+	var k := _key(cell)
+	if not f.alive or not _chests.has(k) or f.ap < OPEN_CHEST_AP:
+		return false
+	if maxi(absi(f.cell.x - cell.x), absi(f.cell.y - cell.y)) != 1:
+		return false
+	f.ap -= OPEN_CHEST_AP
+	_face_cell(f, cell)
+	_sfx_play("open")
+	var entries: Array = _chests.get(k, [])
+	for ei in entries.size():
+		if str(entries[ei].get("kind", "")) == "armor_lazy":
+			var a_lvl: int = int(entries[ei].get("lvl", int(f.get("lvl", 1))))
+			entries[ei] = {"kind": "armor", "cat": entries[ei]["cat"], "item": _roll_armor_for(a_lvl, entries[ei]["cat"])}
+	var taken := 0
+	for entry in entries:
+		var kind := str(entry.get("kind", ""))
+		var item: Dictionary = entry.get("item", {})
+		if item.is_empty():
+			continue
+		match kind:
+			"weapon":
+				if int(item.get("str_req", 0)) <= int(f.stats.get("str", 0)) and _bot_weapon_score(item) > _bot_weapon_score(f.gun):
+					var old_gun: Dictionary = f.gun
+					if not old_gun.is_empty():
+						var old_entry := {"kind": "weapon", "item": old_gun}
+						if _load_weight(f) + _item_weight(old_entry) <= _carry_limit(f):
+							f.backpack.append(old_entry)
+					f.gun = item
+					f.weapon = item
+					f.ammo = int(item.get("ammo", 0))
+					f.spare = int(item.get("spare", -1))
+					taken += 1
+			"armor":
+				var cat := str(entry.get("cat", ""))
+				if not f.armor.has(cat):
+					continue
+				var old_armor = f.armor[cat]
+				var old_def := _armor_eff_def(old_armor) if old_armor != null else 0.0
+				if _armor_eff_def(item) > old_def:
+					if old_armor != null:
+						var old_entry := {"kind": "armor", "cat": cat, "item": old_armor}
+						if _load_weight(f) + _item_weight(old_entry) <= _carry_limit(f):
+							f.backpack.append(old_entry)
+					f.armor[cat] = item
+					_recalc_derived(f)
+					taken += 1
+			"consumable":
+				if _load_weight(f) + _item_weight(entry) <= _carry_limit(f):
+					f.backpack.append(entry)
+					taken += 1
+	_chests.erase(k)
+	if _chest_pads.has(k):
+		_chest_pads[k].material_override = _mat(Color.BLACK, 0.0, 1.0, Color(0.3, 0.3, 0.3), 0.8)
+	_log("%s вскрыл ящик: полезного снаряжения %d" % [f.name, taken])
+	return true
+
 func _bot_act(i: int) -> void:
 	var f = _fighters[i]
 	f.march_steps = 0   # ИИ v1: лимит перебежки в этот ход (сбрасывается каждую активацию)
@@ -7331,13 +7487,24 @@ func _bot_act(i: int) -> void:
 			if fled:
 				continue
 			return  # выхода нет — стоим и горим, ход кончен
+		var loot := _bot_best_chest(i)
+		# Ящик рядом вскрываем даже при видимом противнике: это действие,
+		# а не «ступор» среди нетронутых контейнеров.
+		if not loot.is_empty() and loot.get("path", []).is_empty() and f.ap >= OPEN_CHEST_AP:
+			_bot_open_chest(i, loot.cell)
+			await get_tree().create_timer(0.25).timeout
+			continue
 		var vis: int = f.get("vision", VISION)
 		if int(f.get("flash", 0)) > 0:
 			vis = mini(vis, 3)   # Пиротехника: ослеплённый бот тоже видит не дальше 3 клеток
 		var t := _bot_pick_target(f, vis)
 		if t < 0:
-			# никого не видно — идём к центру арены (подиум)
-			if not _bot_step(i, Vector2i(_grid_n / 2, _grid_n / 2)):
+			# Никого не видно: сначала идём к ближайшему достижимому ящику,
+			# а когда лут закончился — занимаем центр арены.
+			if not loot.is_empty():
+				if not _bot_step(i, loot.cell):
+					return
+			elif not _bot_step(i, Vector2i(_grid_n / 2, _grid_n / 2)):
 				return
 			await get_tree().create_timer(0.25).timeout
 			continue
@@ -7381,30 +7548,17 @@ func _bot_act(i: int) -> void:
 			return
 
 func _bot_step(i: int, target: Vector2i) -> bool:
-	var f = _fighters[i]
-	var best: Vector2i = f.cell
-	var best_d := Vector2(f.cell.x - target.x, f.cell.y - target.y).length()
-	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-		var n: Vector2i = f.cell + d
-		if n.x < 0 or n.y < 0 or n.x >= _grid_n or n.y >= _grid_n:
-			continue
-		var k := _key(n)
-		if _unit_at.has(k) or _fire.has(n):
-			continue
-		if not _in_zone(n) and _in_zone(f.cell):
-			continue
-		if not _can_enter(f.cell, n):
-			continue
-		if _occupied.has(k) and not _house_at.has(k):
-			continue
-		var nd := Vector2(n.x - target.x, n.y - target.y).length()
-		if nd < best_d:
-			best_d = nd
-			best = n
-	if best == f.cell:
+	if i < 0 or i >= _fighters.size():
 		return false
+	var f = _fighters[i]
+	if f.ap < 1:
+		return false
+	var path := _bot_path_to(i, target)
+	if path.is_empty():
+		return false
+	var next: Vector2i = path[0]
 	f.ap -= 1
-	_move_fighter(i, best)
+	_move_fighter(i, next)
 	return true
 
 func _check_end() -> void:
@@ -7665,12 +7819,7 @@ func _check_end() -> void:
 			_style_menu_button(lb)
 			lb.pressed.connect(_go_lobby)
 			btns.add_child(lb)
-			var rv := Button.new()
-			rv.text = "Реванш"
-			rv.custom_minimum_size = Vector2(180, 48)
-			_style_menu_button(rv)
-			rv.pressed.connect(_rematch)
-			btns.add_child(rv)
+			# «Реванш» убран: раненные бойцы не могут сразу вернуться в бой.
 
 # ---------- интерфейс ----------
 func _build_ui() -> void:
@@ -7906,6 +8055,17 @@ func _build_ui() -> void:
 	# по этой же высоте, а не центрируем квадрат внутри вертикального портрета.
 	card_frame.stretch_mode = TextureRect.STRETCH_SCALE
 	ava.add_child(card_frame)
+	# У арт-рамок есть прозрачный запас, а сам декоративный контур занимает
+	# около 84% PNG. Увеличиваем только боевое наложение: внешний контур
+	# совпадает с краями фотографии, ассеты и рамки в других разделах не меняются.
+	card_frame.anchor_left = -0.09
+	card_frame.anchor_top = -0.09
+	card_frame.anchor_right = 1.09
+	card_frame.anchor_bottom = 1.09
+	card_frame.offset_left = 0.0
+	card_frame.offset_top = 0.0
+	card_frame.offset_right = 0.0
+	card_frame.offset_bottom = 0.0
 	_ui.card_frame = card_frame
 	var cvb2 := VBoxContainer.new()
 	cvb2.add_theme_constant_override("separation", 4)
@@ -7939,16 +8099,16 @@ func _build_ui() -> void:
 	ap_bar.custom_minimum_size = Vector2(70, 12) if _mob() else Vector2(180, 12)
 	ap_bar.show_percentage = false
 	ap_row.add_child(ap_bar)
-	# Вся карточка — кнопка «найти бойца»: клик плавно центрирует камеру.
+	# Двойной клик по карточке плавно центрирует камеру на выбранном бойце.
 	var card_click := Button.new()
-	card_click.tooltip_text = "Показать бойца в центре экрана"
+	card_click.tooltip_text = "Двойной клик — показать бойца в центре экрана"
 	card_click.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	for st in ["normal", "hover", "pressed", "focus"]:
 		card_click.add_theme_stylebox_override(st, StyleBoxEmpty.new())
-	card_click.pressed.connect(_focus_selected_fighter)
+	card_click.gui_input.connect(func(ev: InputEvent): _fighter_card_input(ev, _selected, false))
 	card.add_child(card_click)
 	var card_hint := Label.new()
-	card_hint.text = "←  К БОЙЦУ"
+	card_hint.text = "←  2× К БОЙЦУ"
 	card_hint.position = Vector2(48, 77) if not _mob() else Vector2(40, 73)
 	card_hint.add_theme_font_size_override("font_size", 11)
 	card_hint.add_theme_color_override("font_color", Color("#70eaff"))
@@ -8009,13 +8169,14 @@ func _build_ui() -> void:
 		var hit := Button.new()
 		hit.focus_mode = Control.FOCUS_NONE
 		hit.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		hit.tooltip_text = "Клик — выбрать бойца; двойной клик — центрировать камеру"
 		hit.set_anchors_preset(Control.PRESET_FULL_RECT)
 		for state in ["normal", "hover", "pressed", "disabled"]:
 			hit.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-		hit.pressed.connect(func():
-			if _onboard_step >= 0:
+		hit.gui_input.connect(func(ev: InputEvent):
+			if _onboard_step >= 0 and ev is InputEventMouseButton and ev.pressed:
 				print("ONBOARD_CARD_CLICK=", fi, " busy=", _busy, " menu=", _menu_open, " game_over=", _game_over)
-			_select_from_squad(fi)
+			_fighter_card_input(ev, fi, true)
 		)
 		row.add_child(hit)
 		roster.add_child(row)
@@ -8657,6 +8818,28 @@ func _run_testplay() -> void:
 	await get_tree().process_frame
 	_profile.onboarded = 1
 	_onboard_step = -1
+	# CARD_INPUT_TEST: одиночный клик выбирает без смены камеры, двойной центрирует.
+	if _fighters.size() > 1:
+		_select(0)
+		var cam_before := _cam_target
+		var single := InputEventMouseButton.new()
+		single.button_index = MOUSE_BUTTON_LEFT
+		single.pressed = true
+		_fighter_card_input(single, 1, true)
+		var single_ok := _selected == 1 and _cam_target.is_equal_approx(cam_before)
+		var dbl := InputEventMouseButton.new()
+		dbl.button_index = MOUSE_BUTTON_LEFT
+		dbl.pressed = true
+		dbl.double_click = true
+		_fighter_card_input(dbl, 0, true)
+		await get_tree().create_timer(0.35).timeout
+		var focus_target: Vector3 = _fighters[0].node.position + Vector3(0, 0.6, 0)
+		var double_ok := _selected == 0 and _cam_target.distance_to(focus_target) < 0.02
+		print("CARD_INPUT_TEST одиночный-без-центрирования=", single_ok, " двойной-центрирует=", double_ok, " (все true)")
+	_profile.frame = 1
+	_ui.card_frame.texture = _png_icon(_frame_png(1))
+	var frame_fit_ok := is_equal_approx(_ui.card_frame.anchor_left, -0.09) and is_equal_approx(_ui.card_frame.anchor_right, 1.09) and is_equal_approx(_ui.card_frame.anchor_top, -0.09) and is_equal_approx(_ui.card_frame.anchor_bottom, 1.09)
+	print("BATTLE_FRAME_TEST внешний-контур-расширен=", frame_fit_ok, " (ожидается true)")
 	var f = _fighters[0]
 	f.ap = 40
 	_unit_at.erase(_key(f.cell))
@@ -8665,6 +8848,12 @@ func _run_testplay() -> void:
 	f.node.position = gw(20, 17)
 	f.pad.position = gw(20, 17, 0.02)
 	_select(0)
+	if DisplayServer.get_name() != "headless":
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("user://test_battle_card.png")
+		print("BATTLE_CARD_SAVED")
 	_open_chest(0, Vector2i(20, 18))
 	_take_all("20,18")
 	_show_inventory()
@@ -9168,32 +9357,53 @@ func _run_testplay() -> void:
 	print("SQUAD_RESERVE_TEST выбор-в-слот=", reserve_in_ok, " возврат-без-потерь=", reserve_back_ok, " конец-аренды=", rental_expiry_ok, " (все true)")
 	# --- KILL_CREDIT_TEST: два прямых убийства + добивание зоной после нашего урона ---
 	_game_over = false
-	for ki in range(4, _fighters.size()):
+	var enemy_ids: Array[int] = []
+	for ki in _fighters.size():
+		if int(_fighters[ki].team) != 1:
+			continue
+		enemy_ids.append(ki)
 		_fighters[ki].alive = true
 		_fighters[ki].hp = 50
 		_fighters[ki].armor = {"helmets": null, "body": null, "pants": null}
 		_fighters[ki].guard = 0
 	var kill_start := int(f0.get("kills", 0))
-	_fighters[4].hp = 1
-	_apply_damage(4, 100, "KILL_CREDIT_TEST", 0, 2.0)
-	_fighters[5].hp = 1
-	_apply_damage(5, 100, "KILL_CREDIT_TEST", 0, 2.0)
+	var kill_a: int = enemy_ids[0]
+	var kill_b: int = enemy_ids[mini(1, enemy_ids.size() - 1)]
+	var kill_c: int = enemy_ids[mini(2, enemy_ids.size() - 1)]
+	var kill_d: int = enemy_ids[mini(3, enemy_ids.size() - 1)]
+	_fighters[kill_a].hp = 1
+	_apply_damage(kill_a, 100, "KILL_CREDIT_TEST", 0, 2.0)
+	_fighters[kill_b].hp = 1
+	_apply_damage(kill_b, 100, "KILL_CREDIT_TEST", 0, 2.0)
 	var two_kills_ok := int(f0.get("kills", 0)) == kill_start + 2
-	_fighters[6].hp = 1
-	var fire_cell: Vector2i = _fighters[6].cell
+	_fighters[kill_c].alive = true
+	_fighters[kill_c].hp = 1
+	var fire_cell: Vector2i = _fighters[kill_c].cell
 	_fire[fire_cell] = 1
 	_fire_src[fire_cell] = 0
 	_tick_fire()
 	var fire_credit_ok := int(f0.get("kills", 0)) == kill_start + 3
-	_fighters[6].alive = true
-	_fighters[6].hp = 50
-	_fighters[7].hp = 5
-	_apply_damage(7, 1, "KILL_CREDIT_TEST", 0, 2.0)
-	_apply_damage(7, 100, "Зона", -1)
+	_fighters[kill_c].alive = true
+	_fighters[kill_c].hp = 50
+	_fighters[kill_d].alive = true
+	_fighters[kill_d].hp = 5
+	_apply_damage(kill_d, 1, "KILL_CREDIT_TEST", 0, 2.0)
+	_apply_damage(kill_d, 100, "Зона", -1)
 	var zone_credit_ok := int(f0.get("kills", 0)) == kill_start + 4
 	print("KILL_CREDIT_TEST два-подряд=", two_kills_ok, " свой-огонь=", fire_credit_ok, " зона-после-нашего-урона=", zone_credit_ok, " итого=", int(f0.get("kills", 0)) - kill_start, " (все true/4)")
+	if DisplayServer.get_name() != "headless":
+		_ui.inv_panel.visible = false
+		for eid in enemy_ids:
+			_fighters[eid].alive = false
+		_game_over = false
+		_check_end()
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("user://test_result.png")
+		print("RESULT_SCREEN_SAVED")
 	# --- COMBAT_MATH_TEST: overkill не раздувает статистику, миссии и возврат урона ---
-	var math_victim = _fighters[4]
+	var math_victim = _fighters[enemy_ids[0]]
 	math_victim.alive = true
 	math_victim.hp = 7
 	math_victim.guard = 0
@@ -9213,6 +9423,27 @@ func _run_testplay() -> void:
 # ---------- тест ботов: синие ходят и стреляют ----------
 func _run_testbots(with_fire := false) -> void:
 	await get_tree().process_frame
+	# BOT_LOOT_TEST: путь к занятому ящику, один шаг, вскрытие за ОД и подбор.
+	var loot_bot = _fighters[4]
+	var loot_cell := Vector2i(20, 18)
+	_unit_at.erase(_key(loot_bot.cell))
+	loot_bot.cell = Vector2i(20, 16)
+	_unit_at[_key(loot_bot.cell)] = 4
+	loot_bot.node.position = gw(loot_bot.cell.x, loot_bot.cell.y)
+	loot_bot.pad.position = gw(loot_bot.cell.x, loot_bot.cell.y, 0.02)
+	loot_bot.ap = 8
+	var loot_path := _bot_path_to(4, loot_cell)
+	var path_ok := not loot_path.is_empty()
+	var step_ok := _bot_step(4, loot_cell)
+	var adjacent := maxi(absi(loot_bot.cell.x - loot_cell.x), absi(loot_bot.cell.y - loot_cell.y)) == 1
+	var ap_before: int = loot_bot.ap
+	var pack_before: int = loot_bot.backpack.size()
+	var gun_before: Dictionary = loot_bot.gun.duplicate(true)
+	var armor_before := str(loot_bot.armor)
+	var opened := _bot_open_chest(4, loot_cell)
+	var loot_received: bool = loot_bot.backpack.size() > pack_before or loot_bot.gun != gun_before or str(loot_bot.armor) != armor_before
+	var ap_spent: bool = int(loot_bot.ap) == ap_before - OPEN_CHEST_AP
+	print("BOT_LOOT_TEST путь=", path_ok, " шаг=", step_ok, " рядом=", adjacent, " вскрытие=", opened, " ОД=", ap_spent, " предмет=", loot_received, " ящик-очищен=", not _chests.has(_key(loot_cell)), " (все true)")
 	# телепорт: игрок 0 и все боты — в центр, ближний бой
 	var spots := [Vector2i(18, 20), Vector2i(22, 20), Vector2i(20, 18), Vector2i(20, 22)]
 	var p0 = _fighters[0]
@@ -9221,7 +9452,7 @@ func _run_testbots(with_fire := false) -> void:
 	_unit_at[_key(p0.cell)] = 0
 	p0.node.position = gw(20, 20)
 	p0.pad.position = gw(20, 20, 0.02)
-	for bi in range(4, 8):
+	for bi in range(4, _fighters.size()):
 		var b = _fighters[bi]
 		_unit_at.erase(_key(b.cell))
 		b.cell = spots[bi - 4]
